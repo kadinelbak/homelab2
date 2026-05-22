@@ -10,26 +10,32 @@ Design priorities:
 
 ## 1. Directory Structure (NVMe)
 
-The stack assumes `DATA_PATH=/mnt/nvme/homelab` (set in `.env`).
+The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 
 ```text
-/mnt/nvme/homelab/
+/mnt/nvme/homelab2/
 ├── phase1-core/
 │   └── data/
 │       ├── postgres/
 │       ├── redis/
 │       ├── portainer/
+│       ├── npm/{data,letsencrypt}/
 │       ├── authentik/{media,certs,custom-templates}/
 │       ├── homepage/
 │       ├── beszel/{hub,agent}/
 │       ├── uptime-kuma/
+│       ├── scrutiny/
+│       ├── vaultwarden/
 │       └── ntfy/{cache,etc}/
 ├── phase2-media/
 │   └── data/
 │       ├── jellyfin/{config,cache}/
 │       ├── audiobookshelf/{config,metadata}/
+│       ├── navidrome/{data,cache}/
 │       ├── paperless/{data,media,export,consume}/
 │       ├── immich/{upload,db,ml-cache}/
+│       ├── prowlarr/
+│       ├── bazarr/
 │       └── qbittorrent/config/
 ├── phase3-ai-gaming/
 │   └── data/
@@ -59,14 +65,17 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab` (set in `.env`).
 ## 2. What Is In This Repo
 
 - `phase1-core/docker-compose.yml`
-  - Portainer, Authentik, Homepage, Beszel, Uptime Kuma, Watchtower, ntfy
+  - Portainer, Nginx Proxy Manager, Authentik, Homepage, Beszel, Uptime Kuma,
+    Watchtower, Scrutiny, Vaultwarden, ntfy
   - Central PostgreSQL + Redis
 - `phase1-core/init-db/01-create-databases.sql`
   - Creates shared DBs for downstream services
 - `phase2-media/docker-compose.yml`
-  - Jellyfin, Audiobookshelf, Paperless, Immich (+ML), Gluetun + qBittorrent
+  - Jellyfin, Audiobookshelf, Navidrome, Paperless, Immich (+ML), Prowlarr, Bazarr
+  - Gluetun + qBittorrent are gated behind the `torrent` Compose profile
 - `phase3-ai-gaming/docker-compose.yml`
-  - Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant, Spoolman, Actual
+  - Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant, Spoolman,
+    Actual, Stirling PDF, IT-Tools
 - `phase4-ondemand/docker-compose.yml`
   - Kasm, Guacamole, Nextcloud, Gitea, Supabase Studio, Kiwix, Docmost, Cal.com, NocoDB
   - All services `restart: "no"` for memory protection
@@ -131,10 +140,23 @@ docker compose --env-file ../.env up -d
 ```
 
 Critical checks:
-1. Confirm `qbittorrent` is attached via `network_mode: service:gluetun`.
-2. In qBittorrent, verify public IP matches VPN endpoint (not ISP IP).
+1. Confirm Navidrome is reachable on port `4533` and scans `/shared/media/music`.
+2. Validate Audiobookshelf on port `13378`.
 3. Validate Paperless ingestion from `consume` directory.
 4. Validate Immich upload + machine learning indexing.
+5. Validate Prowlarr on port `9696`.
+6. Validate Bazarr on port `6767`.
+7. Start the torrent stack only when needed with `docker compose --env-file ../.env --profile torrent up -d`.
+8. If qBittorrent is enabled, verify the public IP matches the VPN endpoint, not the ISP IP.
+
+Phase 2 access URLs:
+- `http://<tailnet-host>:8096` -> Jellyfin
+- `http://<tailnet-host>:13378` -> Audiobookshelf
+- `http://<tailnet-host>:4533` -> Navidrome
+- `http://<tailnet-host>:8000` -> Paperless-ngx
+- `http://<tailnet-host>:2283` -> Immich
+- `http://<tailnet-host>:9696` -> Prowlarr
+- `http://<tailnet-host>:6767` -> Bazarr
 
 ### Phase 3: AI, Gaming, Utility
 
@@ -148,6 +170,8 @@ Critical checks:
 2. Point Open WebUI to `http://ollama:11434` (already prewired).
 3. Tune Minecraft memory (`MINECRAFT_MEMORY`) to avoid host swapping.
 4. Confirm n8n can connect to central Postgres (`n8n` database).
+5. Validate Stirling PDF on port `8086`.
+6. Validate IT-Tools on port `8087`.
 
 ### Phase 4: On-Demand Heavy Stack
 
@@ -203,7 +227,7 @@ Central Redis (`phase1-core`) backs:
 - Authentik, Paperless, Docmost (and optionally more)
 
 Exception:
-- Immich uses a dedicated Postgres image due to required extension compatibility.
+- Immich uses a dedicated Postgres image because it requires vector extension support that the shared central Postgres does not provide by default.
 
 ## 9. Memory-Protect Defaults (16GB)
 
@@ -251,6 +275,9 @@ docker exec -i homelab_postgres psql -U homelab -d guacamole < /tmp/guacamole-in
 - `http://<tailnet-host>:9001` -> Authentik
 - `http://<tailnet-host>:3001` -> Uptime Kuma
 - `http://<tailnet-host>:9000` -> Portainer
+- `http://<tailnet-host>:81` -> Nginx Proxy Manager UI
+- `https://<tailnet-host>:4443` -> Vaultwarden via NPM TLS endpoint
+- `http://<tailnet-host>:8089` -> Scrutiny
 - `http://<tailnet-host>:8090` -> Beszel Hub
 - `http://<tailnet-host>:8085` -> ntfy
 

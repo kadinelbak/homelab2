@@ -12,10 +12,13 @@ docker compose --env-file ../.env up -d
 ## Current Access URLs
 
 - Homepage: `http://kadin-main-sys.tail00cf0e.ts.net:3000`
+- Nginx Proxy Manager: `http://kadin-main-sys.tail00cf0e.ts.net:81`
 - Portainer: `http://kadin-main-sys.tail00cf0e.ts.net:9000`
 - Authentik: `http://kadin-main-sys.tail00cf0e.ts.net:9001`
 - Uptime Kuma: `http://kadin-main-sys.tail00cf0e.ts.net:3001`
 - Beszel Hub: `http://kadin-main-sys.tail00cf0e.ts.net:8090`
+- Scrutiny: `http://kadin-main-sys.tail00cf0e.ts.net:8089`
+- Vaultwarden (HTTPS via NPM): `https://kadin-main-sys.tail00cf0e.ts.net:4443`
 - ntfy: `http://kadin-main-sys.tail00cf0e.ts.net:8085`
 
 ## Setup Order (Fastest Path)
@@ -50,9 +53,48 @@ docker compose --env-file ../.env up -d
    - Removed invalid `WATCHTOWER_NOTIFICATIONS=apprise` setting.
    - Added `DOCKER_API_VERSION: "1.44"` to match host daemon.
 
-4. Reverse proxy simplification:
-   - NPM was removed from active Phase 1 flow.
-   - Services are accessed directly over Tailscale + ports.
+4. Reverse proxy and TLS behavior:
+   - NPM is active in Phase 1.
+   - Host port `443` is currently used by `tailscaled`, so NPM maps TLS to host port `4443`.
+   - Vaultwarden Homepage link is set to `https://${DOMAIN}:4443`.
+   - Let’s Encrypt issuance for MagicDNS hostnames may fail (`NXDOMAIN`) in NPM.
+   - Use a Tailscale-generated cert in NPM Custom SSL for MagicDNS HTTPS.
+
+## Vaultwarden Account Flow (Safe Default)
+
+Current secure default:
+- `SIGNUPS_ALLOWED=false`
+- `INVITATIONS_ALLOWED=true`
+
+Temporary first-account flow:
+1. Set `SIGNUPS_ALLOWED` to `"true"` in `phase1-core/docker-compose.yml`.
+2. Recreate Vaultwarden:
+   ```bash
+   cd ~/homelab2/phase1-core
+   docker compose --env-file ../.env up -d vaultwarden
+   ```
+3. Create account at `https://kadin-main-sys.tail00cf0e.ts.net:4443`.
+4. Set `SIGNUPS_ALLOWED` back to `"false"` and recreate Vaultwarden again.
+
+## NPM + MagicDNS Certificate Procedure (Working)
+
+1. Generate cert and key on host:
+   ```bash
+   tailscale cert --cert-file /tmp/kadin-main-sys.ts.crt --key-file /tmp/kadin-main-sys.ts.key kadin-main-sys.tail00cf0e.ts.net
+   ```
+2. Copy into workspace for upload convenience:
+   ```bash
+   mkdir -p ~/homelab2/phase1-core/certs
+   cp /tmp/kadin-main-sys.ts.crt ~/homelab2/phase1-core/certs/
+   cp /tmp/kadin-main-sys.ts.key ~/homelab2/phase1-core/certs/
+   ```
+3. In NPM:
+   - Add `Custom SSL` certificate using those files.
+   - Proxy host details:
+     - Domain: `kadin-main-sys.tail00cf0e.ts.net`
+     - Forward Hostname/IP: `vaultwarden`
+     - Forward Port: `80`
+   - Apply custom cert and enable `Force SSL`.
 
 ## Beszel: Exact Working Procedure
 
@@ -76,13 +118,15 @@ docker compose --env-file ../.env up -d
 ```bash
 cd ~/homelab2/phase1-core
 docker compose --env-file ../.env ps
-docker compose --env-file ../.env logs --tail=80 homepage beszel-agent watchtower
+docker compose --env-file ../.env logs --tail=80 homepage beszel-agent watchtower npm vaultwarden
 ```
 
 Expected:
 - `homepage`: no `EACCES /var/run/docker.sock`
 - `beszel-agent`: websocket connected (no repeated 401)
 - `watchtower`: no fatal notification/API version errors
+- `npm`: no repeated certificate issuance failures for active cert config
+- `vaultwarden`: healthy and reachable via `https://${DOMAIN}:4443`
 
 ## Current Known Non-Blockers
 

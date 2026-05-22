@@ -20,10 +20,11 @@ Use this file when asking an AI assistant for help. Paste relevant sections so t
 ## 2. Architecture Rules (Important)
 
 1. Heavy services in Phase 4 are on-demand only and set to `restart: "no"`.
-2. qBittorrent must stay behind Gluetun with `network_mode: service:gluetun`.
-3. Ollama must use NVIDIA deployment block for GPU access.
-4. Central Postgres + Redis live in Phase 1 and are reused by many services.
-5. `homelab_proxy` and `homelab_internal` Docker networks must exist.
+2. qBittorrent and Gluetun are opt-in in Phase 2 via the `torrent` Compose profile.
+3. If qBittorrent is enabled, it must still stay behind Gluetun with `network_mode: service:gluetun`.
+4. Ollama must use NVIDIA deployment block for GPU access.
+5. Central Postgres + Redis live in Phase 1 and are reused by many services.
+6. `homelab_proxy` and `homelab_internal` Docker networks must exist.
 
 ## 3. Common Commands
 
@@ -32,6 +33,7 @@ Use this file when asking an AI assistant for help. Paste relevant sections so t
 ```bash
 cd phase1-core && docker compose --env-file ../.env up -d
 cd phase2-media && docker compose --env-file ../.env up -d
+cd phase2-media && docker compose --env-file ../.env --profile torrent up -d
 cd phase3-ai-gaming && docker compose --env-file ../.env up -d
 ```
 
@@ -91,9 +93,18 @@ Fix:
 ### qBittorrent IP leak concern
 
 Validation:
-1. Ensure `network_mode: service:gluetun` remains unchanged.
-2. Check Gluetun logs for VPN established tunnel.
-3. Validate qBittorrent visible IP via torrent IP-check tool.
+1. Ensure the `torrent` profile is only enabled when you actually want the torrent stack.
+2. Ensure `network_mode: service:gluetun` remains unchanged.
+3. Check Gluetun logs for VPN established tunnel.
+4. Validate qBittorrent visible IP via torrent IP-check tool.
+
+### Phase 2 app routing
+
+Notes:
+- Navidrome is the default music server for Phase 2.
+- Audiobookshelf listens on host port `13378` and maps to container port `80`.
+- Paperless uses the central Redis and central Postgres database named `paperless`.
+- Immich uses a dedicated Postgres container because its required vector extension is not available in the shared database by default.
 
 ### Ollama not using GPU
 

@@ -150,6 +150,14 @@ openssl rand -base64 60 | tr -d '\n'
 - Default: `http://ntfy:80`
 - Change only if ntfy runs elsewhere.
 
+## Navidrome (Phase 2)
+
+Navidrome does not require additional env vars in this repo.
+
+Notes:
+- Music library path: `${DATA_PATH}/shared/media/music`
+- Default web UI port: `4533`
+
 ## VPN and qBittorrent (Phase 2)
 
 ### VPN_SERVICE_PROVIDER
@@ -175,6 +183,7 @@ openssl rand -base64 60 | tr -d '\n'
 
 Note:
 - Exact variable names differ by provider and protocol. Validate against Gluetun provider docs before first run.
+- qBittorrent and Gluetun are opt-in through the `torrent` Compose profile and will not start on a normal `docker compose up -d`.
 
 ## Immich (Phase 2)
 
@@ -193,6 +202,9 @@ openssl rand -hex 32
 ### IMMICH_DB_DATABASE_NAME
 - Purpose: Immich database name.
 - Default: `immich`
+
+Note:
+- Immich uses a dedicated PostgreSQL image in Phase 2 because it needs vector extension support. The shared Phase 1 Postgres is intentionally left generic.
 
 ## n8n (Phase 3)
 

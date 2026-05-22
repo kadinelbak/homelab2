@@ -7,6 +7,7 @@
 
 -- Core / Identity
 CREATE DATABASE authentik;
+CREATE DATABASE vaultwarden;
 
 -- Media
 CREATE DATABASE paperless;

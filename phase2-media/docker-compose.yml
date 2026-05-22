@@ -64,7 +64,7 @@ services:
       - ${DATA_PATH}/shared/media/audiobooks:/audiobooks
       - ${DATA_PATH}/shared/media/podcasts:/podcasts
     ports:
-      - "13378:13378"
+      - "13378:80"
     networks:
       - homelab_proxy
     labels:
@@ -97,6 +97,7 @@ services:
       PAPERLESS_URL: https://paperless.${DOMAIN}
       PAPERLESS_ADMIN_USER: admin
       # Set on first run only; change via UI afterwards
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
       PAPERLESS_ADMIN_MAIL: ${AUTHENTIK_ADMIN_EMAIL}
     volumes:
       - ${DATA_PATH}/phase2-media/data/paperless/data:/usr/src/paperless/data
@@ -115,6 +116,39 @@ services:
       - "homepage.icon=paperless-ngx"
       - "homepage.href=http://${DOMAIN}:8000"
       - "homepage.description=Document management"
+
+  # ---------------------------------------------------------------------------
+  # NAVIDROME – Music Server
+  # Proxy target: navidrome:4533
+  # Uses the shared music library and stores its own local config database.
+  # ---------------------------------------------------------------------------
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      ND_SCANSCHEDULE: "1h"
+      ND_LOGLEVEL: info
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_CACHEFOLDER: /cache
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/navidrome/data:/data
+      - ${DATA_PATH}/phase2-media/data/navidrome/cache:/cache
+      - ${DATA_PATH}/shared/media/music:/music:ro
+    ports:
+      - "4533:4533"
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media"
+      - "homepage.name=Navidrome"
+      - "homepage.icon=navidrome"
+      - "homepage.href=http://${DOMAIN}:4533"
+      - "homepage.description=Music server"
 
   # ---------------------------------------------------------------------------
   # IMMICH – Photo & Video Backup
@@ -171,15 +205,17 @@ services:
       - "homepage.description=Machine learning worker"
       - "homepage.enabled=false"
 
-  # Immich-specific PostgreSQL with pgvecto.rs extension
+  # Immich-specific PostgreSQL with vectorchord extension
   immich-postgres:
-    image: ghcr.io/immich-app/postgres:16
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
     container_name: immich_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${IMMICH_DB_USERNAME}
       POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
       POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    shm_size: 128mb
     volumes:
       - ${DATA_PATH}/phase2-media/data/immich/db:/var/lib/postgresql/data
     networks:
@@ -208,6 +244,8 @@ services:
     image: qmcgaw/gluetun:latest
     container_name: gluetun
     restart: "no"
+    profiles:
+      - torrent
     cap_add:
       - NET_ADMIN
     devices:
@@ -245,6 +283,8 @@ services:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     restart: "no"
+    profiles:
+      - torrent
     network_mode: service:gluetun    # ← All traffic through VPN – DO NOT CHANGE
     environment:
       PUID: ${PUID}
@@ -263,3 +303,61 @@ services:
       - "homepage.icon=qbittorrent"
       - "homepage.href=http://${DOCKER_HOST_IP}:8080"
       - "homepage.description=Torrent client over VPN"
+
+  # ---------------------------------------------------------------------------
+  # PROWLARR – Indexer Aggregator
+  # Proxy target: prowlarr:9696
+  # Manages torrent/usenet indexers for *arr stack (Sonarr, Radarr, Bazarr)
+  # ---------------------------------------------------------------------------
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/prowlarr:/config
+    ports:
+      - "9696:9696"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media"
+      - "homepage.name=Prowlarr"
+      - "homepage.icon=prowlarr"
+      - "homepage.href=http://${DOMAIN}:9696"
+      - "homepage.description=Indexer aggregator"
+
+  # ---------------------------------------------------------------------------
+  # BAZARR – Subtitle Manager
+  # Proxy target: bazarr:6767
+  # Automatically downloads subtitles for your media library.
+  # Integrates with Sonarr/Radarr and Jellyfin.
+  # ---------------------------------------------------------------------------
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/bazarr:/config
+      - ${DATA_PATH}/shared/media:/media
+    ports:
+      - "6767:6767"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media"
+      - "homepage.name=Bazarr"
+      - "homepage.icon=bazarr"
+      - "homepage.href=http://${DOMAIN}:6767"
+      - "homepage.description=Subtitle manager"

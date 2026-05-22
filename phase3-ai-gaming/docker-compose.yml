@@ -1,7 +1,7 @@
 # =============================================================================
 # PHASE 3 – AI, GAMING, & UTILITY
 # Always-On: Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant,
-#             Spoolman, Actual Budget
+#             Spoolman, Actual Budget, Stirling PDF, IT-Tools
 #
 # Prereq: Phase 1 must be running.
 # GPU Prereq: NVIDIA Container Toolkit must be installed on the host.
@@ -232,3 +232,49 @@ services:
       - "homepage.icon=actual-budget"
       - "homepage.href=http://${DOMAIN}:5006"
       - "homepage.description=Personal finance"
+
+  # ---------------------------------------------------------------------------
+  # STIRLING PDF – Local PDF Toolkit
+  # Proxy target: stirling-pdf:8080
+  # ---------------------------------------------------------------------------
+  stirling-pdf:
+    image: ghcr.io/stirling-tools/stirling-pdf:latest
+    container_name: stirling_pdf
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/stirling-pdf:/configs
+    ports:
+      - "8086:8080"
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=Stirling PDF"
+      - "homepage.icon=stirling-pdf"
+      - "homepage.href=http://${DOMAIN}:8086"
+      - "homepage.description=Self-hosted PDF tools"
+
+  # ---------------------------------------------------------------------------
+  # IT-TOOLS – Handy Utility Toolbox for Developers
+  # Proxy target: it-tools:80
+  # ---------------------------------------------------------------------------
+  it-tools:
+    image: corentinth/it-tools:latest
+    container_name: it_tools
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "8087:80"
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=IT-Tools"
+      - "homepage.icon=it-tools"
+      - "homepage.href=http://${DOMAIN}:8087"
+      - "homepage.description=Developer utility toolbox"

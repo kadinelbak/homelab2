@@ -99,6 +99,33 @@ services:
       - "homepage.description=Container management"
 
   # ---------------------------------------------------------------------------
+  # NGINX PROXY MANAGER (NPM) – Reverse Proxy + TLS
+  # UI: http://host:81  |  Proxy listeners: 80/443
+  # ---------------------------------------------------------------------------
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "80:80"
+      - "81:81"
+      - "4443:443"
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/npm/data:/data
+      - ${DATA_PATH}/phase1-core/data/npm/letsencrypt:/etc/letsencrypt
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Nginx Proxy Manager"
+      - "homepage.icon=nginx-proxy-manager"
+      - "homepage.href=http://${DOMAIN}:81"
+      - "homepage.description=Reverse proxy and SSL"
+
+  # ---------------------------------------------------------------------------
   # AUTHENTIK – SSO / Identity Provider
   # Proxy target: authentik-server:9000
   # ---------------------------------------------------------------------------
@@ -297,6 +324,81 @@ services:
       - "homepage.icon=watchtower"
       - "homepage.description=Automated updates"
       - "homepage.enabled=false"
+
+  # ---------------------------------------------------------------------------
+  # SCRUTINY – Drive Health Monitoring
+  # Proxy target: scrutiny:8080
+  # Monitors disk health via SMART attributes and sends alerts on failures.
+  # First-time setup: Navigate to http://localhost:8089, go to "Settings" tab,
+  # and enable monitoring for your drives. Scrutiny will auto-scan /dev/* paths.
+  # ---------------------------------------------------------------------------
+  scrutiny:
+    image: ghcr.io/analogj/scrutiny:latest
+    container_name: scrutiny
+    restart: unless-stopped
+    privileged: true
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN
+    environment:
+      SCRUTINY_API_ENDPOINT_HOST: 0.0.0.0
+      SCRUTINY_API_ENDPOINT_PORT: 8080
+      SCRUTINY_WEB_LISTEN_ADDRESS_PORT: 8080
+      SCRUTINY_SCAN_INTERVAL: "24h"
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/scrutiny:/opt/scrutiny/config
+      - /dev:/dev:ro
+      - /sys:/sys:ro
+      - /run/udev:/run/udev:ro
+    ports:
+      - "8089:8080"
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Scrutiny"
+      - "homepage.icon=harddisk"
+      - "homepage.href=http://${DOMAIN}:8089"
+      - "homepage.description=Drive health monitoring"
+
+  # ---------------------------------------------------------------------------
+  # VAULTWARDEN – Password Manager & Secrets Vault
+  # Proxy target: vaultwarden:80
+  # Uses central postgres (database: vaultwarden)
+  # ---------------------------------------------------------------------------
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      DOMAIN: https://vaultwarden.${DOMAIN}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/vaultwarden
+      ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
+      LOG_LEVEL: info
+      LOG_FILE: /data/vaultwarden.log
+      TZ: ${TZ}
+      # Disable signups and admin panel for security unless configuring
+      SIGNUPS_ALLOWED: "false"
+      INVITATIONS_ALLOWED: "true"
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/vaultwarden:/data
+    ports:
+      - "7070:80"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Vaultwarden"
+      - "homepage.icon=vaultwarden"
+      - "homepage.href=https://${DOMAIN}:4443"
+      - "homepage.description=Password manager"
 
   # ---------------------------------------------------------------------------
   # NTFY – Push Notification Server
