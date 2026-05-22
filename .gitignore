@@ -1,0 +1,33 @@
+# =============================================================================
+# .gitignore – Homelab Repo
+# =============================================================================
+
+# Secrets – NEVER commit these
+.env
+*.key
+*.pem
+*.crt
+*.p12
+secrets/
+
+# Runtime data directories – these live on your NVMe, not in git
+data/
+**/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Backups
+*.bak
+*.backup

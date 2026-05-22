@@ -1,0 +1,225 @@
+# =============================================================================
+# PHASE 2 – MEDIA, STORAGE, & DOWNLOADS
+# Always-On: Jellyfin, Audiobookshelf, Paperless-ngx, Immich (+ML),
+#             qBittorrent behind Gluetun VPN
+#
+# Prereq: Phase 1 must be running (provides homelab_proxy, homelab_internal,
+#         central postgres, central redis).
+#
+# Run:  docker compose --env-file ../.env up -d
+# =============================================================================
+
+networks:
+  homelab_proxy:
+    external: true
+  homelab_internal:
+    external: true
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # JELLYFIN – Media Server
+  # Proxy target: jellyfin:8096
+  # GPU transcoding: add the deploy block below if your kernel driver is loaded.
+  # ---------------------------------------------------------------------------
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      JELLYFIN_PublishedServerUrl: https://jellyfin.${DOMAIN}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/jellyfin/config:/config
+      - ${DATA_PATH}/phase2-media/data/jellyfin/cache:/cache
+      - ${DATA_PATH}/shared/media:/media:ro    # Shared media library (read-only)
+    networks:
+      - homelab_proxy
+    # Uncomment for NVIDIA GPU transcoding:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # AUDIOBOOKSHELF – Audiobook & Podcast Server
+  # Proxy target: audiobookshelf:13378
+  # ---------------------------------------------------------------------------
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      PUID: ${PUID}
+      PGID: ${PGID}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/audiobookshelf/config:/config
+      - ${DATA_PATH}/phase2-media/data/audiobookshelf/metadata:/metadata
+      - ${DATA_PATH}/shared/media/audiobooks:/audiobooks
+      - ${DATA_PATH}/shared/media/podcasts:/podcasts
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # PAPERLESS-NGX – Document Management
+  # Proxy target: paperless:8000
+  # Uses central postgres (database: paperless) and central redis.
+  # ---------------------------------------------------------------------------
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless
+    restart: unless-stopped
+    environment:
+      USERMAP_UID: ${PUID}
+      USERMAP_GID: ${PGID}
+      PAPERLESS_TIME_ZONE: ${TZ}
+      PAPERLESS_DBHOST: homelab_postgres
+      PAPERLESS_DBPORT: 5432
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: ${POSTGRES_USER}
+      PAPERLESS_DBPASS: ${POSTGRES_PASSWORD}
+      PAPERLESS_REDIS: redis://:${REDIS_PASSWORD}@homelab_redis:6379
+      PAPERLESS_URL: https://paperless.${DOMAIN}
+      PAPERLESS_ADMIN_USER: admin
+      # Set on first run only; change via UI afterwards
+      PAPERLESS_ADMIN_MAIL: ${AUTHENTIK_ADMIN_EMAIL}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/paperless/data:/usr/src/paperless/data
+      - ${DATA_PATH}/phase2-media/data/paperless/media:/usr/src/paperless/media
+      - ${DATA_PATH}/phase2-media/data/paperless/export:/usr/src/paperless/export
+      - ${DATA_PATH}/phase2-media/data/paperless/consume:/usr/src/paperless/consume
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # IMMICH – Photo & Video Backup
+  # Proxy target: immich-server:2283
+  # Uses its OWN dedicated postgres (requires pgvecto.rs extension).
+  # ---------------------------------------------------------------------------
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich_server
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      DB_HOSTNAME: immich_postgres
+      DB_USERNAME: ${IMMICH_DB_USERNAME}
+      DB_PASSWORD: ${IMMICH_DB_PASSWORD}
+      DB_DATABASE_NAME: ${IMMICH_DB_DATABASE_NAME}
+      REDIS_HOSTNAME: homelab_redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      UPLOAD_LOCATION: /usr/src/app/upload
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/immich/upload:/usr/src/app/upload
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      immich-postgres:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich_ml
+    restart: unless-stopped
+    # ML container is memory-heavy. If RAM is critically low, stop this
+    # specific container: docker stop immich_ml
+    # Face/CLIP features will degrade but photos still back up.
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/immich/ml-cache:/cache
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Immich-specific PostgreSQL with pgvecto.rs extension
+  immich-postgres:
+    image: ghcr.io/immich-app/postgres:16
+    container_name: immich_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${IMMICH_DB_USERNAME}
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
+      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/immich/db:/var/lib/postgresql/data
+    networks:
+      - homelab_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${IMMICH_DB_USERNAME} -d ${IMMICH_DB_DATABASE_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Pin DB
+
+  # ---------------------------------------------------------------------------
+  # GLUETUN – VPN Gateway Container
+  # qBittorrent routes ALL traffic through this container.
+  # If Gluetun goes down, qBittorrent loses all connectivity (kill switch).
+  # Adjust environment vars for your VPN provider.
+  # Docs: https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
+  # ---------------------------------------------------------------------------
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER}
+      VPN_TYPE: ${VPN_TYPE}
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
+      SERVER_COUNTRIES: ${SERVER_COUNTRIES}
+      TZ: ${TZ}
+      # Expose the qBittorrent Web UI port through Gluetun:
+      HTTPPROXY: "off"
+      SHADOWSOCKS: "off"
+    ports:
+      - "8080:8080"   # qBittorrent Web UI (access via http://host:8080)
+      - "6881:6881"   # qBittorrent TCP
+      - "6881:6881/udp"
+    networks:
+      - homelab_proxy   # So NPM can reach the Web UI via Gluetun's IP
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # QBITTORRENT – Torrent Client
+  # CRITICAL: network_mode routes ALL traffic through Gluetun.
+  # This container has NO direct network access – it inherits Gluetun's VPN.
+  # ---------------------------------------------------------------------------
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    network_mode: service:gluetun    # ← All traffic through VPN – DO NOT CHANGE
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      WEBUI_PORT: 8080
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/qbittorrent/config:/config
+      - ${DATA_PATH}/shared/downloads:/downloads
+    depends_on:
+      - gluetun
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"

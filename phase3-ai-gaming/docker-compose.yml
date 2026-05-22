@@ -1,0 +1,191 @@
+# =============================================================================
+# PHASE 3 – AI, GAMING, & UTILITY
+# Always-On: Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant,
+#             Spoolman, Actual Budget
+#
+# Prereq: Phase 1 must be running.
+# GPU Prereq: NVIDIA Container Toolkit must be installed on the host.
+#   Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#
+# Run:  docker compose --env-file ../.env up -d
+# =============================================================================
+
+networks:
+  homelab_proxy:
+    external: true
+  homelab_internal:
+    external: true
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # OLLAMA – Local LLM Inference Engine
+  # CRITICAL: deploy block grants access to the NVIDIA RTX 3050.
+  # The toolkit must be installed on the host BEFORE starting this container.
+  # Proxy target: ollama:11434  (used internally by Open WebUI)
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/ollama:/root/.ollama
+    networks:
+      - homelab_internal           # Open WebUI talks to it internally
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # OPEN WEBUI – Chat UI for Ollama (and OpenAI-compatible APIs)
+  # Proxy target: open-webui:8080
+  # ---------------------------------------------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open_webui
+    restart: unless-stopped
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_SECRET_KEY: ${N8N_ENCRYPTION_KEY}   # Reuse a strong secret for session signing
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      - ollama
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # MINECRAFT – Game Server (itzg/minecraft-server)
+  # Port 25565 exposed directly (not behind NPM – TCP, not HTTP).
+  # Modpack: Configure MODPACK_URL or TYPE=FORGE and drop mods in /data/mods.
+  # See all env vars: https://github.com/itzg/docker-minecraft-server
+  # ---------------------------------------------------------------------------
+  minecraft:
+    image: itzg/minecraft-server:latest
+    container_name: minecraft
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: ${MINECRAFT_EULA}
+      MEMORY: ${MINECRAFT_MEMORY}
+      TYPE: ${MINECRAFT_TYPE}       # FORGE for Biomes O' Plenty
+      VERSION: ${MINECRAFT_VERSION}
+      OPS: ${MINECRAFT_OPS}
+      TZ: ${TZ}
+      # Biomes O' Plenty & heavy mods need more memory – tune MINECRAFT_MEMORY.
+      # For a CurseForge modpack, set TYPE=AUTO and MODPACK_URL=<manifest url>
+      DIFFICULTY: normal
+      MAX_PLAYERS: 10
+      VIEW_DISTANCE: 8             # Reduce if server lags under 16GB RAM
+      MOTD: "Homelab Minecraft"
+      SPAWN_PROTECTION: 0
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/minecraft:/data
+    # No network needed – only exposes port to LAN
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Pin game server version
+
+  # ---------------------------------------------------------------------------
+  # N8N – Workflow Automation
+  # Proxy target: n8n:5678
+  # Uses central postgres (database: n8n).
+  # ---------------------------------------------------------------------------
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      N8N_HOST: n8n.${DOMAIN}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.${DOMAIN}/
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: homelab_postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET}
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/n8n:/home/node/.n8n
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # HOME ASSISTANT – Smart Home Hub
+  # Uses host networking for mDNS, Zigbee USB, and LAN device discovery.
+  # Access at: http://host:8123  |  Proxy target: localhost:8123
+  # If you do NOT need host-level discovery, you can remove network_mode: host
+  # and add it to the homelab_proxy network instead.
+  # ---------------------------------------------------------------------------
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    privileged: true              # Required for USB device passthrough (Zigbee/Z-Wave)
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/homeassistant:/config
+      - /run/dbus:/run/dbus:ro    # Bluetooth access
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # SPOOLMAN – 3D Printing Filament Tracker
+  # Proxy target: spoolman:7912
+  # ---------------------------------------------------------------------------
+  spoolman:
+    image: ghcr.io/donkie/spoolman:latest
+    container_name: spoolman
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/spoolman:/home/app/.local/share/spoolman
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # ACTUAL BUDGET – Local-First Personal Finance
+  # Proxy target: actual-budget:5006
+  # ---------------------------------------------------------------------------
+  actual-budget:
+    image: docker.io/actualbudget/actual-server:latest
+    container_name: actual_budget
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/actual:/data
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"

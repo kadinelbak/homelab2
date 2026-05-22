@@ -1,0 +1,275 @@
+# =============================================================================
+# PHASE 1 – CORE INFRASTRUCTURE
+# Always-On: Central DB/Cache, Portainer, NPM, Authentik, Homepage,
+#             Beszel, Uptime Kuma, Watchtower, ntfy
+#
+# Run:  docker compose --env-file ../.env up -d
+# =============================================================================
+
+networks:
+  # Shared across ALL phases – created here, referenced as external elsewhere.
+  homelab_proxy:
+    name: homelab_proxy
+    driver: bridge
+  homelab_internal:
+    name: homelab_internal
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# CENTRAL POSTGRESQL
+# Hosts databases for: Authentik, Paperless, n8n, Gitea, Nextcloud,
+#                      Outline, Cal.com, NocoDB, Guacamole
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: homelab_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/postgres:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d:ro
+    networks:
+      - homelab_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Pin DB – no auto-updates
+
+  # ---------------------------------------------------------------------------
+  # CENTRAL REDIS
+  # Used by: Authentik, Paperless-ngx
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: homelab_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/redis:/data
+    networks:
+      - homelab_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Pin cache – no auto-updates
+
+  # ---------------------------------------------------------------------------
+  # PORTAINER – Container Management UI
+  # UI: http://host:9000  |  Proxy to: portainer:9000
+  # ---------------------------------------------------------------------------
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_PATH}/phase1-core/data/portainer:/data
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # NGINX PROXY MANAGER – Reverse Proxy & SSL
+  # Admin UI port 81 – ONLY expose this during initial setup, then firewall it.
+  # ---------------------------------------------------------------------------
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      - "80:80"           # HTTP (redirect to HTTPS)
+      - "443:443"         # HTTPS
+      - "127.0.0.1:81:81" # Admin UI – bound to localhost for safety
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/npm/data:/data
+      - ${DATA_PATH}/phase1-core/data/npm/letsencrypt:/etc/letsencrypt
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # AUTHENTIK – SSO / Identity Provider
+  # Proxy target: authentik-server:9000
+  # ---------------------------------------------------------------------------
+  authentik-server:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik_server
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_REDIS__HOST: homelab_redis
+      AUTHENTIK_REDIS__PASSWORD: ${REDIS_PASSWORD}
+      AUTHENTIK_POSTGRESQL__HOST: homelab_postgres
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_LOG_LEVEL: warning
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/authentik/media:/media
+      - ${DATA_PATH}/phase1-core/data/authentik/custom-templates:/templates
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:latest
+    container_name: authentik_worker
+    restart: unless-stopped
+    command: worker
+    # Worker runs as root to access docker socket for blueprints; this matches
+    # the official Authentik docker-compose recommendation.
+    environment:
+      AUTHENTIK_REDIS__HOST: homelab_redis
+      AUTHENTIK_REDIS__PASSWORD: ${REDIS_PASSWORD}
+      AUTHENTIK_POSTGRESQL__HOST: homelab_postgres
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_PATH}/phase1-core/data/authentik/media:/media
+      - ${DATA_PATH}/phase1-core/data/authentik/certs:/certs
+      - ${DATA_PATH}/phase1-core/data/authentik/custom-templates:/templates
+    networks:
+      - homelab_internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # HOMEPAGE – Service Dashboard
+  # Proxy target: homepage:3000
+  # ---------------------------------------------------------------------------
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # BESZEL – Lightweight System Monitoring
+  # Hub proxy target: beszel-hub:8090
+  # Agent uses host networking for full system metric access.
+  # ---------------------------------------------------------------------------
+  beszel-hub:
+    image: henrygd/beszel:latest
+    container_name: beszel_hub
+    restart: unless-stopped
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/beszel/hub:/beszel_data
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: beszel_agent
+    restart: unless-stopped
+    network_mode: host          # Required for host-level metrics
+    pid: host                   # Required for process metrics
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      PORT: 45876
+      KEY: ${BESZEL_KEY}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # UPTIME KUMA – Service Uptime Monitoring
+  # Proxy target: uptime-kuma:3001
+  # ---------------------------------------------------------------------------
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: uptime_kuma
+    restart: unless-stopped
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/uptime-kuma:/app/data
+    networks:
+      - homelab_proxy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # ---------------------------------------------------------------------------
+  # WATCHTOWER – Automated Container Updates
+  # Label-controlled: only updates containers with watchtower.enable=true.
+  # Runs nightly at 4 AM, notifies via ntfy.
+  # ---------------------------------------------------------------------------
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"   # Cron: 04:00 daily
+      WATCHTOWER_NOTIFICATIONS: apprise
+      WATCHTOWER_NOTIFICATION_APPRISE_URL: "ntfys://${NTFY_TOPIC}@ntfy:80/?title=Watchtower"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - homelab_internal
+    depends_on:
+      - ntfy
+
+  # ---------------------------------------------------------------------------
+  # NTFY – Push Notification Server
+  # Proxy target: ntfy:80
+  # Config file: ${DATA_PATH}/phase1-core/data/ntfy/etc/server.yml
+  # ---------------------------------------------------------------------------
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    restart: unless-stopped
+    command: serve
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/ntfy/cache:/var/cache/ntfy
+      - ${DATA_PATH}/phase1-core/data/ntfy/etc:/etc/ntfy
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
