@@ -43,6 +43,11 @@ services:
               capabilities: [gpu]
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility Internal"
+      - "homepage.name=Ollama"
+      - "homepage.icon=ollama"
+      - "homepage.description=Local LLM API"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # OPEN WEBUI – Chat UI for Ollama (and OpenAI-compatible APIs)
@@ -64,6 +69,11 @@ services:
       - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=Open WebUI"
+      - "homepage.icon=open-webui"
+      - "homepage.href=https://ai.${DOMAIN}"
+      - "homepage.description=Chat interface for Ollama"
 
   # ---------------------------------------------------------------------------
   # MINECRAFT – Game Server (itzg/minecraft-server)
@@ -98,6 +108,11 @@ services:
     # No network needed – only exposes port to LAN
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin game server version
+      - "homepage.group=AI and Utility Internal"
+      - "homepage.name=Minecraft"
+      - "homepage.icon=minecraft"
+      - "homepage.description=Minecraft TCP server"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # N8N – Workflow Automation
@@ -132,6 +147,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=n8n"
+      - "homepage.icon=n8n"
+      - "homepage.href=https://n8n.${DOMAIN}"
+      - "homepage.description=Workflow automation"
 
   # ---------------------------------------------------------------------------
   # HOME ASSISTANT – Smart Home Hub
@@ -153,6 +173,11 @@ services:
       - /run/dbus:/run/dbus:ro    # Bluetooth access
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=Home Assistant"
+      - "homepage.icon=home-assistant"
+      - "homepage.href=http://${DOCKER_HOST_IP}:8123"
+      - "homepage.description=Smart home hub"
 
   # ---------------------------------------------------------------------------
   # SPOOLMAN – 3D Printing Filament Tracker
@@ -171,6 +196,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=Spoolman"
+      - "homepage.icon=spoolman"
+      - "homepage.href=https://spoolman.${DOMAIN}"
+      - "homepage.description=Filament tracking"
 
   # ---------------------------------------------------------------------------
   # ACTUAL BUDGET – Local-First Personal Finance
@@ -189,3 +219,8 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=AI and Utility"
+      - "homepage.name=Actual Budget"
+      - "homepage.icon=actual-budget"
+      - "homepage.href=https://budget.${DOMAIN}"
+      - "homepage.description=Personal finance"

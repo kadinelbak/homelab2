@@ -1,0 +1,4 @@
+# Default Docker provider for Homepage auto-discovery.
+# This is copied into ${DATA_PATH}/phase1-core/data/homepage/docker.yaml by setup.sh if missing.
+my-docker:
+  socket: /var/run/docker.sock

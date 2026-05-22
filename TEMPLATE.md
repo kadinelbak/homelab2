@@ -23,6 +23,9 @@ Edit `.env`:
 - VPN credentials
 - app-specific admin credentials
 
+Use this complete source guide for every variable:
+- [ENV_REFERENCE.md](ENV_REFERENCE.md)
+
 ### User/Permission IDs
 
 Set to your host user:

@@ -42,6 +42,11 @@ services:
       start_period: 30s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin DB – no auto-updates
+      - "homepage.group=Core Internal"
+      - "homepage.name=Postgres"
+      - "homepage.icon=postgresql"
+      - "homepage.description=Central PostgreSQL"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # CENTRAL REDIS
@@ -64,6 +69,11 @@ services:
       start_period: 10s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin cache – no auto-updates
+      - "homepage.group=Core Internal"
+      - "homepage.name=Redis"
+      - "homepage.icon=redis"
+      - "homepage.description=Central Redis cache"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # PORTAINER – Container Management UI
@@ -80,6 +90,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Portainer"
+      - "homepage.icon=portainer"
+      - "homepage.href=https://portainer.${DOMAIN}"
+      - "homepage.description=Container management"
 
   # ---------------------------------------------------------------------------
   # NGINX PROXY MANAGER – Reverse Proxy & SSL
@@ -101,6 +116,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Nginx Proxy Manager"
+      - "homepage.icon=nginx-proxy-manager"
+      - "homepage.href=http://${DOCKER_HOST_IP}:81"
+      - "homepage.description=Reverse proxy admin"
 
   # ---------------------------------------------------------------------------
   # AUTHENTIK – SSO / Identity Provider
@@ -134,6 +154,11 @@ services:
         condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Authentik"
+      - "homepage.icon=authentik"
+      - "homepage.href=https://auth.${DOMAIN}"
+      - "homepage.description=Identity and SSO"
 
   authentik-worker:
     image: ghcr.io/goauthentik/server:latest
@@ -165,6 +190,11 @@ services:
         condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core Internal"
+      - "homepage.name=Authentik Worker"
+      - "homepage.icon=authentik"
+      - "homepage.description=Background worker"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # HOMEPAGE – Service Dashboard
@@ -184,6 +214,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Homepage"
+      - "homepage.icon=homepage"
+      - "homepage.href=https://home.${DOMAIN}"
+      - "homepage.description=Service dashboard"
 
   # ---------------------------------------------------------------------------
   # BESZEL – Lightweight System Monitoring
@@ -200,6 +235,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Beszel Hub"
+      - "homepage.icon=beszel"
+      - "homepage.href=https://beszel.${DOMAIN}"
+      - "homepage.description=Host monitoring"
 
   beszel-agent:
     image: henrygd/beszel-agent:latest
@@ -214,6 +254,11 @@ services:
       KEY: ${BESZEL_KEY}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core Internal"
+      - "homepage.name=Beszel Agent"
+      - "homepage.icon=beszel"
+      - "homepage.description=Metrics collector"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # UPTIME KUMA – Service Uptime Monitoring
@@ -229,6 +274,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=Uptime Kuma"
+      - "homepage.icon=uptime-kuma"
+      - "homepage.href=https://status.${DOMAIN}"
+      - "homepage.description=Uptime monitoring"
 
   # ---------------------------------------------------------------------------
   # WATCHTOWER – Automated Container Updates
@@ -251,6 +301,13 @@ services:
       - homelab_internal
     depends_on:
       - ntfy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=Core Internal"
+      - "homepage.name=Watchtower"
+      - "homepage.icon=watchtower"
+      - "homepage.description=Automated updates"
+      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # NTFY – Push Notification Server
@@ -273,3 +330,8 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Core"
+      - "homepage.name=ntfy"
+      - "homepage.icon=ntfy"
+      - "homepage.href=https://ntfy.${DOMAIN}"
+      - "homepage.description=Push notifications"

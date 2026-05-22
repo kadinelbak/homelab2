@@ -168,6 +168,14 @@ for dir in "${dirs[@]}"; do
 done
 
 echo "  Created $(echo "${dirs[@]}" | wc -w) directories."
+
+# Seed Homepage docker discovery config on first run.
+HOMEPAGE_CONFIG_DIR="${DATA_PATH}/phase1-core/data/homepage"
+if [[ ! -f "${HOMEPAGE_CONFIG_DIR}/docker.yaml" ]]; then
+  cp "${REPO_ROOT}/phase1-core/homepage/docker.yaml" "${HOMEPAGE_CONFIG_DIR}/docker.yaml"
+  echo "  Seeded Homepage docker.yaml"
+fi
+
 echo ""
 
 # ---------------------------------------------------------------------------

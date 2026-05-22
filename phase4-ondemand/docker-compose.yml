@@ -53,6 +53,11 @@ services:
       - "444:443"     # Kasm built-in HTTPS
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Kasm"
+      - "homepage.icon=kasm-workspaces"
+      - "homepage.href=https://${DOCKER_HOST_IP}:444"
+      - "homepage.description=Browser desktops"
 
   # ---------------------------------------------------------------------------
   # APACHE GUACAMOLE – Clientless Remote Desktop Gateway
@@ -71,6 +76,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand Internal"
+      - "homepage.name=Guacd"
+      - "homepage.icon=apache-guacamole"
+      - "homepage.description=Guacamole daemon"
+      - "homepage.enabled=false"
 
   guacamole:
     <<: *ondemand
@@ -89,6 +99,11 @@ services:
       - guacd
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Guacamole"
+      - "homepage.icon=apache-guacamole"
+      - "homepage.href=https://guac.${DOMAIN}"
+      - "homepage.description=Remote desktop gateway"
 
   # ===========================================================================
   # CLOUD / DEVOPS
@@ -124,6 +139,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Nextcloud"
+      - "homepage.icon=nextcloud"
+      - "homepage.href=https://cloud.${DOMAIN}"
+      - "homepage.description=File sync and collaboration"
 
   # ---------------------------------------------------------------------------
   # GITEA – Lightweight Self-Hosted Git
@@ -160,6 +180,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Gitea"
+      - "homepage.icon=gitea"
+      - "homepage.href=https://git.${DOMAIN}"
+      - "homepage.description=Git hosting"
 
   # ---------------------------------------------------------------------------
   # SUPABASE – Open Source Firebase Alternative
@@ -187,6 +212,11 @@ services:
     # NOTE: For full Supabase, clone their official repo. This is just the Studio UI.
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Supabase Studio"
+      - "homepage.icon=supabase"
+      - "homepage.href=https://supabase.${DOMAIN}"
+      - "homepage.description=Supabase admin UI"
 
   # ===========================================================================
   # KNOWLEDGE & PRODUCTIVITY
@@ -209,6 +239,11 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Kiwix"
+      - "homepage.icon=kiwix"
+      - "homepage.href=https://kiwix.${DOMAIN}"
+      - "homepage.description=Offline knowledge library"
 
   # ---------------------------------------------------------------------------
   # DOCMOST – Team Knowledge Base / Wiki (Outline alternative)
@@ -231,6 +266,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Docmost"
+      - "homepage.icon=docmost"
+      - "homepage.href=https://wiki.${DOMAIN}"
+      - "homepage.description=Knowledge base"
 
   # ---------------------------------------------------------------------------
   # CAL.COM – Open Source Scheduling
@@ -254,6 +294,11 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=Cal.com"
+      - "homepage.icon=cal"
+      - "homepage.href=https://cal.${DOMAIN}"
+      - "homepage.description=Scheduling platform"
 
   # ---------------------------------------------------------------------------
   # NOCODB – Airtable Alternative / No-Code Database UI
@@ -275,3 +320,8 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=On-Demand"
+      - "homepage.name=NocoDB"
+      - "homepage.icon=nocodb"
+      - "homepage.href=https://nocodb.${DOMAIN}"
+      - "homepage.description=No-code database UI"

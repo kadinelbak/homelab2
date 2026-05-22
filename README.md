@@ -105,6 +105,10 @@ cp .env.example .env
 
 4. Fill **all** `CHANGEME_*` values in `.env`.
 
+5. Use the full variable-by-variable guide:
+
+- [ENV_REFERENCE.md](ENV_REFERENCE.md)
+
 ## 5. Phased Rollout Plan
 
 ### Phase 1: Core Foundation (must come first)
