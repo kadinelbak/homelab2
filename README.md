@@ -170,8 +170,19 @@ Critical checks:
 2. Point Open WebUI to `http://ollama:11434` (already prewired).
 3. Tune Minecraft memory (`MINECRAFT_MEMORY`) to avoid host swapping.
 4. Confirm n8n can connect to central Postgres (`n8n` database).
-5. Validate Stirling PDF on port `8086`.
-6. Validate IT-Tools on port `8087`.
+5. For direct HTTP access to n8n, keep `N8N_PROTOCOL=http` and `N8N_SECURE_COOKIE=false`.
+6. Validate Spoolman responds on host port `7912` (container listens on `8000`).
+7. Validate Stirling PDF on port `8086`.
+8. Validate IT-Tools on port `8087`.
+
+Phase 3 access URLs:
+- `http://<tailnet-host>:8080` -> Open WebUI
+- `http://<tailnet-host>:5678` -> n8n
+- `http://<tailnet-host>:8123` -> Home Assistant
+- `http://<tailnet-host>:7912` -> Spoolman
+- `http://<tailnet-host>:5006` -> Actual Budget
+- `http://<tailnet-host>:8086` -> Stirling PDF
+- `http://<tailnet-host>:8087` -> IT-Tools
 
 ### Phase 4: On-Demand Heavy Stack
 
@@ -278,6 +289,16 @@ docker exec -i homelab_postgres psql -U homelab -d guacamole < /tmp/guacamole-in
 - `http://<tailnet-host>:81` -> Nginx Proxy Manager UI
 - `https://<tailnet-host>:4443` -> Vaultwarden via NPM TLS endpoint
 - `http://<tailnet-host>:8089` -> Scrutiny
+
+## 13. Service URLs (current Phase 3)
+
+- `http://<tailnet-host>:8080` -> Open WebUI
+- `http://<tailnet-host>:5678` -> n8n
+- `http://<tailnet-host>:8123` -> Home Assistant
+- `http://<tailnet-host>:7912` -> Spoolman
+- `http://<tailnet-host>:5006` -> Actual Budget
+- `http://<tailnet-host>:8086` -> Stirling PDF
+- `http://<tailnet-host>:8087` -> IT-Tools
 - `http://<tailnet-host>:8090` -> Beszel Hub
 - `http://<tailnet-host>:8085` -> ntfy
 

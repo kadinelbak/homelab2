@@ -254,11 +254,12 @@ services:
       - "homepage.description=Host monitoring"
 
   beszel-agent:
-    image: henrygd/beszel-agent:latest
+    image: henrygd/beszel-agent-nvidia:latest
     container_name: beszel_agent
     restart: unless-stopped
     network_mode: host          # Required for host-level metrics
     pid: host                   # Required for process metrics
+    gpus: all
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/beszel/agent:/var/lib/beszel-agent
@@ -267,6 +268,7 @@ services:
       KEY: ${BESZEL_KEY}
       TOKEN: ${BESZEL_TOKEN}
       HUB_URL: ${BESZEL_HUB_URL:-http://127.0.0.1:8090}
+      GPU_COLLECTOR: nvml
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Core Internal"

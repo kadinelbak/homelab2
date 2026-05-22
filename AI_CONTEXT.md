@@ -118,6 +118,27 @@ docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
 
 3. Confirm `deploy.resources.reservations.devices` block is present for Ollama.
 
+### Spoolman reachable in container, not on host port
+
+Cause:
+- Wrong host mapping (using `7912:7912`) while Spoolman listens on container port `8000`.
+
+Fix:
+1. Use `7912:8000` in Phase 3 compose.
+2. Recreate service: `cd phase3-ai-gaming && docker compose --env-file ../.env up -d spoolman`.
+3. Validate: `curl -I http://localhost:7912` should return `200`.
+
+### n8n login/session issues on direct HTTP access
+
+Cause:
+- Secure cookie/protocol mismatch when n8n is configured for HTTPS but accessed over HTTP.
+
+Fix:
+1. Set `N8N_PROTOCOL=http`.
+2. Set `N8N_SECURE_COOKIE=false`.
+3. Set `WEBHOOK_URL=http://<tailnet-host>:5678/`.
+4. Recreate n8n and confirm logs show editor URL on `http://...:5678`.
+
 ### NPM proxy host not reachable
 
 Checks:

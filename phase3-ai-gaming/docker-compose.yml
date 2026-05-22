@@ -128,10 +128,11 @@ services:
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
-      N8N_HOST: n8n.${DOMAIN}
+      N8N_HOST: ${DOMAIN}
       N8N_PORT: 5678
-      N8N_PROTOCOL: https
-      WEBHOOK_URL: https://n8n.${DOMAIN}/
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://${DOMAIN}:5678/
+      N8N_SECURE_COOKIE: "false"
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: homelab_postgres
       DB_POSTGRESDB_PORT: 5432
@@ -185,19 +186,18 @@ services:
 
   # ---------------------------------------------------------------------------
   # SPOOLMAN – 3D Printing Filament Tracker
-  # Proxy target: spoolman:7912
+  # Proxy target: spoolman:8000
   # ---------------------------------------------------------------------------
   spoolman:
     image: ghcr.io/donkie/spoolman:latest
     container_name: spoolman
     restart: unless-stopped
-    user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/spoolman:/home/app/.local/share/spoolman
     ports:
-      - "7912:7912"
+      - "7912:8000"
     networks:
       - homelab_proxy
     labels:
@@ -230,7 +230,7 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=Actual Budget"
       - "homepage.icon=actual-budget"
-      - "homepage.href=http://${DOMAIN}:5006"
+      - "homepage.href=http://localhost:5006"
       - "homepage.description=Personal finance"
 
   # ---------------------------------------------------------------------------
