@@ -42,11 +42,6 @@ services:
       start_period: 30s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin DB – no auto-updates
-      - "homepage.group=Core Internal"
-      - "homepage.name=Postgres"
-      - "homepage.icon=postgresql"
-      - "homepage.description=Central PostgreSQL"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # CENTRAL REDIS
@@ -69,11 +64,6 @@ services:
       start_period: 10s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin cache – no auto-updates
-      - "homepage.group=Core Internal"
-      - "homepage.name=Redis"
-      - "homepage.icon=redis"
-      - "homepage.description=Central Redis cache"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # PORTAINER – Container Management UI
@@ -92,7 +82,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Maintenance"
       - "homepage.name=Portainer"
       - "homepage.icon=portainer"
       - "homepage.href=http://${DOMAIN}:9000"
@@ -119,7 +109,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Maintenance"
       - "homepage.name=Nginx Proxy Manager"
       - "homepage.icon=nginx-proxy-manager"
       - "homepage.href=http://${DOMAIN}:81"
@@ -159,7 +149,7 @@ services:
         condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Maintenance"
       - "homepage.name=Authentik"
       - "homepage.icon=authentik"
       - "homepage.href=http://${DOMAIN}:9001"
@@ -195,11 +185,6 @@ services:
         condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core Internal"
-      - "homepage.name=Authentik Worker"
-      - "homepage.icon=authentik"
-      - "homepage.description=Background worker"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # HOMEPAGE – Service Dashboard
@@ -224,11 +209,6 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
-      - "homepage.name=Homepage"
-      - "homepage.icon=homepage"
-      - "homepage.href=http://${DOMAIN}:3000"
-      - "homepage.description=Service dashboard"
 
   # ---------------------------------------------------------------------------
   # BESZEL – Lightweight System Monitoring
@@ -247,7 +227,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Monitoring"
       - "homepage.name=Beszel Hub"
       - "homepage.icon=beszel"
       - "homepage.href=http://${DOMAIN}:8090"
@@ -271,11 +251,6 @@ services:
       GPU_COLLECTOR: nvml
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core Internal"
-      - "homepage.name=Beszel Agent"
-      - "homepage.icon=beszel"
-      - "homepage.description=Metrics collector"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # UPTIME KUMA – Service Uptime Monitoring
@@ -293,7 +268,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Monitoring"
       - "homepage.name=Uptime Kuma"
       - "homepage.icon=uptime-kuma"
       - "homepage.href=http://${DOMAIN}:3001"
@@ -321,11 +296,6 @@ services:
       - ntfy
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
-      - "homepage.group=Core Internal"
-      - "homepage.name=Watchtower"
-      - "homepage.icon=watchtower"
-      - "homepage.description=Automated updates"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # SCRUTINY – Drive Health Monitoring
@@ -359,7 +329,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Monitoring"
       - "homepage.name=Scrutiny"
       - "homepage.icon=harddisk"
       - "homepage.href=http://${DOMAIN}:8089"
@@ -396,7 +366,7 @@ services:
         condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Maintenance"
       - "homepage.name=Vaultwarden"
       - "homepage.icon=vaultwarden"
       - "homepage.href=https://${DOMAIN}:4443"
@@ -425,7 +395,7 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
+      - "homepage.group=Maintenance"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy"
       - "homepage.href=http://${DOMAIN}:8085"

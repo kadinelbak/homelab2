@@ -32,6 +32,8 @@ services:
       OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
     networks:
       - homelab_internal           # Open WebUI talks to it internally
     deploy:
@@ -43,11 +45,6 @@ services:
               capabilities: [gpu]
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility Internal"
-      - "homepage.name=Ollama"
-      - "homepage.icon=ollama"
-      - "homepage.description=Local LLM API"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # OPEN WEBUI – Chat UI for Ollama (and OpenAI-compatible APIs)
@@ -71,7 +68,7 @@ services:
       - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=AI Automations"
       - "homepage.name=Open WebUI"
       - "homepage.icon=open-webui"
       - "homepage.href=http://${DOMAIN}:8080"
@@ -110,11 +107,6 @@ services:
     # No network needed – only exposes port to LAN
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin game server version
-      - "homepage.group=AI and Utility Internal"
-      - "homepage.name=Minecraft"
-      - "homepage.icon=minecraft"
-      - "homepage.description=Minecraft TCP server"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # N8N – Workflow Automation
@@ -152,7 +144,7 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=AI Automations"
       - "homepage.name=n8n"
       - "homepage.icon=n8n"
       - "homepage.href=http://${DOMAIN}:5678"
@@ -178,7 +170,7 @@ services:
       - /run/dbus:/run/dbus:ro    # Bluetooth access
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=Tools"
       - "homepage.name=Home Assistant"
       - "homepage.icon=home-assistant"
       - "homepage.href=http://${DOMAIN}:8123"
@@ -202,7 +194,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=Tools"
       - "homepage.name=Spoolman"
       - "homepage.icon=spoolman"
       - "homepage.href=http://${DOMAIN}:7912"
@@ -227,7 +219,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=Tools"
       - "homepage.name=Actual Budget"
       - "homepage.icon=actual-budget"
       - "homepage.href=http://localhost:5006"
@@ -251,7 +243,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=Tools"
       - "homepage.name=Stirling PDF"
       - "homepage.icon=stirling-pdf"
       - "homepage.href=http://${DOMAIN}:8086"
@@ -273,7 +265,7 @@ services:
       - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=AI and Utility"
+      - "homepage.group=Tools"
       - "homepage.name=IT-Tools"
       - "homepage.icon=it-tools"
       - "homepage.href=http://${DOMAIN}:8087"

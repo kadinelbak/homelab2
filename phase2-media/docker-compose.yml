@@ -111,7 +111,7 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media"
+      - "homepage.group=Tools"
       - "homepage.name=Paperless-ngx"
       - "homepage.icon=paperless-ngx"
       - "homepage.href=http://${DOMAIN}:8000"
@@ -199,11 +199,6 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media Internal"
-      - "homepage.name=Immich ML"
-      - "homepage.icon=immich"
-      - "homepage.description=Machine learning worker"
-      - "homepage.enabled=false"
 
   # Immich-specific PostgreSQL with vectorchord extension
   immich-postgres:
@@ -227,11 +222,6 @@ services:
       retries: 5
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin DB
-      - "homepage.group=Media Internal"
-      - "homepage.name=Immich Postgres"
-      - "homepage.icon=postgresql"
-      - "homepage.description=Immich database"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # GLUETUN – VPN Gateway Container
@@ -268,11 +258,6 @@ services:
       - homelab_proxy   # So NPM can reach the Web UI via Gluetun's IP
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media Internal"
-      - "homepage.name=Gluetun"
-      - "homepage.icon=gluetun"
-      - "homepage.description=VPN gateway for qBittorrent"
-      - "homepage.enabled=false"
 
   # ---------------------------------------------------------------------------
   # QBITTORRENT – Torrent Client
@@ -298,7 +283,7 @@ services:
       - gluetun
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media"
+      - "homepage.group=Media Automations"
       - "homepage.name=qBittorrent"
       - "homepage.icon=qbittorrent"
       - "homepage.href=http://${DOCKER_HOST_IP}:8080"
@@ -326,7 +311,7 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media"
+      - "homepage.group=Media Automations"
       - "homepage.name=Prowlarr"
       - "homepage.icon=prowlarr"
       - "homepage.href=http://${DOMAIN}:9696"
@@ -356,7 +341,7 @@ services:
       - homelab_internal
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Media"
+      - "homepage.group=Media Automations"
       - "homepage.name=Bazarr"
       - "homepage.icon=bazarr"
       - "homepage.href=http://${DOMAIN}:6767"
