@@ -34,22 +34,16 @@ services:
       - ${DATA_PATH}/phase2-media/data/jellyfin/config:/config
       - ${DATA_PATH}/phase2-media/data/jellyfin/cache:/cache
       - ${DATA_PATH}/shared/media:/media:ro    # Shared media library (read-only)
+    ports:
+      - "8096:8096"
     networks:
       - homelab_proxy
-    # Uncomment for NVIDIA GPU transcoding:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media"
       - "homepage.name=Jellyfin"
       - "homepage.icon=jellyfin"
-      - "homepage.href=https://jellyfin.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:8096"
       - "homepage.description=Media server"
 
   # ---------------------------------------------------------------------------
@@ -69,6 +63,8 @@ services:
       - ${DATA_PATH}/phase2-media/data/audiobookshelf/metadata:/metadata
       - ${DATA_PATH}/shared/media/audiobooks:/audiobooks
       - ${DATA_PATH}/shared/media/podcasts:/podcasts
+    ports:
+      - "13378:13378"
     networks:
       - homelab_proxy
     labels:
@@ -76,7 +72,7 @@ services:
       - "homepage.group=Media"
       - "homepage.name=Audiobookshelf"
       - "homepage.icon=audiobookshelf"
-      - "homepage.href=https://audiobooks.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:13378"
       - "homepage.description=Audiobooks and podcasts"
 
   # ---------------------------------------------------------------------------
@@ -107,6 +103,8 @@ services:
       - ${DATA_PATH}/phase2-media/data/paperless/media:/usr/src/paperless/media
       - ${DATA_PATH}/phase2-media/data/paperless/export:/usr/src/paperless/export
       - ${DATA_PATH}/phase2-media/data/paperless/consume:/usr/src/paperless/consume
+    ports:
+      - "8000:8000"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -115,7 +113,7 @@ services:
       - "homepage.group=Media"
       - "homepage.name=Paperless-ngx"
       - "homepage.icon=paperless-ngx"
-      - "homepage.href=https://paperless.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:8000"
       - "homepage.description=Document management"
 
   # ---------------------------------------------------------------------------
@@ -138,6 +136,8 @@ services:
       UPLOAD_LOCATION: /usr/src/app/upload
     volumes:
       - ${DATA_PATH}/phase2-media/data/immich/upload:/usr/src/app/upload
+    ports:
+      - "2283:2283"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -149,7 +149,7 @@ services:
       - "homepage.group=Media"
       - "homepage.name=Immich"
       - "homepage.icon=immich"
-      - "homepage.href=https://photos.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:2283"
       - "homepage.description=Photo and video backup"
 
   immich-machine-learning:

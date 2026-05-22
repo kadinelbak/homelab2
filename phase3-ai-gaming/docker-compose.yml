@@ -62,6 +62,8 @@ services:
       WEBUI_SECRET_KEY: ${N8N_ENCRYPTION_KEY}   # Reuse a strong secret for session signing
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
+    ports:
+      - "8080:8080"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -72,7 +74,7 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=Open WebUI"
       - "homepage.icon=open-webui"
-      - "homepage.href=https://ai.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:8080"
       - "homepage.description=Chat interface for Ollama"
 
   # ---------------------------------------------------------------------------
@@ -142,6 +144,8 @@ services:
       EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/n8n:/home/node/.n8n
+    ports:
+      - "5678:5678"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -150,7 +154,7 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=n8n"
       - "homepage.icon=n8n"
-      - "homepage.href=https://n8n.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:5678"
       - "homepage.description=Workflow automation"
 
   # ---------------------------------------------------------------------------
@@ -176,7 +180,7 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=Home Assistant"
       - "homepage.icon=home-assistant"
-      - "homepage.href=http://${DOCKER_HOST_IP}:8123"
+      - "homepage.href=http://${DOMAIN}:8123"
       - "homepage.description=Smart home hub"
 
   # ---------------------------------------------------------------------------
@@ -192,6 +196,8 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/spoolman:/home/app/.local/share/spoolman
+    ports:
+      - "7912:7912"
     networks:
       - homelab_proxy
     labels:
@@ -199,7 +205,7 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=Spoolman"
       - "homepage.icon=spoolman"
-      - "homepage.href=https://spoolman.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:7912"
       - "homepage.description=Filament tracking"
 
   # ---------------------------------------------------------------------------
@@ -215,6 +221,8 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/actual:/data
+    ports:
+      - "5006:5006"
     networks:
       - homelab_proxy
     labels:
@@ -222,5 +230,5 @@ services:
       - "homepage.group=AI and Utility"
       - "homepage.name=Actual Budget"
       - "homepage.icon=actual-budget"
-      - "homepage.href=https://budget.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:5006"
       - "homepage.description=Personal finance"

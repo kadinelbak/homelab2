@@ -19,10 +19,9 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab` (set in `.env`).
 │       ├── postgres/
 │       ├── redis/
 │       ├── portainer/
-│       ├── npm/{data,letsencrypt}/
 │       ├── authentik/{media,certs,custom-templates}/
 │       ├── homepage/
-│       ├── beszel/hub/
+│       ├── beszel/{hub,agent}/
 │       ├── uptime-kuma/
 │       └── ntfy/{cache,etc}/
 ├── phase2-media/
@@ -60,7 +59,7 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab` (set in `.env`).
 ## 2. What Is In This Repo
 
 - `phase1-core/docker-compose.yml`
-  - Portainer, NPM, Authentik, Homepage, Beszel, Uptime Kuma, Watchtower, ntfy
+  - Portainer, Authentik, Homepage, Beszel, Uptime Kuma, Watchtower, ntfy
   - Central PostgreSQL + Redis
 - `phase1-core/init-db/01-create-databases.sql`
   - Creates shared DBs for downstream services
@@ -119,11 +118,10 @@ docker compose --env-file ../.env up -d
 ```
 
 Do immediately after start:
-1. Open Nginx Proxy Manager admin at `http://localhost:81`.
-2. Change default credentials.
-3. Create SSL certs and proxy hosts.
-4. Open Authentik and complete initial setup.
-5. Add Beszel agent key to `.env` (`BESZEL_KEY`) and restart `beszel-agent`.
+1. Open Homepage and confirm auto-discovered tiles appear.
+2. Open Authentik and complete initial setup.
+3. Add Beszel key + token to `.env` (`BESZEL_KEY`, `BESZEL_TOKEN`) and restart `beszel-agent`.
+4. Create Uptime Kuma admin and seed monitors with `scripts/seed_uptime_kuma.py`.
 
 ### Phase 2: Media and Documents
 
@@ -168,17 +166,17 @@ Or use the helper:
 ./scripts/toggle-ondemand.sh status
 ```
 
-## 6. Proxy and Identity Flow
+## 6. Access and Identity Flow
 
 Recommended path:
-1. Public DNS -> NPM
-2. NPM forward auth / Authentik outpost for protected apps
-3. App container on `homelab_proxy`
-4. Internal dependencies on `homelab_internal`
+1. Tailscale connection on client device
+2. Direct service access via `http://<tailnet-host>:<port>`
+3. Homepage as the launcher for all service links
+4. Authentik as identity provider for services that support SSO
 
 Tailscale note:
 - Keep Tailscale at host level.
-- For admin surfaces, prefer Tailscale ACL + NPM access restrictions.
+- For admin surfaces, prefer Tailscale ACL restrictions.
 
 ## 7. Permissions Model (UID/GID 1000)
 
@@ -242,25 +240,19 @@ docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgresql > 
 docker exec -i homelab_postgres psql -U homelab -d guacamole < /tmp/guacamole-initdb.sql
 ```
 
-### NPM hardening
+### Homepage discovery hardening
 
-1. Bind port 81 to localhost only (already configured).
-2. Restrict access through firewall/Tailscale.
+1. Keep Homepage Docker socket mount read-only.
+2. Keep Homepage running with docker socket group access (`group_add`) and root PUID/PGID.
 
-## 12. Service URLs (suggested)
+## 12. Service URLs (current Phase 1)
 
-- `https://home.<domain>` -> Homepage
-- `https://auth.<domain>` -> Authentik
-- `https://status.<domain>` -> Uptime Kuma
-- `https://portainer.<domain>` -> Portainer
-- `https://jellyfin.<domain>` -> Jellyfin
-- `https://paperless.<domain>` -> Paperless
-- `https://photos.<domain>` -> Immich
-- `https://ai.<domain>` -> Open WebUI
-- `https://n8n.<domain>` -> n8n
-- `https://ha.<domain>` -> Home Assistant (if proxied)
-- `https://cloud.<domain>` -> Nextcloud (on-demand)
-- `https://git.<domain>` -> Gitea (on-demand)
+- `http://<tailnet-host>:3000` -> Homepage
+- `http://<tailnet-host>:9001` -> Authentik
+- `http://<tailnet-host>:3001` -> Uptime Kuma
+- `http://<tailnet-host>:9000` -> Portainer
+- `http://<tailnet-host>:8090` -> Beszel Hub
+- `http://<tailnet-host>:8085` -> ntfy
 
 ## 13. If Something Breaks
 

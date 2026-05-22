@@ -86,6 +86,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/portainer:/data
+    ports:
+      - "9000:9000"
     networks:
       - homelab_proxy
     labels:
@@ -93,34 +95,8 @@ services:
       - "homepage.group=Core"
       - "homepage.name=Portainer"
       - "homepage.icon=portainer"
-      - "homepage.href=https://portainer.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:9000"
       - "homepage.description=Container management"
-
-  # ---------------------------------------------------------------------------
-  # NGINX PROXY MANAGER – Reverse Proxy & SSL
-  # Admin UI port 81 – ONLY expose this during initial setup, then firewall it.
-  # ---------------------------------------------------------------------------
-  npm:
-    image: jc21/nginx-proxy-manager:latest
-    container_name: npm
-    restart: unless-stopped
-    ports:
-      - "80:80"           # HTTP (redirect to HTTPS)
-      - "443:443"         # HTTPS
-      - "127.0.0.1:81:81" # Admin UI – bound to localhost for safety
-    volumes:
-      - ${DATA_PATH}/phase1-core/data/npm/data:/data
-      - ${DATA_PATH}/phase1-core/data/npm/letsencrypt:/etc/letsencrypt
-    networks:
-      - homelab_proxy
-      - homelab_internal
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-      - "homepage.group=Core"
-      - "homepage.name=Nginx Proxy Manager"
-      - "homepage.icon=nginx-proxy-manager"
-      - "homepage.href=http://${DOCKER_HOST_IP}:81"
-      - "homepage.description=Reverse proxy admin"
 
   # ---------------------------------------------------------------------------
   # AUTHENTIK – SSO / Identity Provider
@@ -144,6 +120,8 @@ services:
     volumes:
       - ${DATA_PATH}/phase1-core/data/authentik/media:/media
       - ${DATA_PATH}/phase1-core/data/authentik/custom-templates:/templates
+    ports:
+      - "9001:9000"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -157,7 +135,7 @@ services:
       - "homepage.group=Core"
       - "homepage.name=Authentik"
       - "homepage.icon=authentik"
-      - "homepage.href=https://auth.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:9001"
       - "homepage.description=Identity and SSO"
 
   authentik-worker:
@@ -204,12 +182,17 @@ services:
     image: ghcr.io/gethomepage/homepage:latest
     container_name: homepage
     restart: unless-stopped
+    user: "0:0"  # Needed to read /var/run/docker.sock for label discovery
+    group_add:
+      - "125"     # Host docker group gid for /var/run/docker.sock access
     environment:
-      PUID: ${PUID}
-      PGID: ${PGID}
+      PUID: 0
+      PGID: 0
     volumes:
       - ${DATA_PATH}/phase1-core/data/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "3000:3000"
     networks:
       - homelab_proxy
     labels:
@@ -217,7 +200,7 @@ services:
       - "homepage.group=Core"
       - "homepage.name=Homepage"
       - "homepage.icon=homepage"
-      - "homepage.href=https://home.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:3000"
       - "homepage.description=Service dashboard"
 
   # ---------------------------------------------------------------------------
@@ -231,6 +214,8 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_PATH}/phase1-core/data/beszel/hub:/beszel_data
+    ports:
+      - "8090:8090"
     networks:
       - homelab_proxy
     labels:
@@ -238,7 +223,7 @@ services:
       - "homepage.group=Core"
       - "homepage.name=Beszel Hub"
       - "homepage.icon=beszel"
-      - "homepage.href=https://beszel.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:8090"
       - "homepage.description=Host monitoring"
 
   beszel-agent:
@@ -249,9 +234,12 @@ services:
     pid: host                   # Required for process metrics
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_PATH}/phase1-core/data/beszel/agent:/var/lib/beszel-agent
     environment:
       PORT: 45876
       KEY: ${BESZEL_KEY}
+      TOKEN: ${BESZEL_TOKEN}
+      HUB_URL: ${BESZEL_HUB_URL:-http://127.0.0.1:8090}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Core Internal"
@@ -270,6 +258,8 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_PATH}/phase1-core/data/uptime-kuma:/app/data
+    ports:
+      - "3001:3001"
     networks:
       - homelab_proxy
     labels:
@@ -277,7 +267,7 @@ services:
       - "homepage.group=Core"
       - "homepage.name=Uptime Kuma"
       - "homepage.icon=uptime-kuma"
-      - "homepage.href=https://status.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:3001"
       - "homepage.description=Uptime monitoring"
 
   # ---------------------------------------------------------------------------
@@ -290,11 +280,10 @@ services:
     container_name: watchtower
     restart: unless-stopped
     environment:
+      DOCKER_API_VERSION: "1.44"
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_SCHEDULE: "0 0 4 * * *"   # Cron: 04:00 daily
-      WATCHTOWER_NOTIFICATIONS: apprise
-      WATCHTOWER_NOTIFICATION_APPRISE_URL: "ntfys://${NTFY_TOPIC}@ntfy:80/?title=Watchtower"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -325,6 +314,8 @@ services:
     volumes:
       - ${DATA_PATH}/phase1-core/data/ntfy/cache:/var/cache/ntfy
       - ${DATA_PATH}/phase1-core/data/ntfy/etc:/etc/ntfy
+    ports:
+      - "8085:80"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -333,5 +324,5 @@ services:
       - "homepage.group=Core"
       - "homepage.name=ntfy"
       - "homepage.icon=ntfy"
-      - "homepage.href=https://ntfy.${DOMAIN}"
+      - "homepage.href=http://${DOMAIN}:8085"
       - "homepage.description=Push notifications"
