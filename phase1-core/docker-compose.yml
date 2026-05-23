@@ -198,9 +198,9 @@ services:
     group_add:
       - "125"     # Host docker group gid for /var/run/docker.sock access
     environment:
-      PUID: 0
-      PGID: 0
-      HOMEPAGE_ALLOWED_HOSTS: 10.1.38.234:3000,kadin-main-sys.tail00cf0e.ts.net:3000
+      - PUID=0
+      - PGID=0
+      - HOMEPAGE_ALLOWED_HOSTS=10.1.38.234:3000,kadin-main-sys.tail00cf0e.ts.net:3000
     volumes:
       - ${DATA_PATH}/phase1-core/data/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
