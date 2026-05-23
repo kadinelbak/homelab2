@@ -200,7 +200,7 @@ services:
     environment:
       - PUID=0
       - PGID=0
-      - HOMEPAGE_ALLOWED_HOSTS=10.1.38.234:3000,kadin-main-sys.tail00cf0e.ts.net:3000
+      - HOMEPAGE_ALLOWED_HOSTS=100.79.132.39:3000, localhost, 127.0.0.1, 10.1.38.234:3000,kadin-main-sys.tail00cf0e.ts.net:3000
     volumes:
       - ${DATA_PATH}/phase1-core/data/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
