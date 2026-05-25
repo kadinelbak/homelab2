@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Checkers</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .panel {
+        background: #13233c;
+        border: 1px solid #365a8d;
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+
+      .mode-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        min-width: 180px;
+      }
+
+      .mode-btn.active {
+        background: #4f7fcc;
+      }
+
+      .frame-wrap {
+        width: 100%;
+        height: min(84vh, 980px);
+        border: 1px solid #3a5f94;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0f1e33;
+      }
+
+      .game-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #0f1e33;
+      }
+
+      .hint {
+        margin: 8px 0 0;
+        color: #b9cae3;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <h1>Checkers</h1>
+      <p class="lead">One Checkers game with two modes: quick local play or turn-based multiplayer.</p>
+
+      <section class="panel">
+        <div class="mode-row">
+          <button id="singleBtn" class="mode-btn active" type="button">Single Player</button>
+          <button id="multiBtn" class="mode-btn btn-secondary" type="button">Multiplayer</button>
+        </div>
+        <p id="modeHint" class="hint">Single Player: open-source classic checkers from local vendor files.</p>
+      </section>
+
+      <div class="frame-wrap">
+        <iframe id="checkersFrame" class="game-frame" src="vendor/gamezone/Checkers/index.html" title="Checkers"></iframe>
+      </div>
+    </main>
+
+    <script>
+      const singleBtn = document.getElementById("singleBtn");
+      const multiBtn = document.getElementById("multiBtn");
+      const frame = document.getElementById("checkersFrame");
+      const modeHint = document.getElementById("modeHint");
+
+      function setMode(mode) {
+        if (mode === "single") {
+          frame.src = "vendor/gamezone/Checkers/index.html";
+          singleBtn.classList.add("active");
+          multiBtn.classList.remove("active");
+          modeHint.textContent = "Single Player: open-source classic checkers from local vendor files.";
+          return;
+        }
+
+        frame.src = "checkers-mp.html?embed=1";
+        multiBtn.classList.add("active");
+        singleBtn.classList.remove("active");
+        modeHint.textContent = "Multiplayer: create or join a lobby game powered by the shared game server.";
+      }
+
+      singleBtn.addEventListener("click", () => setMode("single"));
+      multiBtn.addEventListener("click", () => setMode("multi"));
+    </script>
+  </body>
+</html>

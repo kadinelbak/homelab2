@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hearts Multiplayer (Open Source)</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .frame-wrap {
+        width: 100%;
+        height: min(86vh, 980px);
+        border: 1px solid #3a5f94;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0f1e33;
+      }
+
+      .game-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #0f1e33;
+      }
+
+      .muted {
+        color: #b8cae6;
+        margin: 8px 0 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <h1>Hearts Multiplayer (Open Source)</h1>
+      <p class="lead">MIT-licensed multiplayer Hearts adapted for local tailnet play.</p>
+      <p class="muted">Create or join a room inside the game. Server runs locally on port 8094.</p>
+      <div class="frame-wrap">
+        <iframe class="game-frame" src="about:blank" title="Open source hearts multiplayer" id="heartsFrame"></iframe>
+      </div>
+    </main>
+
+    <script>
+      const frame = document.getElementById("heartsFrame");
+      frame.src = window.location.protocol + "//" + window.location.hostname + ":8094";
+    </script>
+  </body>
+</html>

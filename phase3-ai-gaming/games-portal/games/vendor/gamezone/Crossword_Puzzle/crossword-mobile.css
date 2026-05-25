@@ -9,50 +9,72 @@ body {
 body {
   background: radial-gradient(circle at top, #f1e8d7 0, #d4c5ac 40%, #b6a78c 100%);
   overflow-x: hidden;
+  overflow-y: hidden;
   font-family: Arial, sans-serif;
-}
-
-.local-home {
-  position: fixed;
-  right: 12px;
-  bottom: 12px;
-  z-index: 20;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: #2d548b;
-  color: #edf3ff;
-  text-decoration: none;
-  font: 700 16px/1 sans-serif;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
 }
 
 .container {
   width: min(100vw, 1200px);
-  padding: 12px 10px 80px;
+  height: 100vh;
+  padding: 12px 10px 14px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .crosswordDisplay {
   top: 0;
+  position: relative;
 }
 
 .row {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  height: 100%;
+  align-content: start;
+}
+
+#btnCreate,
+#btnPlay {
+  display: none;
+}
+
+#btnReset,
+#btnCheck,
+#btnGen {
+  position: static;
+  left: auto;
+  right: auto;
+  top: auto;
+}
+
+#btnReset {
+  order: 1;
+}
+
+#btnCheck {
+  order: 2;
+}
+
+#btnGen {
+  order: 3;
 }
 
 .btn {
   margin: 0;
   border-radius: 12px;
+  font-size: 18px;
 }
 
 .center.crossword {
+  grid-column: 1 / -1;
+  order: 4;
   overflow-x: auto;
+  overflow-y: auto;
   padding-bottom: 6px;
+  max-height: 38vh;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 10px;
 }
 
 #crossword {
@@ -60,17 +82,30 @@ body {
 }
 
 .col-lg-6 {
+  grid-column: 1 / -1;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
+}
+
+.row > .col-lg-6:first-of-type {
+  order: 5;
+}
+
+.row > .col-lg-6:last-of-type {
+  order: 6;
 }
 
 .clueBlock {
-  margin-bottom: 2.5em;
+  margin-bottom: 0;
+  max-height: 20vh;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .clueDirection {
   margin-left: 0;
-  font-size: 1.35rem;
+  font-size: 1.1rem;
 }
 
 .word,
@@ -80,14 +115,14 @@ body {
 }
 
 .word {
-  width: 28vw;
+  width: 26vw;
   min-width: 92px;
 }
 
 .clue {
-  width: calc(100vw - 140px);
+  width: calc(100vw - 150px);
   min-width: 160px;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .square {
@@ -104,7 +139,15 @@ body {
 
 @media (max-width: 760px) {
   .container {
-    padding-bottom: 92px;
+    padding-bottom: 10px;
+  }
+
+  .row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #btnGen {
+    grid-column: 1 / -1;
   }
 
   .word,
@@ -115,6 +158,14 @@ body {
   }
 
   .line {
-    margin-bottom: 14px;
+    margin-bottom: 10px;
+  }
+
+  .center.crossword {
+    max-height: 34vh;
+  }
+
+  .clueBlock {
+    max-height: 22vh;
   }
 }

@@ -175,7 +175,8 @@ Critical checks:
 7. Validate Stirling PDF on port `8086`.
 8. Validate IT-Tools on port `8087`.
 9. Validate Web Games on port `8092` (Tailscale/port access only).
-10. Validate Checkers Multiplayer API on port `8093` (`/health` should return ok).
+10. Validate Game Server API on port `8093` (`/health` should return ok).
+11. Validate Hearts Multiplayer service on port `8094`.
 
 Phase 3 access URLs:
 - `http://<tailnet-host>:8080` -> Open WebUI
@@ -185,8 +186,9 @@ Phase 3 access URLs:
 - `http://<tailnet-host>:5006` -> Actual Budget
 - `http://<tailnet-host>:8086` -> Stirling PDF
 - `http://<tailnet-host>:8087` -> IT-Tools
-- `http://<tailnet-host>:8092` -> Web Games (Sudoku, Solitaire, Hearts Lite, Memory)
-- `http://<tailnet-host>:8093/health` -> Checkers Multiplayer API
+- `http://<tailnet-host>:8092` -> Web Games (Sudoku, Solitaire, Hearts Multiplayer, Memory)
+- `http://<tailnet-host>:8093/health` -> Game Server API (checkers module)
+- `http://<tailnet-host>:8094` -> Hearts Multiplayer (MIT open-source adaptation)
 
 ### Phase 4: On-Demand Heavy Stack
 

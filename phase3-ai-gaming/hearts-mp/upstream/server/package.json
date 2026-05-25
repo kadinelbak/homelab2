@@ -1,0 +1,24 @@
+{
+	"name": "hearts-server",
+	"version": "0.0.1",
+	"description": "Backend for an online room-based card game: Hearts",
+	"main": "server.js",
+	"scripts": {
+		"test": "node test.js",
+		"start": "PORT=3000 node server.js"
+	},
+	"dependencies": {
+		"express": "^4.16.4",
+		"socket.io": "2.3.0"
+	},
+  "repository": {
+		"type": "git",
+		"url": "git+https://github.com/darkterbear/hearts.git"
+	},
+	"author": "Terrance Li",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/darkterbear/hearts/issues"
+	},
+	"homepage": "https://github.com/darkterbear/hearts#readme"
+}

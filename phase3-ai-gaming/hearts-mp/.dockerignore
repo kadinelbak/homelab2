@@ -1,0 +1,3 @@
+upstream/client/node_modules
+upstream/server/node_modules
+**/.DS_Store

@@ -62,7 +62,7 @@ class GameSummary(BaseModel):
     players: Dict[str, Optional[str]]
 
 
-app = FastAPI(title="Checkers Multiplayer API")
+app = FastAPI(title="Game Server API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -204,10 +204,19 @@ def to_response(game: Game, player_id: Optional[str] = None) -> GameResponse:
 
 
 @app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok"}
+def health() -> Dict[str, object]:
+    return {"status": "ok", "service": "game-server", "modules": ["checkers", "hearts"]}
 
 
+@app.get("/api/modules")
+def modules() -> List[Dict[str, str]]:
+    return [
+        {"id": "checkers", "status": "active", "transport": "rest"},
+        {"id": "hearts", "status": "external_service", "transport": "socket.io"},
+    ]
+
+
+@app.get("/api/checkers/games", response_model=List[GameSummary])
 @app.get("/api/games", response_model=List[GameSummary])
 def list_games() -> List[GameSummary]:
     with _lock:
@@ -222,6 +231,7 @@ def list_games() -> List[GameSummary]:
         ]
 
 
+@app.post("/api/checkers/games")
 @app.post("/api/games")
 def create_game(payload: CreateGameRequest) -> Dict[str, str]:
     with _lock:
@@ -243,6 +253,7 @@ def create_game(payload: CreateGameRequest) -> Dict[str, str]:
     return {"game_id": game_id, "player_id": player_id, "color": "red"}
 
 
+@app.post("/api/checkers/games/{game_id}/join")
 @app.post("/api/games/{game_id}/join")
 def join_game(game_id: str, payload: JoinGameRequest) -> Dict[str, str]:
     with _lock:
@@ -258,6 +269,7 @@ def join_game(game_id: str, payload: JoinGameRequest) -> Dict[str, str]:
     return {"game_id": game_id, "player_id": player_id, "color": "black"}
 
 
+@app.get("/api/checkers/games/{game_id}", response_model=GameResponse)
 @app.get("/api/games/{game_id}", response_model=GameResponse)
 def get_game(game_id: str, player_id: Optional[str] = None) -> GameResponse:
     with _lock:
@@ -267,6 +279,7 @@ def get_game(game_id: str, player_id: Optional[str] = None) -> GameResponse:
         return to_response(game, player_id)
 
 
+@app.post("/api/checkers/games/{game_id}/move", response_model=GameResponse)
 @app.post("/api/games/{game_id}/move", response_model=GameResponse)
 def move(game_id: str, payload: MoveRequest) -> GameResponse:
     with _lock:

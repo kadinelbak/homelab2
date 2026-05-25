@@ -1,0 +1,8 @@
+Upstream source:
+- https://github.com/darkterbear/hearts
+- License: MIT (see hearts-mp/upstream/LICENSE)
+
+Local adaptations for homelab deployment:
+- Client socket URL changed to same-origin for local hosting.
+- Server updated to serve built static client and expose /health.
+- Containerized as a single service for port-based tailnet access.

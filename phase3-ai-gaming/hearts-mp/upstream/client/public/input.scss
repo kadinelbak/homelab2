@@ -1,0 +1,332 @@
+@font-face {
+	font-family: Sofia-Pro;
+	src: url(assets/sofia_pro_regular.otf);
+}
+
+@font-face {
+	font-family: Sofia-Pro-Bold;
+	src: url(assets/sofia_pro_bold.otf);
+}
+
+$onBackground: #000;
+$blue: #527aff;
+$red: #eb5757;
+$grayLight: #c4c4c4;
+$grayDark: #888;
+$green: #0aca84;
+
+::placeholder {
+	/* Chrome, Firefox, Opera, Safari 10.1+ */
+	color: $grayLight;
+}
+
+:-ms-input-placeholder {
+	/* Internet Explorer 10-11 */
+	color: $grayLight;
+}
+
+::-ms-input-placeholder {
+	/* Microsoft Edge */
+	color: $grayLight;
+}
+
+@mixin noselect() {
+	// disable text highlighting in button
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	-khtml-user-select: none;
+	-moz-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+}
+
+html {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-family: 'Sofia-Pro';
+	width: 100%;
+	font-size: 16px;
+	height: 100%;
+	text-align: center;
+	overflow: hidden;
+}
+
+body {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-family: 'Sofia-Pro';
+	width: 100%;
+	height: 100%;
+}
+
+h1 {
+	font-size: 5em;
+	margin: 0;
+}
+
+h2 {
+	font-size: 1.5em;
+}
+
+input {
+	margin-top: 1em;
+	font-family: 'Sofia-Pro';
+	border: none;
+	font-size: 1.5em;
+	text-align: center;
+	color: $blue;
+}
+
+a.textButton {
+	color: $blue;
+	cursor: pointer;
+	text-decoration: none;
+	margin-top: 2em;
+
+	h2 {
+		margin: 0;
+	}
+
+	&:link {
+		color: $blue;
+	}
+	&:hover {
+		color: $blue;
+	}
+}
+
+.button {
+	@include noselect();
+	cursor: pointer;
+	display: inline-flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	background: $blue;
+	color: white;
+	border-radius: 2em;
+	border: none;
+	transition: 0.3s;
+
+	height: 1.7em;
+	margin-top: 0.5em;
+	margin-bottom: 0.5em;
+
+	padding-top: 0.1em;
+	padding-left: 1.5em;
+	padding-right: 1.5em;
+
+	box-shadow: 1px 2px 8px $grayLight;
+
+	font-size: 1.5em;
+	margin-left: 0.25em;
+	margin-right: 0.25em;
+
+	&:hover {
+		transition: 0.3s;
+		box-shadow: 1px 3px 12px $grayDark;
+	}
+	&:active {
+		transition: 0.3s;
+		box-shadow: 1px 2px 8px $grayLight;
+	}
+
+	&.disabled {
+		background: $grayDark;
+	}
+}
+
+.logo {
+	position: absolute;
+	top: 1em;
+	left: 50%;
+	transform: translateX(-50%);
+}
+
+.wrapper {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	height: 100vh;
+
+	.center {
+		display: inline-block;
+
+		.buttonWrapper {
+			margin-top: 1em;
+		}
+
+		.nameWrapper {
+			display: flex;
+			flex-direction: column;
+			justify-content: top;
+			align-items: center;
+		}
+
+		h2 {
+			display: inline-block;
+			margin-top: 0.2em;
+			margin-bottom: 0.2em;
+
+			&.me {
+				// font-size: 2em;
+				border-bottom: 2px $blue solid;
+			}
+
+			&.ready {
+				color: $green;
+			}
+		}
+	}
+
+	&.game {
+		background: #3cb371;
+	}
+
+	.myCards {
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 70vw;
+		height: 30vh;
+
+		display: flex;
+		flex-direction: row-reverse;
+		justify-content: center;
+		align-items: bottom;
+
+		.card {
+			&:hover {
+				transform: translateX(-3vh) translateY(-6vh);
+				transition: all 0.3s;
+			}
+
+			transform: translateX(-3vh);
+
+			height: 80%;
+			margin-right: -6vh;
+			margin-top: auto;
+			transition: all 0.3s;
+		}
+
+		.message {
+			color: white;
+			position: absolute;
+			top: 0;
+			left: 50%;
+			transform: translateX(-50%);
+		}
+	}
+
+	.leftCards {
+		position: absolute;
+		left: 0;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 20vh;
+		height: 80vh;
+
+		display: flex;
+		flex-direction: column-reverse;
+		justify-content: center;
+		align-items: left;
+
+		.card {
+			width: 70%;
+			margin-bottom: -16vh;
+
+			transform: translateY(-16vh) rotate(90deg);
+		}
+	}
+
+	.rightCards {
+		position: absolute;
+		right: 0;
+		top: 50%;
+		width: 20vh;
+		height: 80vh;
+		transform: translateY(-50%);
+
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+
+		.card {
+			width: 70%;
+			margin-bottom: -16vh;
+			margin-left: auto;
+
+			transform: translateY(-16vh) rotate(-90deg);
+		}
+	}
+
+	.sideScoreIndicator {
+		position: absolute;
+		width: 100%;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		color: white;
+	}
+
+	.topScoreIndicator {
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%) translateY(4vh);
+		color: white;
+	}
+
+	.acrossCards {
+		position: absolute;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 70vw;
+		height: 20vh;
+
+		.card {
+			height: 80%;
+			margin-right: -6vh;
+			margin-top: auto;
+			transform: rotate(180deg);
+		}
+	}
+
+	.highlight {
+		border: 6px $blue solid;
+		border-radius: 16px;
+	}
+
+	.leftCard {
+		transform: rotate(90deg);
+	}
+	.acrossCard {
+		transform: rotate(180deg);
+	}
+	.rightCard {
+		transform: rotate(-90deg);
+	}
+	// .myCard {
+	// }
+
+	.turn {
+		text-decoration: underline;
+	}
+
+	.playedCards {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		align-items: center;
+
+		.playedCardsVert {
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			align-items: center;
+		}
+	}
+}

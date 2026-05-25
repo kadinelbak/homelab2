@@ -124,6 +124,15 @@
         color: #b9cae3;
         margin: 0;
       }
+
+      .embed-mode .home-fab,
+      .embed-mode .back-link {
+        display: none;
+      }
+
+      .embed-mode .container {
+        padding-top: 10px;
+      }
     </style>
   </head>
   <body>
@@ -156,6 +165,11 @@
     </main>
 
     <script>
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("embed") === "1") {
+        document.body.classList.add("embed-mode");
+      }
+
       const state = {
         gameId: null,
         playerId: null,
@@ -280,7 +294,7 @@
       }
 
       async function loadLobby() {
-        const games = await request("/api/games");
+        const games = await request("/api/checkers/games");
         const waitingGames = games.filter((game) => game.status === "waiting_for_player");
 
         lobbyListEl.innerHTML = "";
@@ -315,7 +329,7 @@
       async function refreshGame() {
         if (!state.gameId) return;
         const query = state.playerId ? "?player_id=" + encodeURIComponent(state.playerId) : "";
-        const data = await request("/api/games/" + encodeURIComponent(state.gameId) + query);
+        const data = await request("/api/checkers/games/" + encodeURIComponent(state.gameId) + query);
         state.board = data.board;
         state.turn = data.turn;
         state.status = data.status;
@@ -342,7 +356,7 @@
 
       async function createGame() {
         const name = (playerNameEl.value || "Player").trim();
-        const data = await request("/api/games", {
+        const data = await request("/api/checkers/games", {
           method: "POST",
           body: JSON.stringify({ player_name: name }),
         });
@@ -361,7 +375,7 @@
           return;
         }
         const name = (playerNameEl.value || "Player").trim();
-        const data = await request("/api/games/" + encodeURIComponent(gameCode) + "/join", {
+        const data = await request("/api/checkers/games/" + encodeURIComponent(gameCode) + "/join", {
           method: "POST",
           body: JSON.stringify({ player_name: name }),
         });
@@ -405,7 +419,7 @@
         }
 
         try {
-          await request("/api/games/" + encodeURIComponent(state.gameId) + "/move", {
+          await request("/api/checkers/games/" + encodeURIComponent(state.gameId) + "/move", {
             method: "POST",
             body: JSON.stringify({
               player_id: state.playerId,

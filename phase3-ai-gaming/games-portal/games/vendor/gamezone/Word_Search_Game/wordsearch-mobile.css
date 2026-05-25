@@ -11,24 +11,6 @@ body {
   overflow-x: hidden;
 }
 
-.local-home {
-  position: fixed;
-  right: 12px;
-  bottom: 12px;
-  z-index: 20;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: #2d548b;
-  color: #edf3ff;
-  text-decoration: none;
-  font: 700 16px/1 sans-serif;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
-}
-
 #container {
   width: min(100vw, 900px);
   height: auto;
@@ -40,6 +22,9 @@ body {
   grid-template-columns: minmax(120px, 180px) 1fr;
   gap: 12px;
   align-items: start;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 #hint,

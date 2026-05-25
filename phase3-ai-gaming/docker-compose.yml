@@ -295,14 +295,14 @@ services:
       - "homepage.description=Self-hosted no-ads browser games"
 
   # ---------------------------------------------------------------------------
-  # CHECKERS MP – Turn-based multiplayer checkers API
+  # GAME SERVER – Shared multiplayer backend (currently checkers module)
   # Access target: http://<tailnet-host>:8093
-  # Intended for tailscale/port access only.
+  # Intended for tailscale/port access only. Hidden from Homepage dashboard.
   # ---------------------------------------------------------------------------
-  checkers-mp:
+  game-server:
     build:
       context: ./checkers-mp
-    container_name: checkers_mp
+    container_name: game_server
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -310,8 +310,20 @@ services:
       - "8093:8000"
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
-      - "homepage.group=Gaming"
-      - "homepage.name=Checkers Multiplayer API"
-      - "homepage.icon=checkers"
-      - "homepage.href=http://${DOMAIN}:8093/health"
-      - "homepage.description=Turn-based multiplayer checkers backend"
+
+  # ---------------------------------------------------------------------------
+  # HEARTS MP – MIT open-source room-based multiplayer hearts
+  # Access target: http://<tailnet-host>:8094
+  # Intended for tailscale/port access only. Hidden from Homepage dashboard.
+  # ---------------------------------------------------------------------------
+  hearts-mp:
+    build:
+      context: ./hearts-mp
+    container_name: hearts_mp
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "8094:8000"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
