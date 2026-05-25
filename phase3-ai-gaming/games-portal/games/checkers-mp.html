@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Checkers Multiplayer</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .panel {
+        background: #152844;
+        border: 1px solid #325380;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+
+      .panel h3 {
+        margin: 0 0 6px;
+      }
+
+      .panel h2 {
+        margin: 0 0 10px;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      input {
+        border: 1px solid #4f6f9d;
+        border-radius: 8px;
+        background: #10213a;
+        color: #edf3ff;
+        padding: 8px 10px;
+      }
+
+      #board {
+        width: min(92vw, 560px);
+        aspect-ratio: 1 / 1;
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        border: 2px solid #8ea9d6;
+      }
+
+      .sq {
+        position: relative;
+        border: 1px solid #243d62;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+      }
+
+      .light {
+        background: #d6e3f7;
+      }
+
+      .dark {
+        background: #41638f;
+      }
+
+      .selected {
+        outline: 4px solid #ffd166;
+        outline-offset: -4px;
+      }
+
+      .piece {
+        width: 72%;
+        height: 72%;
+        border-radius: 999px;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+      }
+
+      .red-piece {
+        background: #d84f5f;
+      }
+
+      .black-piece {
+        background: #1f2835;
+      }
+
+      .king::after {
+        content: "K";
+        color: #f5d774;
+        font-size: 0.9rem;
+      }
+
+      .status-box {
+        margin-top: 12px;
+      }
+
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      .lobby-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .lobby-card {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        border: 1px solid #325380;
+        border-radius: 12px;
+        background: #10213a;
+        padding: 12px;
+      }
+
+      .lobby-meta {
+        display: grid;
+        gap: 4px;
+      }
+
+      .muted {
+        color: #b9cae3;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Checkers Multiplayer (Turn-Based)</h1>
+      <p class="lead">Create a game, then let the other player join it from the lobby dashboard.</p>
+
+      <section class="panel">
+        <h2>Create Game</h2>
+        <div class="row">
+          <input id="playerName" placeholder="Your name" />
+          <button id="createBtn">Create Game</button>
+        </div>
+        <p id="sessionInfo" class="status-box"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Available Games</h2>
+        <div id="lobbyList" class="lobby-list"></div>
+        <p id="lobbyInfo" class="status-box muted"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Board</h2>
+        <div id="board"></div>
+        <p id="gameInfo" class="status-box"></p>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        gameId: null,
+        playerId: null,
+        yourColor: null,
+        board: [],
+        turn: null,
+        status: null,
+        winner: null,
+        mustContinueFrom: null,
+        selected: null,
+        pollHandle: null,
+      };
+
+      const boardEl = document.getElementById("board");
+      const playerNameEl = document.getElementById("playerName");
+      const sessionInfoEl = document.getElementById("sessionInfo");
+  const lobbyListEl = document.getElementById("lobbyList");
+  const lobbyInfoEl = document.getElementById("lobbyInfo");
+      const gameInfoEl = document.getElementById("gameInfo");
+
+      function apiBase() {
+        return "http://" + window.location.hostname + ":8093";
+      }
+
+      function byId(id) {
+        return document.getElementById(id);
+      }
+
+      function setSessionInfo(msg) {
+        sessionInfoEl.textContent = msg;
+      }
+
+      function setLobbyInfo(msg) {
+        lobbyInfoEl.textContent = msg;
+      }
+
+      function setGameInfo(msg) {
+        gameInfoEl.textContent = msg;
+      }
+
+      function pieceClass(piece) {
+        if (piece === "r" || piece === "R") return "red-piece";
+        if (piece === "b" || piece === "B") return "black-piece";
+        return "";
+      }
+
+      function isKing(piece) {
+        return piece === "R" || piece === "B";
+      }
+
+      function canSelectPiece(piece) {
+        if (!state.yourColor) return false;
+        if (state.yourColor === "red") return piece === "r" || piece === "R";
+        return piece === "b" || piece === "B";
+      }
+
+      function renderBoard() {
+        boardEl.innerHTML = "";
+        for (let r = 0; r < 8; r += 1) {
+          for (let c = 0; c < 8; c += 1) {
+            const sq = document.createElement("div");
+            const dark = (r + c) % 2 === 1;
+            sq.className = "sq " + (dark ? "dark" : "light");
+            sq.dataset.r = String(r);
+            sq.dataset.c = String(c);
+
+            if (state.selected && state.selected[0] === r && state.selected[1] === c) {
+              sq.classList.add("selected");
+            }
+
+            const piece = state.board?.[r]?.[c] ?? ".";
+            if (piece !== ".") {
+              const p = document.createElement("div");
+              p.className = "piece " + pieceClass(piece) + (isKing(piece) ? " king" : "");
+              sq.appendChild(p);
+            }
+
+            sq.addEventListener("click", () => onSquareClick(r, c));
+            boardEl.appendChild(sq);
+          }
+        }
+      }
+
+      async function request(path, opts = {}) {
+        const res = await fetch(apiBase() + path, {
+          headers: { "Content-Type": "application/json" },
+          ...opts,
+        });
+        const text = await res.text();
+        let body = {};
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch {
+          body = { detail: text };
+        }
+        if (!res.ok) {
+          throw new Error(body.detail || "Request failed");
+        }
+        return body;
+      }
+
+      function saveSession() {
+        if (!state.gameId || !state.playerId) return;
+        localStorage.setItem("checkers-mp-session", JSON.stringify({
+          gameId: state.gameId,
+          playerId: state.playerId,
+          yourColor: state.yourColor,
+        }));
+      }
+
+      function loadSession() {
+        try {
+          const raw = localStorage.getItem("checkers-mp-session");
+          if (!raw) return;
+          const data = JSON.parse(raw);
+          state.gameId = data.gameId || null;
+          state.playerId = data.playerId || null;
+          state.yourColor = data.yourColor || null;
+        } catch {
+          // ignore broken local storage state
+        }
+      }
+
+      async function loadLobby() {
+        const games = await request("/api/games");
+        const waitingGames = games.filter((game) => game.status === "waiting_for_player");
+
+        lobbyListEl.innerHTML = "";
+        if (!waitingGames.length) {
+          setLobbyInfo("No open games right now. Create one to start a new match.");
+          return;
+        }
+
+        setLobbyInfo(waitingGames.length + " open game" + (waitingGames.length === 1 ? "" : "s") + " available.");
+        waitingGames.forEach((game) => {
+          const card = document.createElement("div");
+          card.className = "lobby-card";
+
+          const meta = document.createElement("div");
+          meta.className = "lobby-meta";
+          meta.innerHTML = "<strong>Game " + game.game_id + "</strong>" +
+            "<span class='mono'>Red: " + (game.players.red || "Open") + " | Black: " + (game.players.black || "Open") + "</span>" +
+            "<span class='muted'>Waiting for a second player</span>";
+
+          const joinBtn = document.createElement("button");
+          joinBtn.textContent = "Join";
+          joinBtn.addEventListener("click", () => {
+            joinGame(game.game_id).catch((err) => setSessionInfo(err.message || "Failed to join game"));
+          });
+
+          card.appendChild(meta);
+          card.appendChild(joinBtn);
+          lobbyListEl.appendChild(card);
+        });
+      }
+
+      async function refreshGame() {
+        if (!state.gameId) return;
+        const query = state.playerId ? "?player_id=" + encodeURIComponent(state.playerId) : "";
+        const data = await request("/api/games/" + encodeURIComponent(state.gameId) + query);
+        state.board = data.board;
+        state.turn = data.turn;
+        state.status = data.status;
+        state.winner = data.winner;
+        state.mustContinueFrom = data.must_continue_from;
+        state.yourColor = data.your_color || state.yourColor;
+
+        const waitText = state.status === "waiting_for_player" ? "Waiting for a second player to join." : "";
+        const turnText = state.status === "active" ? "Turn: " + state.turn : "";
+        const winnerText = state.status === "finished" ? "Winner: " + state.winner : "";
+        const forcedText = state.mustContinueFrom ? "Must continue from: [" + state.mustContinueFrom.join(",") + "]" : "";
+
+        setGameInfo([waitText, turnText, winnerText, forcedText].filter(Boolean).join(" | "));
+        setSessionInfo(
+          "Game " + state.gameId + " | You are " + (state.yourColor || "spectator") +
+            (state.playerId ? " | Player token saved" : "")
+        );
+
+        renderBoard();
+        loadLobby().catch(() => {
+          // keep the active board usable even if the lobby list fails
+        });
+      }
+
+      async function createGame() {
+        const name = (playerNameEl.value || "Player").trim();
+        const data = await request("/api/games", {
+          method: "POST",
+          body: JSON.stringify({ player_name: name }),
+        });
+        state.gameId = data.game_id;
+        state.playerId = data.player_id;
+        state.yourColor = data.color;
+        state.selected = null;
+        saveSession();
+        await refreshGame();
+        startPolling();
+      }
+
+      async function joinGame(gameCode) {
+        if (!gameCode) {
+          setSessionInfo("Pick a game from the lobby first.");
+          return;
+        }
+        const name = (playerNameEl.value || "Player").trim();
+        const data = await request("/api/games/" + encodeURIComponent(gameCode) + "/join", {
+          method: "POST",
+          body: JSON.stringify({ player_name: name }),
+        });
+        state.gameId = data.game_id;
+        state.playerId = data.player_id;
+        state.yourColor = data.color;
+        state.selected = null;
+        saveSession();
+        await refreshGame();
+        startPolling();
+      }
+
+      async function onSquareClick(r, c) {
+        if (!state.gameId || !state.playerId || state.status !== "active") return;
+        const piece = state.board?.[r]?.[c] ?? ".";
+
+        const myTurn = state.turn === state.yourColor;
+        if (!myTurn) {
+          setGameInfo("Wait for your turn.");
+          return;
+        }
+
+        if (!state.selected) {
+          if (canSelectPiece(piece)) {
+            state.selected = [r, c];
+            renderBoard();
+          }
+          return;
+        }
+
+        if (state.selected[0] === r && state.selected[1] === c) {
+          state.selected = null;
+          renderBoard();
+          return;
+        }
+
+        if (canSelectPiece(piece)) {
+          state.selected = [r, c];
+          renderBoard();
+          return;
+        }
+
+        try {
+          await request("/api/games/" + encodeURIComponent(state.gameId) + "/move", {
+            method: "POST",
+            body: JSON.stringify({
+              player_id: state.playerId,
+              from_row: state.selected[0],
+              from_col: state.selected[1],
+              to_row: r,
+              to_col: c,
+            }),
+          });
+          state.selected = null;
+          await refreshGame();
+        } catch (err) {
+          setGameInfo((err && err.message) || "Move failed");
+        }
+      }
+
+      function startPolling() {
+        if (state.pollHandle) clearInterval(state.pollHandle);
+        state.pollHandle = setInterval(() => {
+          refreshGame().catch(() => {
+            // silent retry loop
+          });
+        }, 2000);
+      }
+
+      byId("createBtn").addEventListener("click", () => {
+        createGame().catch((err) => setSessionInfo(err.message || "Failed to create game"));
+      });
+
+      loadSession();
+      if (state.gameId) {
+        refreshGame().then(startPolling).catch(() => {
+          setSessionInfo("Saved session was not found or expired.");
+          loadLobby().catch((err) => setLobbyInfo(err.message || "Failed to load lobby."));
+        });
+      } else {
+        state.board = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => "."));
+        renderBoard();
+        loadLobby().catch((err) => setLobbyInfo(err.message || "Failed to load lobby."));
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,120 @@
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: radial-gradient(circle at top, #f1e8d7 0, #d4c5ac 40%, #b6a78c 100%);
+  overflow-x: hidden;
+  font-family: Arial, sans-serif;
+}
+
+.local-home {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #2d548b;
+  color: #edf3ff;
+  text-decoration: none;
+  font: 700 16px/1 sans-serif;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.container {
+  width: min(100vw, 1200px);
+  padding: 12px 10px 80px;
+}
+
+.crosswordDisplay {
+  top: 0;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn {
+  margin: 0;
+  border-radius: 12px;
+}
+
+.center.crossword {
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+#crossword {
+  transform-origin: top center;
+}
+
+.col-lg-6 {
+  width: 100%;
+  max-width: 100%;
+}
+
+.clueBlock {
+  margin-bottom: 2.5em;
+}
+
+.clueDirection {
+  margin-left: 0;
+  font-size: 1.35rem;
+}
+
+.word,
+.clue {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.word {
+  width: 28vw;
+  min-width: 92px;
+}
+
+.clue {
+  width: calc(100vw - 140px);
+  min-width: 160px;
+  font-size: 15px;
+}
+
+.square {
+  width: 1.1em;
+  height: 1.1em;
+  font-size: 18px;
+}
+
+.char {
+  width: 1.1em;
+  height: 1.1em;
+  font-size: 18px;
+}
+
+@media (max-width: 760px) {
+  .container {
+    padding-bottom: 92px;
+  }
+
+  .word,
+  .clue {
+    display: block;
+    width: 100%;
+    margin: 0 0 6px 0;
+  }
+
+  .line {
+    margin-bottom: 14px;
+  }
+}

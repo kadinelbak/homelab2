@@ -1,0 +1,82 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: linear-gradient(160deg, #08111f, #17345a 60%, #0a1220);
+  overflow-x: hidden;
+}
+
+.local-home {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #2d548b;
+  color: #edf3ff;
+  text-decoration: none;
+  font: 700 16px/1 sans-serif;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.solitaire {
+  width: min(100vw, 820px);
+  padding: 12px;
+  --card-width: clamp(46px, 10vw, 73px);
+  --card-height: calc(var(--card-width) * 1.34);
+}
+
+.upper {
+  padding-top: 10px;
+  gap: 8px;
+}
+
+.board-deck {
+  padding-top: 18px;
+  overflow-x: auto;
+  justify-content: space-between;
+}
+
+.deck__deal .card:last-child {
+  left: calc(var(--card-width) * 0.49);
+}
+
+.deck__deal .card:nth-last-child(2) {
+  left: calc(var(--card-width) * 0.27);
+}
+
+.deck__deal .card:nth-last-child(3) {
+  left: calc(var(--card-width) * 0.05);
+}
+
+@media (max-width: 680px) {
+  .solitaire {
+    padding: 8px;
+  }
+
+  .upper {
+    justify-content: space-between;
+  }
+
+  .finish-deck,
+  .board-deck {
+    gap: 6px;
+  }
+
+  .card,
+  .deck__pile,
+  .seven,
+  .aces {
+    border-radius: 6px;
+  }
+}

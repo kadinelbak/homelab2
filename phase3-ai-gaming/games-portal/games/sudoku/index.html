@@ -36,11 +36,36 @@
     <link href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:400,700" rel="stylesheet" />
     <meta name="msapplication-TileColor" content="#ffffff" />
     <meta name="theme-color" content="#ffffff" />
-    <script type="module" crossorigin src="/games/sudoku/assets/index-ZM6gblhj.js"></script>
-    <link rel="stylesheet" crossorigin href="/games/sudoku/assets/index-Ba85qC5u.css">
+    <script type="module" crossorigin src="/games/sudoku/assets/index-CHRbUx4E.js"></script>
+    <link rel="stylesheet" crossorigin href="/games/sudoku/assets/index-BzuueLwf.css">
     <link rel="stylesheet" href="/games/sudoku/mobile-overrides.css">
+    <style>
+      .home-fab {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 1000;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 14px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 700;
+        color: #edf3ff;
+        background: #2d548b;
+        border: 1px solid #6ea1e9;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+      }
+
+      .home-fab:hover {
+        background: #3a66a6;
+      }
+    </style>
   <link rel="manifest" href="/games/sudoku/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/games/sudoku/registerSW.js"></script></head>
   <body>
+    <a class="home-fab" href="/index.html" aria-label="Return to games home">Home</a>
     <div id="root"></div>
   </body>
 </html>

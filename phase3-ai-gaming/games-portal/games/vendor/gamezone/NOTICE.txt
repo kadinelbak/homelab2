@@ -1,0 +1,11 @@
+Imported upstream source: https://github.com/kunjgit/GameZone
+License: Apache-2.0
+Imported on: 2026-05-25
+
+Imported game folders:
+- Checkers
+- Solitaire_up
+- Crossword_Puzzle
+- Word_Search_Game
+
+These files are hosted locally for ad-free play and wrapped by local launcher pages.

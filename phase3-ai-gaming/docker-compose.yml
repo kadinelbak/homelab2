@@ -293,3 +293,25 @@ services:
       - "homepage.icon=nintendo-switch"
       - "homepage.href=http://${DOMAIN}:8092"
       - "homepage.description=Self-hosted no-ads browser games"
+
+  # ---------------------------------------------------------------------------
+  # CHECKERS MP – Turn-based multiplayer checkers API
+  # Access target: http://<tailnet-host>:8093
+  # Intended for tailscale/port access only.
+  # ---------------------------------------------------------------------------
+  checkers-mp:
+    build:
+      context: ./checkers-mp
+    container_name: checkers_mp
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "8093:8000"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=Gaming"
+      - "homepage.name=Checkers Multiplayer API"
+      - "homepage.icon=checkers"
+      - "homepage.href=http://${DOMAIN}:8093/health"
+      - "homepage.description=Turn-based multiplayer checkers backend"

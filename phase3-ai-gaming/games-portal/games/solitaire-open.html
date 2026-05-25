@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Solitaire (Open Source)</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .frame-wrap {
+        width: 100%;
+        height: min(82vh, 900px);
+        border: 1px solid #3a5f94;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0f1e33;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 0 0 12px;
+      }
+
+      .toolbar .status {
+        color: #bfd0ea;
+        margin: 0;
+      }
+
+      .game-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #0f1e33;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Solitaire (Open Source)</h1>
+      <p class="lead">Imported from GameZone (Apache-2.0) with local hosting and no ads.</p>
+      <div class="toolbar">
+        <button id="newGameBtn" type="button">New Game</button>
+        <p id="solitaireStatus" class="status">A new game starts automatically, but you can restart it anytime.</p>
+      </div>
+      <div class="frame-wrap">
+        <iframe id="solitaireFrame" class="game-frame" src="vendor/gamezone/Solitaire_up/index.html" title="Open source solitaire"></iframe>
+      </div>
+    </main>
+
+    <script>
+      const frame = document.getElementById("solitaireFrame");
+      const button = document.getElementById("newGameBtn");
+      const statusEl = document.getElementById("solitaireStatus");
+
+      function restartSolitaire() {
+        const gameWindow = frame.contentWindow;
+        if (gameWindow && typeof gameWindow.resetGame === "function") {
+          gameWindow.resetGame();
+          statusEl.textContent = "Shuffled and dealt a new game.";
+        } else {
+          statusEl.textContent = "Game is still loading. Try again in a moment.";
+        }
+      }
+
+      button.addEventListener("click", restartSolitaire);
+      frame.addEventListener("load", () => {
+        statusEl.textContent = "Ready. Tap New Game any time to reshuffle.";
+      });
+    </script>
+  </body>
+</html>

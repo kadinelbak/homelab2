@@ -129,6 +129,29 @@ button:hover,
   margin-bottom: 16px;
 }
 
+.home-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 999;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 700;
+  color: #edf3ff;
+  background: #2d548b;
+  border: 1px solid #6ea1e9;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.home-fab:hover {
+  background: #3a66a6;
+}
+
 footer {
   margin-top: 26px;
   color: var(--muted);
@@ -138,5 +161,11 @@ footer {
 @media (max-width: 640px) {
   .container {
     padding-top: 16px;
+  }
+
+  .home-fab {
+    right: 12px;
+    bottom: 12px;
+    padding: 0 12px;
   }
 }
