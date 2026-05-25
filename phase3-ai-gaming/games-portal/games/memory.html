@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memory Match</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      #board {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(64px, 110px));
+        gap: 10px;
+      }
+
+      .tile {
+        aspect-ratio: 1 / 1;
+        border: 1px solid #6188c1;
+        border-radius: 10px;
+        background: #2a4a77;
+        color: #eff6ff;
+        font-size: 1.8rem;
+        cursor: pointer;
+      }
+
+      .tile.open,
+      .tile.done {
+        background: #eff6ff;
+        color: #122643;
+      }
+
+      .tile.done {
+        border-color: #5abf92;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Memory Match</h1>
+      <p class="lead">Find all pairs in as few turns as possible.</p>
+
+      <div class="toolbar">
+        <button id="new-game">New Game</button>
+      </div>
+      <p id="status" class="status"></p>
+      <section id="board"></section>
+    </main>
+
+    <script>
+      const icons = ["🍎", "🚀", "🎮", "🌙", "🔥", "🎵", "⚽", "🧩"];
+      const boardEl = document.getElementById("board");
+      const statusEl = document.getElementById("status");
+      const newGameBtn = document.getElementById("new-game");
+
+      let tiles = [];
+      let open = [];
+      let turns = 0;
+      let lock = false;
+
+      function shuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+      }
+
+      function startGame() {
+        tiles = [...icons, ...icons].map((icon, idx) => ({ id: idx + "-" + icon, icon, done: false }));
+        shuffle(tiles);
+        open = [];
+        turns = 0;
+        lock = false;
+        render();
+        statusEl.textContent = "";
+      }
+
+      function render() {
+        boardEl.innerHTML = "";
+        const openSet = new Set(open);
+
+        for (const tile of tiles) {
+          const btn = document.createElement("button");
+          btn.className = "tile";
+          if (tile.done) btn.classList.add("done");
+          if (openSet.has(tile.id)) btn.classList.add("open");
+
+          btn.textContent = tile.done || openSet.has(tile.id) ? tile.icon : "?";
+          btn.disabled = tile.done || openSet.has(tile.id) || lock;
+
+          btn.addEventListener("click", () => onPick(tile.id));
+          boardEl.appendChild(btn);
+        }
+      }
+
+      function onPick(id) {
+        if (lock) return;
+        open.push(id);
+        render();
+
+        if (open.length < 2) return;
+
+        turns += 1;
+        const [a, b] = open.map((x) => tiles.find((t) => t.id === x));
+
+        if (a.icon === b.icon) {
+          a.done = true;
+          b.done = true;
+          open = [];
+          const doneCount = tiles.filter((t) => t.done).length;
+          if (doneCount === tiles.length) {
+            statusEl.textContent = "Board cleared in " + turns + " turns.";
+          }
+          render();
+          return;
+        }
+
+        lock = true;
+        setTimeout(() => {
+          open = [];
+          lock = false;
+          render();
+        }, 650);
+      }
+
+      newGameBtn.addEventListener("click", startGame);
+      startGame();
+    </script>
+  </body>
+</html>

@@ -270,3 +270,26 @@ services:
       - "homepage.icon=it-tools"
       - "homepage.href=http://${DOMAIN}:8087"
       - "homepage.description=Developer utility toolbox"
+
+  # ---------------------------------------------------------------------------
+  # WEB GAMES – Local no-ads browser games (Tailscale/port access recommended)
+  # Access target: http://<tailnet-host>:8092
+  # Intentionally NOT attached to homelab_proxy to avoid accidental NPM routing.
+  # ---------------------------------------------------------------------------
+  web-games:
+    image: nginx:1.27-alpine
+    container_name: web_games
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "8092:80"
+    volumes:
+      - ./games-portal:/usr/share/nginx/html:ro
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Gaming"
+      - "homepage.name=Web Games"
+      - "homepage.icon=nintendo-switch"
+      - "homepage.href=http://${DOMAIN}:8092"
+      - "homepage.description=Self-hosted no-ads browser games"

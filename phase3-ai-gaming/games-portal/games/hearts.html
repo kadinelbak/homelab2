@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hearts Lite</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .table {
+        border: 1px solid #3f5f8f;
+        border-radius: 12px;
+        padding: 16px;
+        background: linear-gradient(160deg, #1a3558, #16314d);
+      }
+
+      .scoreboard {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .score {
+        border: 1px solid #486da5;
+        border-radius: 10px;
+        padding: 8px;
+        text-align: center;
+      }
+
+      .trick {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(80px, 1fr));
+        gap: 10px;
+        margin: 12px 0 16px;
+      }
+
+      .slot {
+        min-height: 86px;
+        border: 1px dashed #6e8fbe;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        color: #cddbf3;
+      }
+
+      .hand {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .card {
+        border: 1px solid #8ea9d6;
+        border-radius: 8px;
+        background: #f5f9ff;
+        color: #13233f;
+        padding: 8px 10px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .card.red {
+        color: #c22842;
+      }
+
+      .card.disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Hearts Lite</h1>
+      <p class="lead">You are South. Avoid hearts and the queen of spades.</p>
+
+      <div class="toolbar">
+        <button id="new-round">New Round</button>
+      </div>
+      <p id="status" class="status"></p>
+
+      <section class="table">
+        <div id="scores" class="scoreboard"></div>
+        <div id="trick" class="trick"></div>
+        <h3>Your hand</h3>
+        <div id="hand" class="hand"></div>
+      </section>
+    </main>
+
+    <script>
+      const players = ["South (You)", "West", "North", "East"];
+      const suits = ["C", "D", "S", "H"];
+      const suitSymbol = { C: "♣", D: "♦", S: "♠", H: "♥" };
+      const rankLabel = { 11: "J", 12: "Q", 13: "K", 14: "A" };
+      const handEl = document.getElementById("hand");
+      const trickEl = document.getElementById("trick");
+      const scoresEl = document.getElementById("scores");
+      const statusEl = document.getElementById("status");
+      const newRoundBtn = document.getElementById("new-round");
+
+      let hands = [[], [], [], []];
+      let scores = [0, 0, 0, 0];
+      let currentTrick = [];
+      let trickLeader = 0;
+      let turn = 0;
+      let leadSuit = null;
+      let heartsBroken = false;
+      let trickNumber = 1;
+      let gameOver = false;
+
+      function mkDeck() {
+        const deck = [];
+        for (const s of suits) {
+          for (let r = 2; r <= 14; r += 1) deck.push({ suit: s, rank: r, id: crypto.randomUUID() });
+        }
+        for (let i = deck.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        return deck;
+      }
+
+      function sortHand(hand) {
+        const suitOrder = { C: 0, D: 1, S: 2, H: 3 };
+        hand.sort((a, b) => suitOrder[a.suit] - suitOrder[b.suit] || a.rank - b.rank);
+      }
+
+      function cardText(card) {
+        return (rankLabel[card.rank] || String(card.rank)) + suitSymbol[card.suit];
+      }
+
+      function points(card) {
+        if (card.suit === "H") return 1;
+        if (card.suit === "S" && card.rank === 12) return 13;
+        return 0;
+      }
+
+      function canPlay(player, card) {
+        const hand = hands[player];
+        const hasLeadSuit = leadSuit && hand.some((c) => c.suit === leadSuit);
+
+        if (leadSuit && hasLeadSuit && card.suit !== leadSuit) return false;
+
+        if (!leadSuit) {
+          if (trickNumber === 1) {
+            if (player === trickLeader) return card.suit === "C" && card.rank === 2;
+            if (points(card) > 0) {
+              const onlyPoints = hand.every((c) => points(c) > 0);
+              if (!onlyPoints) return false;
+            }
+          }
+
+          if (!heartsBroken && card.suit === "H") {
+            const onlyHearts = hand.every((c) => c.suit === "H");
+            if (!onlyHearts) return false;
+          }
+        }
+
+        return true;
+      }
+
+      function legalCards(player) {
+        return hands[player].filter((c) => canPlay(player, c));
+      }
+
+      function playCard(player, cardId) {
+        if (gameOver || player !== turn) return;
+        const hand = hands[player];
+        const idx = hand.findIndex((c) => c.id === cardId);
+        if (idx === -1) return;
+        const card = hand[idx];
+        if (!canPlay(player, card)) return;
+
+        hand.splice(idx, 1);
+        currentTrick.push({ player, card });
+        if (!leadSuit) leadSuit = card.suit;
+        if (card.suit === "H") heartsBroken = true;
+
+        if (currentTrick.length === 4) {
+          finishTrick();
+          return;
+        }
+
+        turn = (turn + 1) % 4;
+        render();
+        maybeBotTurn();
+      }
+
+      function finishTrick() {
+        const leadCards = currentTrick.filter((p) => p.card.suit === leadSuit);
+        leadCards.sort((a, b) => b.card.rank - a.card.rank);
+        const winner = leadCards[0].player;
+        const trickPoints = currentTrick.reduce((sum, p) => sum + points(p.card), 0);
+        scores[winner] += trickPoints;
+
+        statusEl.textContent = players[winner] + " won trick " + trickNumber + " (" + trickPoints + " pts).";
+
+        currentTrick = [];
+        leadSuit = null;
+        trickLeader = winner;
+        turn = winner;
+        trickNumber += 1;
+
+        if (hands.every((h) => h.length === 0)) {
+          gameOver = true;
+          const minScore = Math.min(...scores);
+          const winnerIdx = scores.findIndex((s) => s === minScore);
+          statusEl.textContent += " Round over. Lowest score: " + players[winnerIdx] + ".";
+          render();
+          return;
+        }
+
+        render();
+        maybeBotTurn();
+      }
+
+      function maybeBotTurn() {
+        if (gameOver) return;
+        while (turn !== 0) {
+          const legal = legalCards(turn);
+          const card = legal[Math.floor(Math.random() * legal.length)];
+          if (!card) break;
+          playCard(turn, card.id);
+          if (turn === 0 || gameOver) break;
+        }
+      }
+
+      function renderScores() {
+        scoresEl.innerHTML = "";
+        for (let i = 0; i < 4; i += 1) {
+          const box = document.createElement("div");
+          box.className = "score";
+          box.innerHTML = "<strong>" + players[i] + "</strong><div>" + scores[i] + " pts</div>";
+          scoresEl.appendChild(box);
+        }
+      }
+
+      function renderTrick() {
+        trickEl.innerHTML = "";
+        for (let i = 0; i < 4; i += 1) {
+          const slot = document.createElement("div");
+          slot.className = "slot";
+          const play = currentTrick.find((p) => p.player === i);
+          slot.innerHTML = "<strong>" + players[i] + "</strong>";
+          if (play) {
+            const c = document.createElement("div");
+            c.textContent = cardText(play.card);
+            c.style.fontWeight = "700";
+            c.style.color = play.card.suit === "H" || play.card.suit === "D" ? "#ffb4bf" : "#d3e5ff";
+            slot.appendChild(c);
+          }
+          trickEl.appendChild(slot);
+        }
+      }
+
+      function renderHand() {
+        handEl.innerHTML = "";
+        const legalSet = new Set(legalCards(0).map((c) => c.id));
+        for (const card of hands[0]) {
+          const btn = document.createElement("button");
+          btn.className = "card" + (card.suit === "H" || card.suit === "D" ? " red" : "");
+          btn.textContent = cardText(card);
+          if (turn !== 0 || gameOver || !legalSet.has(card.id)) {
+            btn.classList.add("disabled");
+          }
+          btn.addEventListener("click", () => playCard(0, card.id));
+          handEl.appendChild(btn);
+        }
+      }
+
+      function render() {
+        renderScores();
+        renderTrick();
+        renderHand();
+        if (!gameOver && !statusEl.textContent) {
+          statusEl.textContent = turn === 0 ? "Your turn." : players[turn] + " is thinking...";
+        }
+      }
+
+      function startRound() {
+        const deck = mkDeck();
+        hands = [[], [], [], []];
+        scores = [0, 0, 0, 0];
+        currentTrick = [];
+        leadSuit = null;
+        heartsBroken = false;
+        trickNumber = 1;
+        gameOver = false;
+
+        for (let i = 0; i < 52; i += 1) hands[i % 4].push(deck[i]);
+        hands.forEach(sortHand);
+
+        for (let p = 0; p < 4; p += 1) {
+          if (hands[p].some((c) => c.suit === "C" && c.rank === 2)) {
+            trickLeader = p;
+            turn = p;
+            break;
+          }
+        }
+
+        statusEl.textContent = "New round. " + players[turn] + " leads.";
+        render();
+        maybeBotTurn();
+      }
+
+      newRoundBtn.addEventListener("click", startRound);
+      startRound();
+    </script>
+  </body>
+</html>

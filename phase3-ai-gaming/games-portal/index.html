@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Homelab Web Games</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Homelab Web Games</h1>
+        <p class="lead">
+          Local no-ads games for your tailnet. Everything runs in this container, so
+          you can play from phone, tablet, or laptop.
+        </p>
+      </header>
+
+      <section class="card-grid">
+        <a class="game-card" href="games/sudoku/index.html">
+          <h2>Sudoku</h2>
+          <p>Full-featured Sudoku with notes, hints, undo/redo, and multiple difficulty levels.</p>
+          <span class="badge">Puzzle</span>
+        </a>
+
+        <a class="game-card" href="games/solitaire.html">
+          <h2>Solitaire (Pyramid)</h2>
+          <p>Relaxed card play. Clear the pyramid by pairing cards that add up to 13.</p>
+          <span class="badge">Cards</span>
+        </a>
+
+        <a class="game-card" href="games/hearts.html">
+          <h2>Hearts Lite</h2>
+          <p>4-player trick-taking against bots. Avoid hearts and the queen of spades.</p>
+          <span class="badge">Cards</span>
+        </a>
+
+        <a class="game-card" href="games/memory.html">
+          <h2>Memory Match</h2>
+          <p>Flip cards, remember positions, and clear the board in the fewest turns.</p>
+          <span class="badge">Arcade</span>
+        </a>
+      </section>
+
+      <footer>
+        Tailscale-only access is recommended. Keep this service off your public ingress.
+      </footer>
+    </main>
+  </body>
+</html>

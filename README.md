@@ -174,6 +174,7 @@ Critical checks:
 6. Validate Spoolman responds on host port `7912` (container listens on `8000`).
 7. Validate Stirling PDF on port `8086`.
 8. Validate IT-Tools on port `8087`.
+9. Validate Web Games on port `8092` (Tailscale/port access only).
 
 Phase 3 access URLs:
 - `http://<tailnet-host>:8080` -> Open WebUI
@@ -183,6 +184,7 @@ Phase 3 access URLs:
 - `http://<tailnet-host>:5006` -> Actual Budget
 - `http://<tailnet-host>:8086` -> Stirling PDF
 - `http://<tailnet-host>:8087` -> IT-Tools
+- `http://<tailnet-host>:8092` -> Web Games (Sudoku, Solitaire, Hearts Lite, Memory)
 
 ### Phase 4: On-Demand Heavy Stack
 

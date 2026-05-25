@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Solitaire (Pyramid)</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      #pyramid,
+      #stock,
+      #waste {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      #pyramid {
+        max-width: 760px;
+        margin-bottom: 14px;
+      }
+
+      .row {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .card {
+        width: 58px;
+        height: 82px;
+        border-radius: 8px;
+        border: 1px solid #6d87ad;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        background: #f8fbff;
+        color: #0f1e34;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .card.red {
+        color: #c21e3a;
+      }
+
+      .card.back {
+        background: #38567f;
+        color: #dce8ff;
+      }
+
+      .card.disabled {
+        opacity: 0.35;
+        pointer-events: none;
+      }
+
+      .card.selected {
+        outline: 3px solid #ffd166;
+      }
+
+      .zone {
+        margin-top: 12px;
+        display: flex;
+        gap: 24px;
+        align-items: center;
+      }
+
+      .zone-block h3 {
+        margin: 0 0 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Solitaire (Pyramid)</h1>
+      <p class="lead">Remove all pyramid cards by selecting exposed cards that total 13.</p>
+
+      <div class="toolbar">
+        <button id="new-game">New Game</button>
+      </div>
+      <p id="status" class="status"></p>
+
+      <section id="pyramid"></section>
+
+      <section class="zone">
+        <div class="zone-block">
+          <h3>Stock</h3>
+          <div id="stock"></div>
+        </div>
+        <div class="zone-block">
+          <h3>Waste</h3>
+          <div id="waste"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const suits = ["S", "H", "D", "C"];
+      const suitSymbols = { S: "♠", H: "♥", D: "♦", C: "♣" };
+      const redSuits = new Set(["H", "D"]);
+      const statusEl = document.getElementById("status");
+      const pyramidEl = document.getElementById("pyramid");
+      const stockEl = document.getElementById("stock");
+      const wasteEl = document.getElementById("waste");
+      const newBtn = document.getElementById("new-game");
+
+      let pyramid = [];
+      let stock = [];
+      let waste = [];
+      let selected = null;
+
+      function cardValue(rank) {
+        return Math.min(rank, 10);
+      }
+
+      function cardLabel(card) {
+        const face = { 1: "A", 11: "J", 12: "Q", 13: "K" }[card.rank] || String(card.rank);
+        return face + suitSymbols[card.suit];
+      }
+
+      function makeDeck() {
+        const deck = [];
+        for (const suit of suits) {
+          for (let rank = 1; rank <= 13; rank += 1) {
+            deck.push({ suit, rank, id: crypto.randomUUID() });
+          }
+        }
+        for (let i = deck.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        return deck;
+      }
+
+      function buildPyramid(deck) {
+        const rows = [];
+        let idx = 0;
+        for (let r = 0; r < 7; r += 1) {
+          const row = [];
+          for (let c = 0; c <= r; c += 1) {
+            row.push({ card: deck[idx], removed: false, row: r, col: c, source: "pyramid" });
+            idx += 1;
+          }
+          rows.push(row);
+        }
+        return { rows, index: idx };
+      }
+
+      function exposed(slot) {
+        if (slot.removed) return false;
+        if (slot.row === 6) return true;
+        const left = pyramid[slot.row + 1][slot.col];
+        const right = pyramid[slot.row + 1][slot.col + 1];
+        return left.removed && right.removed;
+      }
+
+      function renderCard(slotLike, clickable, source, extraClass = "") {
+        const card = slotLike.card;
+        const el = document.createElement("button");
+        el.className = "card " + (redSuits.has(card.suit) ? "red " : "") + extraClass;
+        el.textContent = cardLabel(card);
+        el.dataset.source = source;
+        el.dataset.id = card.id;
+        if (!clickable) el.classList.add("disabled");
+        return el;
+      }
+
+      function render() {
+        pyramidEl.innerHTML = "";
+        stockEl.innerHTML = "";
+        wasteEl.innerHTML = "";
+
+        for (let r = 0; r < pyramid.length; r += 1) {
+          const rowEl = document.createElement("div");
+          rowEl.className = "row";
+          for (const slot of pyramid[r]) {
+            if (slot.removed) {
+              const empty = document.createElement("div");
+              empty.className = "card disabled";
+              empty.style.opacity = "0.1";
+              rowEl.appendChild(empty);
+              continue;
+            }
+            const isClickable = exposed(slot);
+            const cardEl = renderCard(slot, isClickable, "pyramid");
+            if (selected && selected.id === slot.card.id) cardEl.classList.add("selected");
+            rowEl.appendChild(cardEl);
+          }
+          pyramidEl.appendChild(rowEl);
+        }
+
+        const stockTop = stock.at(-1);
+        if (stockTop) {
+          const stockBtn = document.createElement("button");
+          stockBtn.className = "card back";
+          stockBtn.textContent = String(stock.length);
+          stockBtn.dataset.source = "stock";
+          stockEl.appendChild(stockBtn);
+        } else {
+          const none = document.createElement("div");
+          none.className = "card disabled";
+          none.textContent = "0";
+          stockEl.appendChild(none);
+        }
+
+        const wasteTop = waste.at(-1);
+        if (wasteTop) {
+          const wasteBtn = renderCard({ card: wasteTop }, true, "waste");
+          if (selected && selected.id === wasteTop.id) wasteBtn.classList.add("selected");
+          wasteEl.appendChild(wasteBtn);
+        } else {
+          const empty = document.createElement("div");
+          empty.className = "card disabled";
+          empty.textContent = "-";
+          wasteEl.appendChild(empty);
+        }
+
+        const leftInPyramid = pyramid.flat().filter((s) => !s.removed).length;
+        if (leftInPyramid === 0) {
+          statusEl.textContent = "You cleared the pyramid. You win.";
+          return;
+        }
+
+        if (stock.length === 0 && waste.length === 0) {
+          statusEl.textContent = "No more moves in stock/waste. Start a new game to retry.";
+        } else if (!statusEl.textContent) {
+          statusEl.textContent = "Select two exposed cards that sum to 13. Kings remove instantly.";
+        }
+      }
+
+      function removePyramidCard(id) {
+        for (const row of pyramid) {
+          for (const slot of row) {
+            if (slot.card.id === id) {
+              slot.removed = true;
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      function removeWasteTopIf(id) {
+        const top = waste.at(-1);
+        if (top && top.id === id) {
+          waste.pop();
+          return true;
+        }
+        return false;
+      }
+
+      function selectCard(card) {
+        if (cardValue(card.rank) === 13) {
+          removeCardById(card.id);
+          selected = null;
+          statusEl.textContent = "King removed.";
+          render();
+          return;
+        }
+
+        if (!selected) {
+          selected = card;
+          statusEl.textContent = "Choose a second card to make 13.";
+          render();
+          return;
+        }
+
+        if (selected.id === card.id) {
+          selected = null;
+          statusEl.textContent = "Selection cleared.";
+          render();
+          return;
+        }
+
+        const total = cardValue(selected.rank) + cardValue(card.rank);
+        if (total === 13) {
+          removeCardById(selected.id);
+          removeCardById(card.id);
+          statusEl.textContent = "Pair removed.";
+        } else {
+          statusEl.textContent = "Those cards do not sum to 13.";
+        }
+
+        selected = null;
+        render();
+      }
+
+      function removeCardById(id) {
+        if (removePyramidCard(id)) return;
+        removeWasteTopIf(id);
+      }
+
+      function startGame() {
+        const deck = makeDeck();
+        const built = buildPyramid(deck);
+        pyramid = built.rows;
+        stock = deck.slice(built.index);
+        waste = [];
+        selected = null;
+        statusEl.textContent = "";
+        render();
+      }
+
+      document.body.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.dataset.source === "stock") {
+          const draw = stock.pop();
+          if (draw) {
+            waste.push(draw);
+            selected = null;
+            statusEl.textContent = "Drew from stock.";
+            render();
+          }
+          return;
+        }
+
+        if (target.dataset.source === "waste") {
+          const top = waste.at(-1);
+          if (top) selectCard(top);
+          return;
+        }
+
+        if (target.dataset.source === "pyramid") {
+          for (const row of pyramid) {
+            for (const slot of row) {
+              if (slot.card.id === target.dataset.id && exposed(slot)) {
+                selectCard(slot.card);
+                return;
+              }
+            }
+          }
+        }
+      });
+
+      newBtn.addEventListener("click", startGame);
+      startGame();
+    </script>
+  </body>
+</html>

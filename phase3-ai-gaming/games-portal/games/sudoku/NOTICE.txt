@@ -1,0 +1,9 @@
+This directory vendors the built production assets of:
+- Project: super-sudoku
+- Repository: https://github.com/TN1ck/super-sudoku
+- License: MIT
+- Source commit: HEAD of default branch cloned on 2026-05-25
+- Local customization: settings/actions merged into single Settings button
+- Build base path: /games/sudoku/
+
+The license text is included in LICENSE.super-sudoku.

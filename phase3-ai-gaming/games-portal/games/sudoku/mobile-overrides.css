@@ -1,0 +1,39 @@
+/* Mobile-specific overrides layered on top of upstream Super Sudoku build. */
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: contain;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+select {
+  touch-action: manipulation;
+}
+
+/* Prevent iOS from auto-zooming form controls on focus. */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  button,
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  select {
+    min-height: 44px;
+  }
+}

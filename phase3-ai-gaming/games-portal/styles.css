@@ -1,0 +1,142 @@
+:root {
+  --bg: #0e1828;
+  --panel: #14233a;
+  --panel-2: #1a2f4d;
+  --text: #edf3ff;
+  --muted: #9cb0d0;
+  --accent: #59d7a5;
+  --accent-2: #ffcc66;
+  --danger: #ff7b7b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--text);
+  background: radial-gradient(circle at top, #1f3760, var(--bg) 55%);
+  min-height: 100vh;
+}
+
+.container {
+  width: min(1100px, 94vw);
+  margin: 0 auto;
+  padding: 24px 0 42px;
+}
+
+header {
+  margin-bottom: 22px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+}
+
+.lead {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.game-card {
+  display: block;
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid #2f4c79;
+  border-radius: 14px;
+  background: linear-gradient(155deg, var(--panel), var(--panel-2));
+  padding: 16px;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.game-card:hover {
+  transform: translateY(-2px);
+  border-color: #6ea1e9;
+}
+
+.game-card h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.game-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.badge {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: #132c21;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+button,
+.btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  background: #2d548b;
+  color: var(--text);
+  font-weight: 700;
+}
+
+button:hover,
+.btn:hover {
+  background: #3a66a6;
+}
+
+.btn-secondary {
+  background: #3a4255;
+}
+
+.btn-warning {
+  background: #7d5b1f;
+  color: #fff9ec;
+}
+
+.status {
+  margin: 0 0 14px;
+  color: var(--accent-2);
+  min-height: 22px;
+}
+
+.back-link {
+  display: inline-block;
+  color: #9bc4ff;
+  margin-bottom: 16px;
+}
+
+footer {
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding-top: 16px;
+  }
+}
