@@ -1,29 +1,31 @@
 html,
 body {
   width: 100vw;
-  height: 100vh;
+  min-height: 100vh;
   margin: 0;
   padding: 0;
 }
 
 body {
-  background: url("./bg.jpg") no-repeat center;
+  background: radial-gradient(circle at 15% 20%, #2e8a5a 0%, #1c6b42 28%, #0f442a 65%, #0b2d1c 100%);
   background-size: cover;
 }
 
 .solitaire {
   max-width: 800px;
-  height: 100%;
+  min-height: 100%;
   margin: auto;
   display: flex;
   flex: 1;
   flex-direction: column;
   box-sizing: border-box;
   position: relative;
-  overflow: hidden; /* important for win effect */
+  overflow: visible;
 
   --card-width: 73px;
   --card-height: 98px;
+  --stack-front-offset: 15px;
+  --stack-back-offset: 8px;
   --hover-card: 0 0 4px 2px #fff;
   --hover-deck: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
 }
@@ -31,21 +33,79 @@ body {
 .card {
   width: var(--card-width);
   height: var(--card-height);
-  background-image: url("./spritesheet.png");
+  background: #ffffff;
+  border: 1px solid #1d1d1d;
+  box-sizing: border-box;
+  color: #111111;
   position: absolute;
   left: 0;
   top: 0;
   user-select: none;
   transition: box-shadow 0.1s;
   border-radius: 4px;
+  overflow: visible;
 }
 
 .card--back {
-  background-position: var(--background-position-facing-down);
+  background:
+    repeating-linear-gradient(45deg, #143658 0 6px, #2a5c8a 6px 12px),
+    linear-gradient(#1c3f66, #122a44);
+  border-color: #d5e6ff;
 }
 
 .card--front {
-  background-position: var(--background-position-facing-up);
+  background: #ffffff;
+}
+
+.card--front::before,
+.card--front::after {
+  content: attr(data-rank) attr(data-suit);
+  position: absolute;
+  font-weight: 700;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  color: var(--card-color, #111111);
+}
+
+.card--front::before {
+  top: 6px;
+  left: 6px;
+}
+
+.card--front::after {
+  right: 6px;
+  bottom: 6px;
+  transform: rotate(180deg);
+}
+
+.card-center {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--card-color, #111111);
+  line-height: 1;
+}
+
+.card--front > .card-center {
+  display: flex;
+}
+
+.card--back > .card-center {
+  display: none;
+}
+
+.card--front > .card {
+  top: var(--stack-front-offset);
+}
+
+.card--back > .card {
+  top: var(--stack-back-offset);
 }
 
 .card--front:last-child:hover {
@@ -63,9 +123,10 @@ body {
   width: var(--card-width);
   height: var(--card-height);
   border-radius: 4px;
-  background-image: url("./spritesheet.png");
-  background-position: calc(var(--card-width) * -3)
-    calc(var(--card-height) * -4);
+  background:
+    repeating-linear-gradient(45deg, #143658 0 6px, #2a5c8a 6px 12px),
+    linear-gradient(#1c3f66, #122a44);
+  border: 1px solid #d5e6ff;
   transition: 0.2s;
 }
 
@@ -124,15 +185,7 @@ body {
   display: flex;
   padding-top: 5%;
   justify-content: space-evenly;
-}
-
-.board-deck .card--front > .card--front {
-  top: 15px;
-}
-
-.board-deck .card--back > .card--front,
-.board-deck .card--back > .card--back {
-  top: 8px;
+  padding-bottom: 18px;
 }
 
 /* card cells */

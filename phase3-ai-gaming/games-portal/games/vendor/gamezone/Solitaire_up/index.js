@@ -7,6 +7,68 @@ const deckPileEl = document.getElementById("js-deck-pile");
 
 const cardWidth = 73;
 const cardHeight = 98;
+const suitSymbol = { c: "\u2663", d: "\u2666", h: "\u2665", s: "\u2660" };
+const setCardMetrics = (root, width) => {
+  const clampedWidth = Math.max(34, Math.min(68, width));
+  const height = clampedWidth * 1.34;
+  const frontOffset = Math.max(4, Math.min(10, clampedWidth * 0.12));
+  const backOffset = Math.max(3, Math.min(7, clampedWidth * 0.08));
+
+  root.style.setProperty("--card-width", `${clampedWidth.toFixed(2)}px`);
+  root.style.setProperty("--card-height", `${height.toFixed(2)}px`);
+  root.style.setProperty("--stack-front-offset", `${frontOffset.toFixed(2)}px`);
+  root.style.setProperty("--stack-back-offset", `${backOffset.toFixed(2)}px`);
+};
+
+const applyResponsiveLayout = () => {
+  const root = document.querySelector(".solitaire");
+  if (!root) return;
+
+  const vw = Math.max(window.visualViewport?.width || window.innerWidth || 0, 320);
+  const vh = Math.max(window.visualViewport?.height || window.innerHeight || 0, 320);
+
+  // Size cards to fill width across 7 columns, and height across 2 card heights
+  // + 6 face-down stack offsets (deepest initial column) + padding.
+  const widthByColumns = (vw - 18) / 7.5;
+  const widthByHeight = (vh - 30) / 3.8;
+  const width = Math.min(68, widthByColumns, widthByHeight);
+
+  setCardMetrics(root, width);
+};
+
+// After cards are in the DOM, shrink until nothing sits below the viewport.
+const fitToViewport = () => {
+  const root = document.querySelector(".solitaire");
+  if (!root) return;
+
+  const vh = window.visualViewport?.height || window.innerHeight || 320;
+
+  for (let i = 0; i < 20; i++) {
+    // Find the lowest pixel occupied by any card on the board.
+    const cards = root.querySelectorAll(".seven .card, .deck__pile .card, .aces .card");
+    let maxBottom = 0;
+    cards.forEach(c => {
+      const b = c.getBoundingClientRect().bottom;
+      if (b > maxBottom) maxBottom = b;
+    });
+
+    if (maxBottom <= vh + 1) break;
+
+    const cur = parseFloat(root.style.getPropertyValue("--card-width")) || 56;
+    if (cur <= 34) break;
+    setCardMetrics(root, cur - 1.5);
+  }
+};
+
+window.addEventListener("resize", () => { applyResponsiveLayout(); requestAnimationFrame(fitToViewport); });
+window.addEventListener("orientationchange", () => { applyResponsiveLayout(); requestAnimationFrame(fitToViewport); });
+const rankLabel = (number) => {
+  if (number === 1) return "A";
+  if (number === 11) return "J";
+  if (number === 12) return "Q";
+  if (number === 13) return "K";
+  return String(number);
+};
 const state = {
   // clubs (♣), diamonds (♦), hearts (♥) and spades (♠)
   types: ["c", "d", "h", "s"],
@@ -254,6 +316,10 @@ function resetGame() {
       dealPileEl.appendChild(el);
     }
     dealCards();
+    requestAnimationFrame(() => {
+      applyResponsiveLayout();
+      requestAnimationFrame(fitToViewport);
+    });
   });
 }
 
@@ -542,7 +608,7 @@ const gameFinish = () => {
 };
 
 const spritesheetImage = document.createElement("img");
-spritesheetImage.src = "./src/spritesheet.png";
+spritesheetImage.src = "./spritesheet.png";
 
 const win = () => {
   const boundingRect = gameEl.getBoundingClientRect();
@@ -647,6 +713,7 @@ const win = () => {
 };
 
 function initSolitaire() {
+  applyResponsiveLayout();
   document.body.style.setProperty(
     "--background-position-facing-down",
     `0 ${cardHeight * -4}px`
@@ -657,6 +724,15 @@ function initSolitaire() {
     for (let j = 1; j <= 13; j++) {
       const el = document.createElement("div");
       el.classList.add("card", `card--${state.types[i]}-${j}`, "card--back");
+      const cardType = state.types[i];
+      const isRed = cardType === "d" || cardType === "h";
+      el.dataset.rank = rankLabel(j);
+      el.dataset.suit = suitSymbol[cardType];
+      el.style.setProperty("--card-color", isRed ? "#bf1736" : "#101820");
+      const center = document.createElement("span");
+      center.className = "card-center";
+      center.textContent = suitSymbol[cardType];
+      el.appendChild(center);
       el.style.setProperty(
         "--background-position-facing-up",
         `${cardWidth * -(j - 1)}px ${cardHeight * -i}px`

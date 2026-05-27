@@ -26,12 +26,18 @@ body {
   position: relative;
 }
 
-.row {
+.crosswordDisplay > .row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   height: 100%;
   align-content: start;
+}
+
+#crossword .row {
+  display: block;
+  height: auto;
+  white-space: nowrap;
 }
 
 #btnCreate,
@@ -88,11 +94,11 @@ body {
   min-width: 0;
 }
 
-.row > .col-lg-6:first-of-type {
+.crosswordDisplay > .col-lg-6:first-of-type {
   order: 5;
 }
 
-.row > .col-lg-6:last-of-type {
+.crosswordDisplay > .col-lg-6:last-of-type {
   order: 6;
 }
 

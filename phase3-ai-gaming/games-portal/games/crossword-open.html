@@ -21,6 +21,14 @@
         border: 0;
         background: #0f1e33;
       }
+
+      .fallback-link {
+        margin-top: 10px;
+      }
+
+      .fallback-link a {
+        color: #d9e7ff;
+      }
     </style>
   </head>
   <body>
@@ -30,8 +38,12 @@
       <h1>Crossword (Open Source)</h1>
       <p class="lead">Imported from GameZone (Apache-2.0), fully local and ad-free.</p>
       <div class="frame-wrap">
-        <iframe class="game-frame" src="vendor/gamezone/Crossword_Puzzle/index.html" title="Open source crossword"></iframe>
+        <iframe class="game-frame" src="vendor/gamezone/Crossword_Puzzle/index.html?v=20260526a" title="Open source crossword"></iframe>
       </div>
+      <p class="fallback-link">
+        If the embedded view is blank on mobile, open directly:
+        <a href="vendor/gamezone/Crossword_Puzzle/index.html?v=20260526a">Crossword direct page</a>
+      </p>
     </main>
   </body>
 </html>

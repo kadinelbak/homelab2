@@ -34,6 +34,14 @@
         border: 0;
         background: #0f1e33;
       }
+
+      .fallback-link {
+        margin-top: 10px;
+      }
+
+      .fallback-link a {
+        color: #d9e7ff;
+      }
     </style>
   </head>
   <body>
@@ -46,8 +54,12 @@
         <p id="solitaireStatus" class="status">A new game starts automatically, but you can restart it anytime.</p>
       </div>
       <div class="frame-wrap">
-        <iframe id="solitaireFrame" class="game-frame" src="vendor/gamezone/Solitaire_up/index.html" title="Open source solitaire"></iframe>
+        <iframe id="solitaireFrame" class="game-frame" src="vendor/gamezone/Solitaire_up/index.html?v=20260526i" title="Open source solitaire"></iframe>
       </div>
+      <p class="fallback-link">
+        If the embedded view is blank on mobile, open directly:
+        <a href="vendor/gamezone/Solitaire_up/index.html?v=20260526i">Solitaire direct page</a>
+      </p>
     </main>
 
     <script>

@@ -589,15 +589,17 @@ Play();
 
 //==================================================//
 
-$( "#btnCheck" ).click(function() {
-	  $( ".square input" ).each(function() {
-		 	if (!($(this).attr('data-letter') === ($(this).val().toUpperCase()))) {
-   				console.log('incorrect');
-				$(this).val('');
-			} 
-	});
+document.getElementById("btnCheck").addEventListener("click", function () {
+  var inputs = document.querySelectorAll(".square input");
+  for (var i = 0; i < inputs.length; i++) {
+    var expected = inputs[i].getAttribute("data-letter");
+    var actual = (inputs[i].value || "").toUpperCase();
+    if (expected !== actual) {
+      inputs[i].value = "";
+    }
+  }
 });
 
-$('#btnReset').click(function() {
-    location.reload();
+document.getElementById("btnReset").addEventListener("click", function () {
+  location.reload();
 });
