@@ -401,3 +401,41 @@ services:
       - "homepage.icon=ntfy"
       - "homepage.href=http://${DOMAIN}:8085"
       - "homepage.description=Push notifications"
+
+# ---------------------------------------------------------------------------
+  # NUT (Network UPS Tools) – CyberPower UPS Monitoring & Autoshutdown
+  # Web UI UI: http://host:3005
+  # Monitors the CyberPower 1500VA via USB and triggers a graceful host shutdown.
+  # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+  # NUT (Network UPS Tools) – CyberPower UPS Monitoring & Autoshutdown
+  # Monitors the CyberPower 1500VA via USB and triggers a graceful host shutdown.
+  # ---------------------------------------------------------------------------
+  nut-upsd:
+    image: instantlinux/nut-upsd:latest
+    container_name: nut_upsd
+    restart: unless-stopped
+    privileged: true
+    ipc: host
+    environment:
+      - TZ=${TZ}
+      - DRIVER=usbhid-ups
+      - PORT=auto
+      - DESCRIPTION=CyberPower 1500VA Pure Sine Wave
+      - API_PASSWORD=${NUT_PASSWORD}
+      - ADMIN_PASSWORD=${NUT_PASSWORD}
+      # Shutdown logic rules
+      - SHUTDOWN_CMD=shutdown -h now
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    ports:
+      - "3493:3493"  # Standard NUT API port
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=UPS Monitor"
+      - "homepage.icon=battery"
+      - "homepage.description=CyberPower 1500VA Status"
