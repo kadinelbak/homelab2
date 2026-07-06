@@ -21,6 +21,7 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+opencode.json
 *.swp
 *.swo
 
