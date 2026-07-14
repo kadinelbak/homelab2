@@ -1,0 +1,16 @@
+# Development Dockerfile for cron job - allows running the job on demand
+FROM alpine:latest
+
+# Install bash for running the job
+RUN apk add --no-cache bash
+
+# Create a directory for our job script
+RUN mkdir -p /usr/local/bin
+
+# Copy the job script
+COPY job.sh /usr/local/bin/job.sh
+RUN chmod +x /usr/local/bin/job.sh
+
+# Default command: run the job and then exit
+# To get a shell, override the command (e.g., docker-compose run --rm cron-job sh)
+CMD ["/usr/local/bin/job.sh"]

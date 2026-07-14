@@ -1,5 +1,4 @@
 # Homelab Ground Zero Rebuild Guide
-
 This repository is a full phased Docker Compose architecture tuned for **16GB RAM first**, with clear expansion paths when you upgrade to 48GB.
 
 Design priorities:
@@ -32,7 +31,7 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 │       ├── jellyfin/{config,cache}/
 │       ├── audiobookshelf/{config,metadata}/
 │       ├── navidrome/{data,cache}/
-│       ├── paperless/{data,media,export,consume}/
+│       ├── paperless:{data,media,export,consume}/
 │       ├── immich/{upload,db,ml-cache}/
 │       ├── prowlarr/
 │       ├── bazarr/
@@ -50,7 +49,7 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 │   └── data/
 │       ├── kasm/{profiles}/
 │       ├── guacamole/
-│       ├── nextcloud/{html,data}/
+│       ├── nextcloud:{html,data}/
 │       ├── gitea/
 │       ├── supabase/
 │       ├── kiwix/library/
@@ -58,8 +57,8 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 │       ├── calcom/
 │       └── nocodb/
 └── shared/
-    ├── media/{movies,tv,music,audiobooks,podcasts,books}/
-    └── downloads/{complete,incomplete}/
+    ├── media:{movies,tv,music,audiobooks,podcasts,books}/
+    └── downloads:{complete,incomplete}/
 ```
 
 ## 2. What Is In This Repo
@@ -186,9 +185,8 @@ Phase 3 access URLs:
 - `http://<tailnet-host>:5006` -> Actual Budget
 - `http://<tailnet-host>:8086` -> Stirling PDF
 - `http://<tailnet-host>:8087` -> IT-Tools
-- `http://<tailnet-host>:8092` -> Web Games (Sudoku, Solitaire, Hearts Multiplayer, Memory)
-- `http://<tailnet-host>:8093/health` -> Game Server API (checkers module)
-- `http://<tailnet-host>:8094` -> Hearts Multiplayer (MIT open-source adaptation)
+- `http://<tailnet-host>:8090` -> Beszel Hub
+- `http://<tailnet-host>:8085` -> ntfy
 
 ### Phase 4: On-Demand Heavy Stack
 
@@ -314,3 +312,55 @@ Use:
 - `AI_CONTEXT.md` for fast troubleshooting prompts and context handoff.
 - `scripts/toggle-ondemand.sh logs <service>` for immediate diagnostics.
 
+## 🛠️ Developer Experience
+
+This homelab provides a streamlined developer experience for building, testing, and deploying custom services.
+
+### Service Templates
+Pre-configured templates are available in `dev/templates/` for:
+- **web-app**: Full-stack web application (Node.js example)
+- **api-service**: REST/gRPC API service (Python/FastAPI example)
+- **worker**: Background job processor
+- **cron-job**: Scheduled task
+- **dashboard**: Custom UI or Grafana panel
+
+### Creating a New Service
+Use the helper script to create a new service from a template:
+```bash
+./dev/scripts/create-service.sh <service-name> <template-type>
+```
+Example:
+```bash
+./dev/scripts/create-service.sh my-webapp web-app
+```
+
+### Local Development
+Each service includes a `docker-compose.dev.yml` for local development with live reload:
+```bash
+cd dev/services/<service-name>
+docker compose -f docker-compose.dev.yml up -d
+```
+
+### Testing
+A basic testing framework is provided in `dev/testing/` to run unit and integration tests.
+
+### Deployment to Homelab
+Generate a docker-compose snippet for adding your service to the appropriate phase:
+```bash
+./dev/scripts/generate-compose-snippet.sh <service-name> [phase]
+```
+Then add the generated snippet to the phase's docker-compose.yml and deploy.
+
+### Example Workflow
+1. Create a service: `./dev/scripts/create-service.sh my-ai-workflow worker`
+2. Develop locally: `cd dev/services/my-ai-workflow && docker compose -f docker-compose.dev.yml up -d`
+3. Test: Use the testing framework or manual verification
+4. Generate deployment snippet: `./dev/scripts/generate-compose-snippet.sh my-ai-workflow phase3-ai-gaming`
+5. Add the snippet to `phase3-ai-gaming/docker-compose.yml`
+6. Deploy: `cd phase3-ai-gaming && docker compose --env-file ../../.env up -d`
+
+### Available Helper Scripts
+- `dev/scripts/create-service.sh`: Create a new service from a template
+- `dev/scripts/generate-compose-snippet.sh`: Generate a docker-compose snippet for deployment
+- `dev/scripts/deploy-to-homelab.sh`: Helper for deployment (generates snippet)
+EOF

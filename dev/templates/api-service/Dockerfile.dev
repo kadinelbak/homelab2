@@ -1,0 +1,29 @@
+# Development Dockerfile for API service with live reload
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for development
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-warn-script-location -r requirements.txt
+
+# Install development tools
+RUN pip install --no-warn-script-location watchdog
+
+# Copy source code
+COPY . .
+
+# Expose ports
+EXPOSE 8000  # Application port
+# Note: For live reload, we rely on file changes triggering a restart via a process manager or custom script.
+# In practice, you might use something like `uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+# But we'll leave the command to be overridden in docker-compose.dev.yml
+
+# Default command (can be overridden)
+CMD ["python", "main.py"]

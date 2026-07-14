@@ -1,0 +1,5 @@
+# Enable additional collectors for resource optimization
+COLLECTOR_PERF="yes"
+COLLECTOR_PRESSURE="yes"
+COLLECTOR_ZRAM="yes"
+COLLECTOR_NVIDIA="yes"

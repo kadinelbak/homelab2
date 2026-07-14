@@ -1,0 +1,73 @@
+# Docker Compose overrides for local development
+# This file can be used with existing services to enable development mode
+# Usage: docker compose -f <phase>/docker-compose.yml -f dev/local-overrides/docker-compose.override.yml up -d
+
+version: '3.8'
+
+# Example: Override the grafana service for development
+# Uncomment and customize as needed for specific services
+#
+# services:
+#   grafana:
+#     # Keep the original image but change configuration for development
+#     environment:
+#       - GF_SECURITY_ADMIN_USER=admin
+#       - GF_SECURITY_ADMIN_PASSWORD=admin  # Only for development!
+#       - GF_AUTH_ANONYMOUS_ENABLED=true
+#       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+#     volumes:
+#       # Add development-specific volume mounts if needed
+#       - ./custom-dashboards:/var/lib/grafana/dashboards:ro
+#     ports:
+#       - "30030:3000"  # Expose on different port if needed
+#
+# Example: Override n8n for development with live reload (conceptual)
+# n8n:
+#   environment:
+#     - N8N_LOG_LEVEL=debug
+#     - N8N_EDITOR_BASE_URL=http://localhost:5678
+#   # Note: n8n doesn't support live reload via volume mounts easily
+#   # This is more for showing the pattern
+#
+# The real power of this file is to:
+# 1. Reduce resource limits for development
+# 2. Enable debug logging
+# 3. Point to test databases or services
+# 4. Disable certain production features
+# 5. Add development-specific volume mounts for customizations
+
+# Example of reducing resources for development:
+# services:
+#   some-service:
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 512M  # Reduce from production limits
+#         reservations:
+#           memory: 256M
+#
+# Example of enabling debug mode:
+# services:
+#   some-service:
+#     environment:
+#       - LOG_LEVEL=debug
+#       - DEBUG=true
+#
+# Example of pointing to local test services:
+# services:
+#   some-service:
+#     environment:
+#       - DATABASE_HOST=host.docker.internal
+#       - DATABASE_NAME=test_db
+#
+# Example of adding development-specific configs:
+# services:
+#   some-service:
+#     volumes:
+#       - ./dev-config:/app/config:ro
+#       - ./custom-code:/app/code:ro
+
+# IMPORTANT: This file is meant to be a template/example.
+# Users should uncomment and customize the sections they need for their specific services.
+# The typical usage would be:
+#   docker compose -f phase1-core/docker-compose.yml -f dev/local-overrides/docker-compose.override.yml up -d

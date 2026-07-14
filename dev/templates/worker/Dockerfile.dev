@@ -1,0 +1,33 @@
+# Development Dockerfile for worker service with live reload
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies for development
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-warn-script-location -r requirements.txt
+
+# Install development tools for live reload (watchdog) and debugging
+RUN pip install --no-warn-script-location watchdog
+
+# Copy source code
+COPY . .
+
+# Expose port (for health checks, etc.)
+EXPOSE 8000
+
+# Default command (can be overridden in docker-compose.dev.yml for live reload)
+# For example, we can use a script that restarts the worker on file changes.
+# But for simplicity, we'll rely on the fact that the worker might be designed to run continuously.
+# Alternatively, we can use a process manager like supervisord or just restart the container on change.
+# Since we are mounting the code, we can use a tool like `watchexec` to restart the process.
+# However, to keep it simple, we'll just run the worker and note that for live reload in development,
+# one might need to adjust the command to use a reload mechanism.
+# Let's set the command to run the worker and leave it to the developer to adjust for live reload if needed.
+CMD ["python", "worker.py"]

@@ -1,0 +1,17 @@
+# Docker Compose for local development of dashboard
+# This file is used for development with live reload for static content
+
+version: '3.8'
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    # For live reload of static content, we rely on the volume mount
+    # Changes to files in the current directory will be immediately reflected
+    # in the container because of the volume mount

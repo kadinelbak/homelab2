@@ -29,6 +29,126 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/postgres:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d:ro
@@ -52,6 +172,126 @@ services:
     container_name: homelab_redis
     restart: unless-stopped
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/redis:/data
     networks:
@@ -73,6 +313,126 @@ services:
     image: portainer/portainer-ce:latest
     container_name: portainer
     restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/portainer:/data
@@ -102,6 +462,126 @@ services:
       - "80:80"
       - "81:81"
       - "4443:443"
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/npm/data:/data
       - ${DATA_PATH}/phase1-core/data/npm/letsencrypt:/etc/letsencrypt
@@ -134,6 +614,126 @@ services:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
       AUTHENTIK_LOG_LEVEL: warning
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/authentik/media:/media
       - ${DATA_PATH}/phase1-core/data/authentik/custom-templates:/templates
@@ -171,6 +771,126 @@ services:
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/authentik/media:/media
@@ -201,6 +921,126 @@ services:
       - PUID=0
       - PGID=0
       - HOMEPAGE_ALLOWED_HOSTS=100.79.132.39:3000, localhost, 127.0.0.1, 10.1.38.234:3000,kadin-main-sys.tail00cf0e.ts.net:3000
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -220,6 +1060,126 @@ services:
     image: henrygd/beszel:latest
     container_name: beszel_hub
     restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/beszel/hub:/beszel_data
     ports:
@@ -241,6 +1201,126 @@ services:
     network_mode: host          # Required for host-level metrics
     pid: host                   # Required for process metrics
     gpus: all
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/beszel/agent:/var/lib/beszel-agent
@@ -261,6 +1341,126 @@ services:
     image: louislam/uptime-kuma:latest
     container_name: uptime_kuma
     restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/uptime-kuma:/app/data
     ports:
@@ -289,6 +1489,126 @@ services:
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_SCHEDULE: "0 0 4 * * *"   # Cron: 04:00 daily
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -319,6 +1639,126 @@ services:
       SCRUTINY_WEB_LISTEN_ADDRESS_PORT: 8080
       SCRUTINY_SCAN_INTERVAL: "24h"
       TZ: ${TZ}
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/scrutiny:/opt/scrutiny/config
       - /dev:/dev:ro
@@ -355,6 +1795,126 @@ services:
       # Disable signups and admin panel for security unless configuring
       SIGNUPS_ALLOWED: "false"
       INVITATIONS_ALLOWED: "true"
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/vaultwarden:/data
     ports:
@@ -370,9 +1930,10 @@ services:
       - "homepage.group=Maintenance"
       - "homepage.name=Vaultwarden"
       - "homepage.icon=vaultwarden"
-      - "homepage.href=https://${DOMAIN}:4443"
-      - "homepage.description=Password manager"
-
+      - "homepage.href=https://${DOMAIN}:4443
+and SSL" 
+      - "homepage.description=Password manager" 
+  
   # ---------------------------------------------------------------------------
   # NTFY – Push Notification Server
   # Proxy target: ntfy:80
@@ -386,6 +1947,126 @@ services:
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
     volumes:
       - ${DATA_PATH}/phase1-core/data/ntfy/cache:/var/cache/ntfy
       - ${DATA_PATH}/phase1-core/data/ntfy/etc:/etc/ntfy
@@ -439,3 +2120,1283 @@ services:
       - "homepage.name=UPS Monitor"
       - "homepage.icon=battery"
       - "homepage.description=CyberPower 1500VA Status"
+
+  # ---------------------------------------------------------------------------
+  # MONITORING STACK (Added per Infrastructure-as-Code Spec)
+  # Provides zero-click observability with pre-configured dashboards and alerting
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: homelab_prometheus
+    restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert.rules:/etc/prometheus/alert.rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Prometheus"
+      - "homepage.icon=prometheus"
+      - "homepage.href=http://${DOMAIN}:9090"
+      - "homepage.description=Monitoring and alerting"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: homelab_grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_ALLOW_ORG_CREATE=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_BASIC_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_AUTH_PASSWORD_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=authentik
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=${GF_AUTH_GENERIC_OAUTH_CLIENT_ID}
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=${GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET}
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email groups
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://authentik.${DOMAIN}/application/o/grafana/
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=https://authentik.${DOMAIN}/application/o/token/
+      - GF_AUTH_GENERIC_OAUTH_API_URL=https://authentik.${DOMAIN}/application/o/userinfo/
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=false
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Grafana"
+      - "homepage.icon=grafana"
+      - "homepage.href=http://${DOMAIN}:30030"
+      - "homepage.description=Monitoring dashboard"
+
+  loki:
+    image: grafana/loki:latest
+    container_name: homelab_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - ./monitoring/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - homelab_internal
+    command: -config.file=/etc/loki/loki-config.yaml
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Loki"
+      - "homepage.icon=loki"
+      - "homepage.href=http://${DOMAIN}:3100"
+      - "homepage.description=Log aggregation"
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: homelab_promtail
+    restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - ./monitoring/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - homelab_internal
+    command: -config.file=/etc/promtail/config.yaml
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Promtail"
+      - "homepage.description=Log shipping agent"
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: homelab_alertmanager
+    restart: unless-stopped
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - ./monitoring/alertmanager/config.yml:/etc/alertmanager/config.yml:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - homelab_internal
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Alertmanager"
+      - "homepage.icon=alertmanager"
+      - "homepage.href=http://${DOMAIN}:9093"
+      - "homepage.description=Alert handling"
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: homelab_node_exporter
+    restart: unless-stopped
+    pid: host
+    networks:
+      - homelab_internal
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - ./monitoring/node-exporter/.collector.rc:/etc/node-exporter/.collector.rc:ro
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=Node Exporter"
+      - "homepage.description=Host-level metrics"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: homelab_cadvisor
+    restart: unless-stopped
+    privileged: true
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Monitoring"
+      - "homepage.name=cAdvisor"
+      - "homepage.description=Container metrics"
+
+  # ---------------------------------------------------------------------------
+  # RESOURCE OPTIMIZER – Intelligent Resource Management
+  # Dynamically optimizes container resource allocation based on usage patterns,
+  # time of day, workload priority, and environmental factors.
+  # ---------------------------------------------------------------------------
+  resource-optimizer:
+    image: ghcr.io/homelab/resource-optimizer:latest
+    container_name: homelab_resource_optimizer
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      # Configuration for the optimizer
+      - OPTIMIZER_INTERVAL=300          # Check and adjust every 5 minutes
+      - OPTIMIZER_SAFETY_MARGIN=0.2     # 20% buffer above predicted usage
+      - OPTIMIZER_HISTORY_DAYS=7        # Days of historical data to consider
+      - OPTIMIZER_ENABLE_PREDICTION=true # Enable predictive scaling
+      - OPTIMIZER_ENABLE_THERMAL=true    # Enable thermal management
+      - OPTIMIZER_ENABLE_GPU_SHARING=true # Enable GPU sharing (if applicable)
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_PATH}/phase1-core:/phase1-core:ro
+      - ${DATA_PATH}/phase2-media:/phase2-media:ro
+      - ${DATA_PATH}/phase3-ai-gaming:/phase3-ai-gaming:ro
+      - ${DATA_PATH}/phase4-ondemand:/phase4-ondemand:ro
+      - resource-optimizer-data:/app/data
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Maintenance"
+      - "homepage.name=Resource Optimizer"
+      - "homepage.icon=memory"
+      - "homepage.href=http://${DOMAIN}:9095"
+      - "homepage.description=Intelligent resource management"
+wol-api:
+  image: wolapi:latest
+  container_name: homelab_wol_api
+  restart: unless-stopped
+  environment:
+    - TZ=
+    - WOL_API_KEY=
+    - WOL_MAC_ADDRESS=
+  volumes:
+    - ./wol-api:/app
+    - /etc/wol/mac.address:/etc/wol/mac.address:ro
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=WoL API"
+    - "homepage.icon=remote"
+    - "homepage.href=http://:9999"
+    - "homepage.description=Wake-on-LAN API"
+
+backup:
+  image: restic/restic:latest
+  container_name: homelab_backup
+  restart: unless-stopped
+  volumes:
+    - :/data:ro
+    - ./backup:/backup
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    - RESTIC_REPOSITORY=/backup/local
+    - RESTIC_PASSWORD_FILE=/backup/secrets/restic-pass
+    - AWS_ACCESS_KEY_ID=
+    - AWS_SECRET_ACCESS_KEY=
+    - AWS_DEFAULT_REGION=us-east-1
+    - S3_ENDPOINT=
+  command: ["sh", "-c", "while true; do /backup/run-backup.sh; sleep 3600; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Backup Orchestrator"
+    - "homepage.icon=harddisk"
+    - "homepage.href=http://:8091"
+    - "homepage.description=Automated backups"
+
+suricata:
+  image: jasonish/suricata:latest
+  container_name: homelab_suricata
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - /phase1-core/data/suricata:/etc/suricata
+    - /var/log/suricata:/var/log/suricata
+    - /etc/localtime:/etc/localtime:ro
+  networks:
+    - homelab_internal
+  command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Suricata IDS"
+    - "homepage.href=http://:8092"
+    - "homepage.description=Network intrusion detection"
+
+trivy-scan:
+  image: aquasec/trivy:latest
+  container_name: homelab_trivy
+  restart: "no"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core/data/trivy:/cache
+  environment:
+    - TRIVY_SEVERITY=CRITICAL,HIGH
+  command: ["sh", "-c", "while true; do /scan/scan-images.sh; sleep 86400; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Security"
+    - "homepage.name=Trivy Scanner"
+    - "homepage.description=Vulnerability scanning"
+
+metadata:
+  image: appropriate/curl:latest
+  container_name: homelab_metadata
+  restart: unless-stopped
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /phase1-core:/phase1-core:ro
+    - /phase2-media:/phase2-media:ro
+    - /phase3-ai-gaming:/phase3-ai-gaming:ro
+    - /phase4-ondemand:/phase4-ondemand:ro
+  command: ["sh", "-c", "while true; do /collect/metadata.sh; sleep 30; done"]
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Metadata Collector"
+    - "homepage.description=Collects service metadata"
+
+consul-server:
+  image: hashicorp/consul:latest
+  container_name: homelab_consul
+  restart: unless-stopped
+  command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+  ports:
+    - "8500:8500"
+    - "8600:8600/tcp"
+    - "8600:8600/udp"
+  volumes:
+    - /phase1-core/data/consul:/consul/data
+  environment:
+    - CONSUL_LOCAL_CONFIG={leave_on_terminate: true}
+  networks:
+    - homelab_internal
+  labels:
+    - "com.centurylinklabs.watchtower.enable=true"
+    - "homepage.group=Maintenance"
+    - "homepage.name=Consul UI"
+    - "homepage.href=http://:8500"
+    - "homepage.description=Service discovery & mesh control"
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  alertmanager_data:
+  resource-optimizer_data:
+

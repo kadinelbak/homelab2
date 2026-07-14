@@ -1,0 +1,38 @@
+# Docker Compose for local development of API service
+# This file is used for development with live reload and debugging
+
+version: '3.8'
+
+services:
+  api-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./src:/app/src:cached
+      - ./:/app:ro
+    ports:
+      - "8000:8000"  # Application port
+      - "5678:5678"  # Debug port (if needed)
+    environment:
+      - ENV=development
+      - LOG_LEVEL=debug
+      # Point to local services for development
+      - DATABASE_URL=postgres://homelab:homelab@host.docker.internal:5432/devdb
+      - REDIS_URL=redis://host.docker.internal:6379
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    # Add host.docker.internal for Mac/Windows Docker Desktop
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Enable live reload for Python
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    
+  # Optional: Add a test database for development
+  # test-db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: testuser
+  #     POSTGRES_PASSWORD: testpass
+  #     POSTGRES_DB: testdb
+  #   ports:
+  #     - "5433:5432"

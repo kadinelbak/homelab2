@@ -1,0 +1,78 @@
+# Alert rules for homelab monitoring
+# Define alerts for system and service health
+
+# Host-level alerts
+ALERT HostHighCPUUsage
+  expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High CPU usage on {{ $labels.instance }}"
+    description: "CPU usage is above 85% for more than 5 minutes."
+
+ALERT HostHighMemoryUsage
+  expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High memory usage on {{ $labels.instance }}"
+    description: "Memory usage is above 90% for more than 5 minutes."
+
+ALERT HostLowDiskSpace
+  expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+  for: 10m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Low disk space on {{ $labels.instance }}"
+    description: "Disk space is below 10% for more than 10 minutes."
+
+# Service-specific alerts
+ALERT ServiceDown
+  expr: up == 0
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Service {{ $labels.job }} is down"
+    description: "{{ $labels.job }} has been down for more than 2 minutes."
+
+ALERT ServiceHighRestartRate
+  expr: increase(container_restart_count[15m]) > 5
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High restart rate for {{ $labels.container_label_com_docker_swarm_service_name }}"
+    description: "Container has restarted more than 5 times in the last 15 minutes."
+
+# Database alerts (if using exporters)
+ALERT PostgresHighConnections
+  expr: postgres_database_connections_sum > 80
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High number of PostgreSQL connections"
+    description: "PostgreSQL has more than 80 active connections."
+
+ALERT RedisHighMemoryUsage
+  expr: redis_used_memory_bytes / redis_total_system_memory_bytes * 100 > 85
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High Redis memory usage"
+    description: "Redis is using more than 85% of total system memory."
+
+# Custom alert for backup success (if we have a backup metric)
+# ALERT BackupFailed
+#   expr: backup_last_success_timestamp < time() - 3600*25
+#   for: 15m
+#   labels:
+#     severity: critical
+#   annotations:
+#     summary: "Backup has not succeeded in the last 25 hours"
+#     description: "The last successful backup was more than 25 hours ago."
