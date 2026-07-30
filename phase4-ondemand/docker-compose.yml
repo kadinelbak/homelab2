@@ -40,6 +40,7 @@ services:
     <<: *ondemand
     image: lscr.io/linuxserver/kasm:latest
     container_name: kasm
+    profiles: ["kasm", "remote"]
     privileged: true
     environment:
       PUID: ${PUID}
@@ -72,6 +73,7 @@ services:
     <<: *ondemand
     image: guacamole/guacd:latest
     container_name: guacd
+    profiles: ["guacamole", "remote"]
     networks:
       - homelab_internal
     labels:
@@ -86,6 +88,7 @@ services:
     <<: *ondemand
     image: guacamole/guacamole:latest
     container_name: guacamole
+    profiles: ["guacamole", "remote"]
     environment:
       GUACD_HOSTNAME: guacd
       POSTGRESQL_HOSTNAME: homelab_postgres
@@ -120,6 +123,7 @@ services:
     <<: *ondemand
     image: nextcloud:latest
     container_name: nextcloud
+    profiles: ["nextcloud", "cloud"]
     environment:
       PUID: ${PUID}
       PGID: ${PGID}
@@ -159,6 +163,7 @@ services:
     <<: *ondemand
     image: gitea/gitea:latest
     container_name: gitea
+    profiles: ["gitea", "devops"]
     environment:
       USER_UID: ${PUID}
       USER_GID: ${PGID}
@@ -204,6 +209,7 @@ services:
     <<: *ondemand
     image: supabase/studio:latest
     container_name: supabase_studio
+    profiles: ["supabase", "devops"]
     environment:
       STUDIO_PG_META_URL: http://supabase-meta:8080
       POSTGRES_PASSWORD: ${SUPABASE_POSTGRES_PASSWORD}
@@ -239,11 +245,12 @@ services:
     <<: *ondemand
     image: ghcr.io/kiwix/kiwix-serve:latest
     container_name: kiwix
+    profiles: ["kiwix", "knowledge"]
     command: /data/*.zim    # Serves all .zim files in /data
     volumes:
       - ${DATA_PATH}/phase4-ondemand/data/kiwix/library:/data:ro
     ports:
-      - "8092:8080"
+      - "8095:8080"
     networks:
       - homelab_proxy
     labels:
@@ -251,7 +258,7 @@ services:
       - "homepage.group=On-Demand"
       - "homepage.name=Kiwix"
       - "homepage.icon=kiwix"
-      - "homepage.href=http://${DOMAIN}:8092"
+      - "homepage.href=http://${DOMAIN}:8095"
       - "homepage.description=Offline knowledge library"
 
   # ---------------------------------------------------------------------------
@@ -263,6 +270,7 @@ services:
     <<: *ondemand
     image: docmost/docmost:latest
     container_name: docmost
+    profiles: ["docmost", "knowledge"]
     environment:
       APP_URL: https://wiki.${DOMAIN}
       APP_SECRET: ${OUTLINE_SECRET_KEY}
@@ -292,6 +300,7 @@ services:
     <<: *ondemand
     image: calcom/cal.com:latest
     container_name: calcom
+    profiles: ["calcom", "productivity"]
     environment:
       TZ: ${TZ}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/calcom
@@ -322,6 +331,7 @@ services:
     <<: *ondemand
     image: nocodb/nocodb:latest
     container_name: nocodb
+    profiles: ["nocodb", "productivity"]
     environment:
       NC_DB: pg://homelab_postgres:5432?u=${POSTGRES_USER}&p=${POSTGRES_PASSWORD}&d=nocodb
       NC_AUTH_JWT_SECRET: ${NOCODB_SECRET}
@@ -329,7 +339,7 @@ services:
     volumes:
       - ${DATA_PATH}/phase4-ondemand/data/nocodb:/usr/app/data
     ports:
-      - "8093:8080"
+      - "8098:8080"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -338,5 +348,5 @@ services:
       - "homepage.group=On-Demand"
       - "homepage.name=NocoDB"
       - "homepage.icon=nocodb"
-      - "homepage.href=http://${DOMAIN}:8093"
+      - "homepage.href=http://${DOMAIN}:8098"
       - "homepage.description=No-code database UI"

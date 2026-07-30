@@ -3,7 +3,8 @@ groups:
     interval: 30s
     rules:
       - alert: HostHighCPUUsage
-        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
         for: 10m
         labels:
           severity: warning
@@ -55,8 +56,10 @@ groups:
           (
             container_memory_working_set_bytes{name!=""}
             / ignoring (id)
-            container_spec_memory_limit_bytes{name!="",container_spec_memory_limit_bytes>0}
+            container_spec_memory_limit_bytes{name!=""}
           ) * 100 > 90
+          and ignoring (id)
+          container_spec_memory_limit_bytes{name!=""} > 0
         for: 10m
         labels:
           severity: warning

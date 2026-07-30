@@ -1,10 +1,5 @@
 global:
   resolve_timeout: 5m
-  smtp_smarthost: '${SMTP_HOST}:${SMTP_PORT}'
-  smtp_from: '${SMTP_FROM}'
-  smtp_auth_username: '${SMTP_USER}'
-  smtp_auth_password: '${SMTP_PASS}'
-  smtp_require_tls: true
 
 route:
   receiver: ntfy
@@ -17,31 +12,13 @@ route:
   routes:
     - matchers:
         - severity="critical"
-      receiver: email-and-ntfy
+      receiver: ntfy
       repeat_interval: 1h
 
 receivers:
   - name: ntfy
     webhook_configs:
-      - url: 'http://ntfy/${NTFY_TOPIC}'
-        send_resolved: true
-
-  - name: email-and-ntfy
-    email_configs:
-      - to: '${SMTP_FROM}'
-        send_resolved: true
-        subject: 'Homelab alert: {{ .GroupLabels.alertname }}'
-        text: |
-          {{ range .Alerts }}
-          Status: {{ .Status }}
-          Alert: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Labels: {{ .Labels }}
-          Starts: {{ .StartsAt }}
-          Ends: {{ .EndsAt }}
-          {{ end }}
-    webhook_configs:
-      - url: 'http://ntfy/${NTFY_TOPIC}'
+      - url: 'http://ntfy/watchtower'
         send_resolved: true
 
 inhibit_rules:

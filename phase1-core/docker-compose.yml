@@ -145,7 +145,7 @@ services:
       homepage.description: Reverse proxy and TLS management
 
   authentik-server:
-    image: ghcr.io/goauthentik/server:2024.6.4
+    image: ghcr.io/goauthentik/server:latest
     container_name: authentik_server
     restart: unless-stopped
     command: server
@@ -187,7 +187,7 @@ services:
       homepage.description: Identity provider and SSO
 
   authentik-worker:
-    image: ghcr.io/goauthentik/server:2024.6.4
+    image: ghcr.io/goauthentik/server:latest
     container_name: authentik_worker
     restart: unless-stopped
     command: worker
@@ -248,7 +248,7 @@ services:
       homepage.description: Service launcher
 
   portainer:
-    image: portainer/portainer-ce:2.20.3
+    image: portainer/portainer-ce:latest
     container_name: portainer
     restart: unless-stopped
     volumes:
@@ -351,7 +351,7 @@ services:
       homepage.description: Uptime checks
 
   beszel-hub:
-    image: henrygd/beszel:0.6.2
+    image: henrygd/beszel:latest
     container_name: beszel_hub
     restart: unless-stopped
     volumes:
@@ -372,7 +372,7 @@ services:
       homepage.description: Lightweight system monitoring
 
   beszel-agent:
-    image: henrygd/beszel-agent:0.6.2
+    image: henrygd/beszel-agent-nvidia:latest
     container_name: beszel_agent
     restart: unless-stopped
     network_mode: host
@@ -523,6 +523,7 @@ services:
     volumes:
       - ../monitoring/promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
       - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
     networks:
       - homelab_internal
@@ -540,7 +541,6 @@ services:
     command:
       - --config.file=/etc/alertmanager/config.yml
       - --storage.path=/alertmanager
-      - --config.expand-env
     environment:
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
@@ -672,7 +672,7 @@ services:
       homelab.depends_on: none
 
   watchtower:
-    image: containrrr/watchtower:1.7.1
+    image: containrrr/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
     command:
@@ -684,6 +684,7 @@ services:
       - ${WATCHTOWER_NOTIFICATION_URL}
     environment:
       TZ: ${TZ}
+      DOCKER_API_VERSION: "1.44"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

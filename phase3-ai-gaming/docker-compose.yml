@@ -28,6 +28,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+    profiles: ["ollama", "open-webui", "ai"]
     environment:
       OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
     volumes:
@@ -54,6 +55,7 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open_webui
     restart: unless-stopped
+    profiles: ["open-webui", "ai"]
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       WEBUI_SECRET_KEY: ${N8N_ENCRYPTION_KEY}   # Reuse a strong secret for session signing
@@ -84,6 +86,7 @@ services:
     image: itzg/minecraft-server:latest
     container_name: minecraft
     restart: unless-stopped
+    profiles: ["minecraft", "gaming"]
     tty: true
     stdin_open: true
     ports:
@@ -117,6 +120,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
+    profiles: ["n8n", "automation"]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -161,6 +165,7 @@ services:
     image: ghcr.io/home-assistant/home-assistant:stable
     container_name: homeassistant
     restart: unless-stopped
+    profiles: ["homeassistant", "smart-home"]
     network_mode: host
     privileged: true              # Required for USB device passthrough (Zigbee/Z-Wave)
     environment:
@@ -184,6 +189,7 @@ services:
     image: ghcr.io/donkie/spoolman:latest
     container_name: spoolman
     restart: unless-stopped
+    profiles: ["spoolman", "tools"]
     environment:
       TZ: ${TZ}
     volumes:
@@ -208,6 +214,7 @@ services:
     image: docker.io/actualbudget/actual-server:latest
     container_name: actual_budget
     restart: unless-stopped
+    profiles: ["actual", "tools"]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -233,6 +240,7 @@ services:
     image: ghcr.io/stirling-tools/stirling-pdf:latest
     container_name: stirling_pdf
     restart: unless-stopped
+    profiles: ["stirling-pdf", "tools"]
     environment:
       TZ: ${TZ}
     volumes:
@@ -257,6 +265,7 @@ services:
     image: corentinth/it-tools:latest
     container_name: it_tools
     restart: unless-stopped
+    profiles: ["it-tools", "tools"]
     environment:
       TZ: ${TZ}
     ports:
@@ -280,6 +289,7 @@ services:
     image: nginx:1.27-alpine
     container_name: web_games
     restart: unless-stopped
+    profiles: ["web-games", "gaming"]
     environment:
       TZ: ${TZ}
     ports:
@@ -304,6 +314,7 @@ services:
       context: ./checkers-mp
     container_name: game_server
     restart: unless-stopped
+    profiles: ["game-server", "gaming"]
     environment:
       TZ: ${TZ}
     ports:
@@ -321,6 +332,7 @@ services:
       context: ./hearts-mp
     container_name: hearts_mp
     restart: unless-stopped
+    profiles: ["hearts", "gaming"]
     environment:
       TZ: ${TZ}
     ports:
