@@ -1,219 +1,256 @@
-#!/bin/bash
-# configure-sso.sh
-# Automate SSO configuration for Authentik using its API
+#!/usr/bin/env bash
+# =============================================================================
+# Declarative Authentik SSO provisioning
+#
+# Requires:
+#   AUTHENTIK_URL=https://authentik.example.com
+#   AUTHENTIK_API_TOKEN=<real authentik API token>
+#
+# Usage:
+#   bash scripts/configure-sso.sh
+#   bash scripts/configure-sso.sh --dry-run
+# =============================================================================
 
 set -euo pipefail
 
-echo "=== Configuring SSO via Authentik API ==="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${REPO_ROOT}/.env"
+SPEC_FILE="${REPO_ROOT}/config/authentik/providers.json"
+OUTPUT_FILE="${REPO_ROOT}/config/authentik/client-metadata.env"
+DRY_RUN=false
 
-# Source .env to get variables
-if [[ -f "../.env" ]]; then
-  export $(grep -v '^#' ../.env | xargs)
-else
-  echo "Error: .env not found."
-  exit 1
-fi
-
-# Check if required variables are set
-if [[ -z "${AUTHENTIK_SECRET_KEY:-}" ]]; then
-  echo "Error: AUTHENTIK_SECRET_KEY not set in .env"
-  exit 1
-fi
-
-if [[ -z "${DOMAIN:-}" ]]; then
-  echo "Error: DOMAIN not set in .env"
-  exit 1
-fi
-
-AUTHENTIK_URL="https://authentik.${DOMAIN}"
-API_TOKEN="${AUTHENTIK_SECRET_KEY}"
-
-echo "Authentik URL: $AUTHENTIK_URL"
-
-# Function to make authenticated API calls
-authentik_api() {
-  local method="$1"
-  local endpoint="$2"
-  local data="$3"
-  
-  local url="${AUTHENTIK_URL}${endpoint}"
-  
-  if [[ -n "$data" ]]; then
-    curl -s -X "$method" "$url" \
-      -H "Authorization: Bearer $API_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "$data"
-  else
-    curl -s -X "$method" "$url" \
-      -H "Authorization: Bearer $API_TOKEN"
-  fi
-}
-
-# Check if Authentik is accessible
-echo "Checking Authentik accessibility..."
-if ! auth_response=$(authentik_api "GET" "/api/v3/core/meta-info/"); then
-  echo "Error: Cannot connect to Authentik at $AUTHENTIK_URL"
-  exit 1
-fi
-
-echo "Authentik is accessible"
-
-# Create or get applications and providers for each service
-declare -A services=(
-  ["grafana"]="Grafana"
-  ["n8n"]="n8n"
-  ["homepage"]="Homepage"
-  ["vaultwarden"]="Vaultwarden"
-  ["portainer"]="Portainer"
-  ["homeassistant"]="Home Assistant"
-)
-
-# Create a directory to store client secrets if needed
-mkdir -p ../config/authentik
-
-echo "Creating Authentik applications and providers..."
-
-for service_key in "${!services[@]}"; do
-  service_name="${services[$service_key]}"
-  echo "Processing $service_name..."
-  
-  # Check if application already exists
-  app_response=$(authentik_api "GET" "/api/v3/core/applications/?slug=${service_key}")
-  app_count=$(echo "$app_response" | grep -o '"count":[0-9]*' | grep -o '[0-9]*')
-  
-  if [[ "$app_count" -eq 0 ]]; then
-    echo "Creating application for $service_name..."
-    
-    # Create application
-    app_data=$(cat <<EOF
-{
-  "name": "$service_name",
-  "slug": "$service_key",
-  "meta": {
-    "description": "SSO access to $service_name via Authentik",
-    "icon": "circle"
-  },
-  "provider": "",
-  "meta_launch_url": "",
-  "meta_description": "SSO access to $service_name via Authentik",
-  "meta_icon": "circle"
-}
-EOF
-)
-    
-    app_create_response=$(authentik_api "POST" "/api/v3/core/applications/" "$app_data")
-    app_slug=$(echo "$app_create_response" | grep -o '"slug":"[^"]*"' | grep -o '[^"]*$' | tr -d '"')
-    
-    if [[ -z "$app_slug" ]]; then
-      echo "Warning: Could not extract slug from application creation response"
-      app_slug="$service_key"
-    fi
-  else
-    echo "Application for $service_name already exists"
-    app_slug="$service_key"
-  fi
-  
-  # Check if provider already exists for this application
-  provider_response=$(authentik_api "GET" "/api/v3/core/providers/?application=${app_slug}")
-  provider_count=$(echo "$provider_response" | grep -o '"count":[0-9]*' | grep -o '[0-9]*')
-  
-  if [[ "$provider_count" -eq 0 ]]; then
-    echo "Creating OAuth2/OpenID Connect provider for $service_name..."
-    
-    # Generate a redirect URI (this would need to be adjusted based on actual service URLs)
-    case "$service_key" in
-      "grafana")
-        redirect_uri="https://grafana.${DOMAIN}/login/generic_oauth"
-        ;;
-      "n8n")
-        redirect_uri="https://n8n.${DOMAIN}/rest/oauth2-credentials"
-        ;;
-      "homepage")
-        redirect_uri="https://homepage.${DOMAIN}/api/auth/authentik/callback"
-        ;;
-      "vaultwarden")
-        redirect_uri="https://vaultwarden.${DOMAIN}/api/auth/ssodelegate"
-        ;;
-      "portainer")
-        redirect_uri="https://portainer.${DOMAIN}/api/oauth2"
-        ;;
-      "homeassistant")
-        redirect_uri="https://homeassistant.${DOMAIN}/auth/external/callback"
-        ;;
-      *)
-        redirect_uri="https://${service_key}.${DOMAIN}/oauth2/callback"
-        ;;
-    esac
-    
-    # Create provider
-    provider_data=$(cat <<EOF
-{
-  "name": "${service_name} Provider",
-  "slug": "${service_key}-provider",
-  "authorization_redirect_uri": "$redirect_uri",
-  "authorization_consent_required": false,
-  "authorization_scopes": "openid profile email groups",
-  "meta": {
-    "description": "OAuth2/OpenID Connect provider for $service_name",
-    "icon": "shield"
-  },
-  "metadata": {
-    "client_authentication_method": "client_secret_basic",
-    "grant_types": [
-      "authorization_code",
-      "refresh_token"
-    ],
-    "response_types": [
-      "code"
-    ],
-    "token_endpoint_auth_method": "client_secret_post"
-  }
-}
-EOF
-)
-    
-    provider_create_response=$(authentik_api "POST" "/api/v3/core/providers/" "$provider_data")
-    
-    # Extract client ID and secret from the response
-    client_id=$(echo "$provider_create_response" | grep -o '"client_id":"[^"]*"' | grep -o '[^"]*$' | tr -d '"')
-    client_secret=$(echo "$provider_create_response" | grep -o '"client_secret":"[^"]*"' | grep -o '[^"]*$' | tr -d '"')
-    
-    if [[ -n "$client_id" && -n "$client_secret" ]]; then
-      echo "Created provider for $service_name"
-      echo "Client ID: $client_id"
-      echo "Client Secret: [REDACTED]"
-      
-      # Save to file for reference
-      echo "${service_key}_client_id=$client_id" >> ../config/authentik/client-secrets.env
-      echo "${service_key}_client_secret=$client_secret" >> ../config/authentik/client-secrets.env
-    else
-      echo "Warning: Could not extract client credentials from provider creation response"
-    fi
-  else
-    echo "Provider for $service_name already exists"
-    # Extract existing credentials
-    provider_details=$(echo "$provider_response" | grep -o '"results":\[[^]]*\]' | head -1)
-    if [[ -n "$provider_details" ]]; then
-      client_id=$(echo "$provider_details" | grep -o '"client_id":"[^"]*"' | grep -o '[^"]*$' | tr -d '"')
-      client_secret=$(echo "$provider_details" | grep -o '"client_secret":"[^"]*"' | grep -o '[^"]*$' | tr -d '"')
-      
-      if [[ -n "$client_id" && -n "$client_secret" ]]; then
-        echo "Using existing provider for $service_name"
-        echo "${service_key}_client_id=$client_id" >> ../config/authentik/client-secrets.env
-        echo "${service_key}_client_secret=$client_secret" >> ../config/authentik/client-secrets.env
-      fi
-    fi
-  fi
-  
-  echo "---"
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    -h|--help)
+      sed -n '1,16p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
 done
 
-echo "=== SSO Configuration Complete ==="
-echo "Client secrets have been saved to: ../config/authentik/client-secrets.env"
-echo "These values need to be added to each service's configuration."
-echo ""
-echo "Next steps:"
-echo "1. Review the generated client-secrets.env file"
-echo "2. Add the appropriate OAuth/OIDC settings to each service"
-echo "3. Restart services to apply the changes"
-echo "4. Test SSO login for each service"
+[[ -f "$ENV_FILE" ]] || {
+  echo "ERROR: .env not found at ${ENV_FILE}" >&2
+  exit 1
+}
+
+[[ -f "$SPEC_FILE" ]] || {
+  echo "ERROR: SSO spec not found at ${SPEC_FILE}" >&2
+  exit 1
+}
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+: "${AUTHENTIK_URL:?AUTHENTIK_URL is required}"
+: "${AUTHENTIK_API_TOKEN:?AUTHENTIK_API_TOKEN is required. Do not use AUTHENTIK_SECRET_KEY here.}"
+
+export AUTHENTIK_URL AUTHENTIK_API_TOKEN SPEC_FILE OUTPUT_FILE DRY_RUN DOMAIN
+
+python - <<'PY'
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+base_url = os.environ["AUTHENTIK_URL"].rstrip("/")
+token = os.environ["AUTHENTIK_API_TOKEN"]
+spec_file = Path(os.environ["SPEC_FILE"])
+output_file = Path(os.environ["OUTPUT_FILE"])
+dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
+
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+}
+
+
+def die(message):
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def expand(value):
+    if isinstance(value, str):
+        def repl(match):
+            key = match.group(1)
+            if key not in os.environ:
+                die(f"Environment variable {key} is required by {spec_file}")
+            return os.environ[key]
+        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, value)
+    if isinstance(value, list):
+        return [expand(item) for item in value]
+    if isinstance(value, dict):
+        return {key: expand(item) for key, item in value.items()}
+    return value
+
+
+def request(method, path, body=None):
+    url = f"{base_url}/api/v3{path}"
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        die(f"{method} {url} failed with HTTP {exc.code}: {detail}")
+    except urllib.error.URLError as exc:
+        die(f"{method} {url} failed: {exc.reason}")
+
+
+def list_endpoint(path, query=None):
+    query = query or {}
+    encoded = urllib.parse.urlencode(query)
+    data = request("GET", f"{path}?{encoded}" if encoded else path)
+    if isinstance(data, dict) and "results" in data:
+        return data["results"]
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def first_by_field(path, field, value, query=None):
+    for item in list_endpoint(path, query):
+        if item.get(field) == value:
+            return item
+    return None
+
+
+def flow_pk(slug):
+    flow = first_by_field("/flows/instances/", "slug", slug, {"slug": slug})
+    if not flow:
+        flow = first_by_field("/flows/instances/", "slug", slug, {"search": slug})
+    if not flow:
+        die(f"Authentik flow '{slug}' was not found")
+    return flow["pk"]
+
+
+def provider_by_name(name):
+    return first_by_field("/providers/oauth2/", "name", name, {"search": name})
+
+
+def application_by_slug(slug):
+    return first_by_field("/core/applications/", "slug", slug, {"slug": slug})
+
+
+def save_or_update_provider(app, auth_flow, invalidation_flow):
+    provider_name = f"{app['name']} OIDC"
+    client_id = os.environ.get(app["client_id_env"], "")
+    client_secret = os.environ.get(app["client_secret_env"], "")
+    if not client_id or client_id.startswith("CHANGE_ME"):
+        die(f"{app['client_id_env']} must be set before provisioning {app['slug']}")
+    if not client_secret or client_secret.startswith("CHANGE_ME"):
+        die(f"{app['client_secret_env']} must be set before provisioning {app['slug']}")
+
+    redirect_uris = [
+        {"matching_mode": "strict", "url": url}
+        for url in expand(app["redirect_uris"])
+    ]
+
+    body = {
+        "name": provider_name,
+        "authorization_flow": auth_flow,
+        "invalidation_flow": invalidation_flow,
+        "client_type": "confidential",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "include_claims_in_id_token": True,
+        "issuer_mode": "global",
+        "sub_mode": app.get("sub_mode", "hashed_user_id"),
+        "redirect_uris": redirect_uris,
+        "property_mappings": [],
+        "access_code_validity": "minutes=5",
+        "access_token_validity": "minutes=5",
+        "refresh_token_validity": "days=30",
+    }
+
+    existing = provider_by_name(provider_name)
+    if dry_run:
+        action = "update" if existing else "create"
+        print(f"DRY-RUN: would {action} OAuth2 provider {provider_name}")
+        return existing or {"pk": None, "client_id": client_id}
+
+    if existing:
+        provider = request("PATCH", f"/providers/oauth2/{existing['pk']}/", body)
+        print(f"Updated provider: {provider_name}")
+        return provider
+
+    provider = request("POST", "/providers/oauth2/", body)
+    print(f"Created provider: {provider_name}")
+    return provider
+
+
+def save_or_update_application(app, provider_pk):
+    body = {
+        "name": app["name"],
+        "slug": app["slug"],
+        "provider": provider_pk,
+        "meta_launch_url": expand(app["launch_url"]),
+        "open_in_new_tab": True,
+        "meta_description": app.get("description", ""),
+        "meta_icon": app.get("icon", "circle"),
+    }
+
+    existing = application_by_slug(app["slug"])
+    if dry_run:
+        action = "update" if existing else "create"
+        print(f"DRY-RUN: would {action} application {app['slug']}")
+        return
+
+    if existing:
+        request("PATCH", f"/core/applications/{existing['slug']}/", body)
+        print(f"Updated application: {app['slug']}")
+    else:
+        request("POST", "/core/applications/", body)
+        print(f"Created application: {app['slug']}")
+
+
+def main():
+    spec = json.loads(spec_file.read_text(encoding="utf-8"))
+    spec = expand(spec)
+
+    request("GET", "/core/meta/")
+    auth_flow = flow_pk(spec.get("authorization_flow_slug", "default-provider-authorization-implicit-consent"))
+    invalidation_flow = flow_pk(spec.get("invalidation_flow_slug", "default-provider-invalidation-flow"))
+
+    metadata_lines = [
+        "# Generated by scripts/configure-sso.sh",
+        "# Client secrets are intentionally not written here.",
+        f"AUTHENTIK_URL={base_url}",
+    ]
+
+    for app in spec["applications"]:
+        provider = save_or_update_provider(app, auth_flow, invalidation_flow)
+        provider_pk = provider.get("pk")
+        if provider_pk is not None:
+            save_or_update_application(app, provider_pk)
+        metadata_lines.append(f"{app['slug'].upper().replace('-', '_')}_OIDC_CLIENT_ID={os.environ[app['client_id_env']]}")
+        metadata_lines.append(f"{app['slug'].upper().replace('-', '_')}_OIDC_ISSUER={base_url}/application/o/{app['slug']}/")
+
+    if not dry_run:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+        os.chmod(output_file, 0o600)
+        print(f"Wrote client metadata: {output_file}")
+
+
+if __name__ == "__main__":
+    main()
+PY

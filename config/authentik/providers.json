@@ -1,0 +1,66 @@
+{
+  "authorization_flow_slug": "default-provider-authorization-implicit-consent",
+  "invalidation_flow_slug": "default-provider-invalidation-flow",
+  "applications": [
+    {
+      "slug": "grafana",
+      "name": "Grafana",
+      "description": "Monitoring dashboards",
+      "icon": "grafana",
+      "launch_url": "https://grafana.${DOMAIN}",
+      "client_id_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_ID",
+      "client_secret_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET",
+      "redirect_uris": [
+        "https://grafana.${DOMAIN}/login/generic_oauth"
+      ]
+    },
+    {
+      "slug": "n8n",
+      "name": "n8n",
+      "description": "Workflow automation",
+      "icon": "n8n",
+      "launch_url": "https://n8n.${DOMAIN}",
+      "client_id_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_ID",
+      "client_secret_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_SECRET",
+      "redirect_uris": [
+        "https://n8n.${DOMAIN}/rest/oauth2-credential/callback"
+      ]
+    },
+    {
+      "slug": "homepage",
+      "name": "Homepage",
+      "description": "Homelab service launcher",
+      "icon": "homepage",
+      "launch_url": "https://homepage.${DOMAIN}",
+      "client_id_env": "HOMEPAGE_AUTH_CLIENT_ID",
+      "client_secret_env": "HOMEPAGE_AUTH_CLIENT_SECRET",
+      "redirect_uris": [
+        "https://homepage.${DOMAIN}/api/auth/callback/authentik"
+      ]
+    },
+    {
+      "slug": "portainer",
+      "name": "Portainer",
+      "description": "Container management",
+      "icon": "portainer",
+      "launch_url": "https://portainer.${DOMAIN}",
+      "client_id_env": "PORTAINER_OIDC_CLIENT_ID",
+      "client_secret_env": "PORTAINER_OIDC_CLIENT_SECRET",
+      "redirect_uris": [
+        "https://portainer.${DOMAIN}/"
+      ]
+    },
+    {
+      "slug": "homeassistant",
+      "name": "Home Assistant",
+      "description": "Smart home hub",
+      "icon": "home-assistant",
+      "launch_url": "https://homeassistant.${DOMAIN}",
+      "client_id_env": "HOME_ASSISTANT_OAUTH2_CLIENT_ID",
+      "client_secret_env": "HOME_ASSISTANT_OAUTH2_CLIENT_SECRET",
+      "redirect_uris": [
+        "https://homeassistant.${DOMAIN}/auth/external/callback"
+      ]
+    }
+  ]
+}

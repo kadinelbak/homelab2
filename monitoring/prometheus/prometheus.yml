@@ -3,190 +3,47 @@ global:
   evaluation_interval: 15s
 
 rule_files:
-  - "alert.rules"
+  - /etc/prometheus/alert.rules
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
 
 scrape_configs:
-  - job_name: 'prometheus'
+  - job_name: prometheus
     static_configs:
-      - targets: ['localhost:9090']
+      - targets:
+          - localhost:9090
 
-  - job_name: 'node_exporter'
+  - job_name: node_exporter
     static_configs:
-      - targets: ['node_exporter:9100']
+      - targets:
+          - node_exporter:9100
 
-  - job_name: 'cadvisor'
+  - job_name: cadvisor
     static_configs:
-      - targets: ['cadvisor:8080']
+      - targets:
+          - cadvisor:8080
 
-  - job_name: 'postgres'
+  - job_name: postgres
     static_configs:
-      - targets: ['homelab_postgres:9187']  # postgres-exporter port
+      - targets:
+          - postgres-exporter:9187
 
-  - job_name: 'redis'
+  - job_name: redis
     static_configs:
-      - targets: ['homelab_redis:9121']  # redis-exporter port
+      - targets:
+          - redis-exporter:9121
 
-  - job_name: 'authentik'
-    metrics_path: '/metrics'
+  - job_name: alertmanager
     static_configs:
-      - targets: ['authentik_server:9000']
+      - targets:
+          - alertmanager:9093
 
-  - job_name: 'uptime_kuma'
-    metrics_path: '/metrics'
+  - job_name: authentik
+    metrics_path: /metrics
     static_configs:
-      - targets: ['uptime_kuma:3001']
-
-  - job_name: 'beszel'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['beszel_hub:8090']
-
-  - job_name: 'vaultwarden'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['vaultwarden:7070']
-
-  - job_name: 'scrutiny'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['scrutiny:8080']
-
-  - job_name: 'jellyfin'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['jellyfin:8096']
-
-  - job_name: 'audiobookshelf'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['audiobookshelf:13378']
-
-  - job_name: 'navidrome'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['navidrome:4533']
-
-  - job_name: 'paperless'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['paperless:8000']
-
-  - job_name: 'immich'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['immich_server:2283']
-
-  - job_name: 'prowlarr'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['prowlarr:9696']
-
-  - job_name: 'bazarr'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['bazarr:6767']
-
-  - job_name: 'gluetun'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['gluetun:8080']
-
-  - job_name: 'qbittorrent'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['qbittorrent:8080']
-
-  - job_name: 'ollama'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['ollama:11434']
-
-  - job_name: 'openwebui'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['openwebui:8080']
-
-  - job_name: 'minecraft'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['minecraft:25565']
-
-  - job_name: 'n8n'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['n8n:5678']
-
-  - job_name: 'homeassistant'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['homeassistant:8123']
-
-  - job_name: 'spoolman'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['spoolman:7912']
-
-  - job_name: 'actual'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['actual:5006']
-
-  - job_name: 'stirling_pdf'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['stirling_pdf:8086']
-
-  - job_name: 'it_tools'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['it_tools:8087']
-
-  - job_name: 'hearts_mp'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['hearts_mp:8094']
-
-  - job_name: 'kasm'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['kasm:443']
-
-  - job_name: 'guacamole'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['guacamole:8080']
-
-  - job_name: 'nextcloud'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['nextcloud:443']
-
-  - job_name: 'gitea'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['gitea:3000']
-
-  - job_name: 'supabase'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['supabase:8000']
-
-  - job_name: 'kiwix'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['kiwix:8080']
-
-  - job_name: 'docmost'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['docmost:8080']
-
-  - job_name: 'calcom'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['calcom:8080']
-
-  - job_name: 'nocodb'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['nocodb:8080']
+      - targets:
+          - authentik-server:9000

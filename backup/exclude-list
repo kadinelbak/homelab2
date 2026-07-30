@@ -1,0 +1,11 @@
+/data/**/cache/**
+/data/**/Cache/**
+/data/**/tmp/**
+/data/**/temp/**
+/data/**/logs/**
+/data/**/log/**
+/data/**/.cache/**
+/data/phase2-media/data/immich/ml-cache/**
+/data/phase2-media/data/jellyfin/cache/**
+/data/phase2-media/data/navidrome/cache/**
+/data/shared/downloads/incomplete/**

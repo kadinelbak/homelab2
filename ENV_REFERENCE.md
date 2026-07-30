@@ -1,467 +1,169 @@
 # Environment Variable Reference
 
-This file explains every variable in [.env.example](.env.example), where to get it, and when you actually need it.
+`.env.example` is the source of truth for required configuration. Copy it to `.env`, replace every `CHANGE_ME_*` value, and keep `.env` out of git.
 
-## Quick Use Order
-
-1. Fill System, Postgres, Redis, Authentik first (required for Phase 1).
-2. Fill VPN and Immich values for Phase 2.
-3. Fill n8n and Minecraft values for Phase 3.
-4. Fill Nextcloud, Gitea, Docmost/Outline, Cal.com, Supabase, NocoDB only before Phase 4.
-
-## How To Generate Secrets
-
-Use these commands on the host:
+## Validation
 
 ```bash
-# 64-char hex secret
-openssl rand -hex 32
-
-# Long base64 secret for Authentik
-openssl rand -base64 60 | tr -d '\n'
-
-# Base64 secret for web auth apps
-openssl rand -base64 32 | tr -d '\n'
+cp .env.example .env
+grep -n "CHANGE_ME" .env
+bash scripts/setup.sh --validate-only
 ```
 
-## System Variables
+## Host and Path Variables
 
-### TZ
-- Purpose: timezone for logs and scheduled jobs.
-- How to get it:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `TZ` | Yes | Timezone used by containers, schedules, logs, and maintenance windows. |
+| `PUID` | Yes | Host user ID used by LinuxServer-style containers for file ownership. Get it with `id -u`. |
+| `PGID` | Yes | Host group ID used by containers for file ownership. Get it with `id -g`. |
+| `DOCKER_GID` | Yes | Host Docker socket group ID for Homepage Docker discovery. Get it with `getent group docker`. |
+| `DOCKER_HOST_IP` | Yes | LAN or tailnet IP of the Docker host. Used for callbacks and direct links. |
+| `DATA_PATH` | Yes | Root path for all persistent bind-mounted application data. |
+| `DOMAIN` | Yes | Base DNS name used for dashboard links and reverse proxy hosts. |
 
-```bash
-timedatectl | grep 'Time zone'
-```
+## Phase 1: Core Infrastructure
 
-- Example: `America/New_York`
-- Required for: all phases.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `POSTGRES_USER` | Yes | Shared PostgreSQL owner/user for service databases. |
+| `POSTGRES_PASSWORD` | Yes | Shared PostgreSQL password. Generate with `openssl rand -hex 32`. |
+| `REDIS_PASSWORD` | Yes | Shared Redis password. Generate with `openssl rand -hex 32`. |
+| `AUTHENTIK_SECRET_KEY` | Yes | Authentik cryptographic key. This is not an API token. |
+| `AUTHENTIK_BOOTSTRAP_EMAIL` | Yes | Initial Authentik admin email. |
+| `AUTHENTIK_BOOTSTRAP_PASSWORD` | Yes | Initial Authentik admin password. |
+| `AUTHENTIK_ADMIN_EMAIL` | Yes | Public/admin email reused by downstream services such as Paperless. Usually match `AUTHENTIK_BOOTSTRAP_EMAIL`. |
+| `AUTHENTIK_URL` | Phase 2 SSO | Public Authentik URL used by provisioning scripts. |
+| `AUTHENTIK_API_TOKEN` | Phase 2 SSO | Real Authentik API token for automation. Do not use `AUTHENTIK_SECRET_KEY` for API calls. |
+| `VAULTWARDEN_ADMIN_TOKEN` | Yes | Vaultwarden admin panel token. Prefer an argon2 hash for exposed deployments. |
+| `VAULTWARDEN_ADMIN_EMAIL` | Optional | Admin email used by docs/provisioning. |
+| `VAULTWARDEN_ADMIN_PASSWORD` | Optional | Initial user password value for future provisioning scripts. |
+| `BESZEL_KEY` | Yes | Beszel agent key from the Beszel Hub enrollment flow. |
+| `BESZEL_TOKEN` | Yes | Beszel agent token when required by your agent version. |
+| `BESZEL_HUB_URL` | Yes | Agent callback URL for the Beszel Hub. |
+| `GF_SECURITY_ADMIN_USER` | Yes | Grafana admin username. |
+| `GF_SECURITY_ADMIN_PASSWORD` | Yes | Grafana admin password. |
+| `PROMETHEUS_RETENTION` | Yes | Prometheus local retention window, for example `30d`. |
+| `NTFY_BASE_URL` | Yes | Base URL announced by ntfy. |
+| `NTFY_TOPIC` | Yes | Default topic for homelab notifications. |
+| `WATCHTOWER_CRON` | Yes | Six-field Watchtower update schedule. |
+| `WATCHTOWER_NOTIFICATION_URL` | Yes | Watchtower notification URL, usually an internal ntfy URL. |
 
-### PUID
-- Purpose: host user ID used for container file ownership.
-- How to get it:
+## Optional Core Integrations
 
-```bash
-id -u
-```
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `NUT_PASSWORD` | Optional | UPS monitoring password for future NUT integration. |
+| `WOL_API_KEY` | Optional | Wake-on-LAN API key used by the `/wake` endpoint. |
+| `WOL_MAC_ADDRESS` | Optional | Default target MAC address for Wake-on-LAN packets. |
+| `WOL_BROADCAST_ADDRESS` | Optional | Broadcast address used for WoL packets, usually `255.255.255.255` or your subnet broadcast. |
+| `WOL_PORT` | Optional | UDP port used for WoL packets, usually `9`. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Optional | Alert email transport. |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION` | Optional | Offsite object storage for backups. |
+| `RESTIC_PASSWORD` | Phase 2 backup | Restic repository password. Store it somewhere recoverable. |
+| `RESTIC_KEEP_DAILY` | Phase 2 backup | Number of daily snapshots to retain. |
+| `RESTIC_KEEP_WEEKLY` | Phase 2 backup | Number of weekly snapshots to retain. |
+| `RESTIC_KEEP_MONTHLY` | Phase 2 backup | Number of monthly snapshots to retain. |
+| `BACKUP_INTERVAL_SECONDS` | Phase 2 backup | Backup loop interval in seconds. Default is once per day. |
 
-- Example: `1000`
-- Required for: all phases.
+## Phase 2: Media and Documents
 
-### PGID
-- Purpose: host group ID used for container file ownership.
-- How to get it:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `PAPERLESS_ADMIN_PASSWORD` | Yes for Paperless | Initial Paperless admin password. |
+| `IMMICH_DB_USERNAME` | Yes for Immich | Dedicated Immich database user. |
+| `IMMICH_DB_PASSWORD` | Yes for Immich | Dedicated Immich database password. |
+| `IMMICH_DB_DATABASE_NAME` | Yes for Immich | Dedicated Immich database name. |
+| `VPN_SERVICE_PROVIDER` | Torrent profile | Gluetun VPN provider name. |
+| `VPN_TYPE` | Torrent profile | `wireguard` or `openvpn`. |
+| `WIREGUARD_PRIVATE_KEY` | Torrent profile | WireGuard private key from your VPN provider. |
+| `WIREGUARD_ADDRESSES` | Torrent profile | WireGuard tunnel address/CIDR. |
+| `SERVER_COUNTRIES` | Torrent profile | Gluetun region preference. |
 
-```bash
-id -g
-```
+## Phase 3: AI, Automation, and Gaming
 
-- Example: `1000`
-- Required for: all phases.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OLLAMA_MODEL` | Optional | Default model pulled by helper scripts. |
+| `OLLAMA_HOST` | Optional | Internal Ollama API URL. |
+| `N8N_ENCRYPTION_KEY` | Yes for n8n | Credential encryption key. Generate once and never rotate casually. |
+| `N8N_USER_MANAGEMENT_JWT_SECRET` | Yes for n8n | JWT signing secret for n8n user management. |
+| `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
+| `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
+| `MINECRAFT_EULA` | Yes for Minecraft | Must be `TRUE` to accept the Minecraft server EULA. |
+| `MINECRAFT_MEMORY` | Yes for Minecraft | JVM memory limit, for example `3G` on a 16 GB host. |
+| `MINECRAFT_TYPE` | Yes for Minecraft | Server type such as `PAPER`, `VANILLA`, `FORGE`, or `FABRIC`. |
+| `MINECRAFT_VERSION` | Yes for Minecraft | Minecraft version, for example `LATEST` or `1.21.1`. |
+| `MINECRAFT_OPS` | Optional | Comma-separated operator usernames. |
 
-### DOCKER_HOST_IP
-- Purpose: host LAN IP for service callbacks and local references.
-- How to get it:
+## Phase 4: On-Demand Services
 
-```bash
-hostname -I | awk '{print $1}'
-```
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `NEXTCLOUD_ADMIN_USER` | Yes for Nextcloud | Initial Nextcloud admin username. |
+| `NEXTCLOUD_ADMIN_PASSWORD` | Yes for Nextcloud | Initial Nextcloud admin password. |
+| `NEXTCLOUD_TRUSTED_DOMAINS` | Yes for Nextcloud | Trusted hostnames for Nextcloud. |
+| `GITEA_ADMIN_USER`, `GITEA_ADMIN_PASSWORD`, `GITEA_ADMIN_EMAIL` | Future provisioning | Initial Gitea admin account values. |
+| `GITEA_SECRET_KEY` | Yes for Gitea | Gitea app secret. |
+| `GITEA_INTERNAL_TOKEN` | Yes for Gitea | Gitea internal token. |
+| `OUTLINE_SECRET_KEY` | Yes for Docmost | Docmost app secret in this repo. |
+| `OUTLINE_UTILS_SECRET` | Optional | Reserved for Outline-compatible future services. |
+| `CALCOM_NEXTAUTH_SECRET` | Yes for Cal.com | NextAuth signing secret. |
+| `CALCOM_CALENDSO_ENCRYPTION_KEY` | Yes for Cal.com | Cal.com encryption key. |
+| `CALCOM_EMAIL_FROM` | Yes for Cal.com | Sender address for Cal.com email. |
+| `SUPABASE_POSTGRES_PASSWORD` | Supabase placeholder | Password for a full Supabase deployment. |
+| `SUPABASE_JWT_SECRET`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Supabase placeholder | Required by the official Supabase self-hosting stack. |
+| `NOCODB_SECRET` | Yes for NocoDB | NocoDB JWT/signing secret. |
 
-- Example: `192.168.1.50`
-- Required for: helpful generally, some apps/callbacks.
+## SSO/OIDC Client Variables
 
-### DOMAIN
-- Purpose: root domain for all proxy hosts.
-- How to get it: use your registered domain or internal DNS suffix.
-- Example: `example.com`
-- Required for: all proxied services.
+The `*_CLIENT_ID` and `*_CLIENT_SECRET` values are reserved for Phase 2 declarative Authentik provisioning. Until that is implemented, create providers in Authentik and paste the generated values into `.env`.
 
-### DATA_PATH
-- Purpose: absolute base path for all persistent bind mounts.
-- How to get it: choose your NVMe mount point.
-- Example: `/mnt/nvme/homelab`
-- Required for: all phases.
+Variables:
 
-## Central Database/Cache (Phase 1)
+- `GF_AUTH_GENERIC_OAUTH_CLIENT_ID`
+- `GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET`
+- `N8N_AUTH_OAUTH2_GENERIC_CLIENT_ID`
+- `N8N_AUTH_OAUTH2_GENERIC_CLIENT_SECRET`
+- `HOMEPAGE_AUTH_CLIENT_ID`
+- `HOMEPAGE_AUTH_CLIENT_SECRET`
+- `VAULTWARDEN_OIDC_CLIENT_ID`
+- `VAULTWARDEN_OIDC_CLIENT_SECRET`
+- `PORTAINER_OIDC_CLIENT_ID`
+- `PORTAINER_OIDC_CLIENT_SECRET`
+- `HOME_ASSISTANT_OAUTH2_CLIENT_ID`
+- `HOME_ASSISTANT_OAUTH2_CLIENT_SECRET`
 
-### POSTGRES_USER
-- Purpose: central PostgreSQL admin/app user for shared databases.
-- How to choose it: any stable username.
-- Example: `homelab`
-- Required for: Phase 1 and all DB-backed apps.
+## Capacity Governor Variables
 
-### POSTGRES_PASSWORD
-- Purpose: central PostgreSQL password.
-- How to generate:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `HOMELAB_RAM_LIMIT_MB` | Phase 3 | Total RAM budget used by admission control. |
+| `HOMELAB_RESERVED_RAM_MB` | Phase 3 | RAM kept free for the host OS and emergency headroom. |
+| `HOMELAB_VRAM_LIMIT_MB` | Phase 3 | GPU VRAM budget used by admission control. |
+| `HOMELAB_ADMISSION_MODE` | Phase 3 | `warn` or `enforce`. |
 
-```bash
-openssl rand -hex 32
-```
+## Secret Generation
 
-- Required for: Phase 1 and DB-backed apps.
-
-### REDIS_PASSWORD
-- Purpose: central Redis password.
-- How to generate:
-
-```bash
-openssl rand -hex 32
-```
-
-- Required for: Phase 1 and Redis-backed apps.
-
-## Authentik (Phase 1)
-
-### AUTHENTIK_SECRET_KEY
-- Purpose: cryptographic signing key for Authentik.
-- How to generate:
-
-```bash
-openssl rand -base64 60 | tr -d '\n'
-```
-
-- Required for: Phase 1.
-
-### AUTHENTIK_ADMIN_EMAIL
-- Purpose: initial admin email.
-- How to choose: a valid inbox you own.
-- Example: `admin@example.com`
-- Required for: Phase 1.
-
-## Beszel and Notifications (Phase 1)
-
-### BESZEL_KEY
-- Purpose: agent enrollment key for Beszel.
-- How to get it:
- 1. Start Phase 1.
- 2. Open Beszel Hub UI.
- 3. Generate/copy agent key.
- 4. Paste into `.env`, then restart beszel-agent.
-
-- Required for: Beszel agent.
-
-### NTFY_TOPIC
-- Purpose: topic channel for Watchtower notifications.
-- How to choose: any simple string.
-- Example: `watchtower`
-
-### NTFY_URL
-- Purpose: ntfy server URL used internally by containers.
-- Default: `http://ntfy:80`
-- Change only if ntfy runs elsewhere.
-
-## Navidrome (Phase 2)
-
-Navidrome does not require additional env vars in this repo.
-
-Notes:
-- Music library path: `${DATA_PATH}/shared/media/music`
-- Default web UI port: `4533`
-
-## VPN and qBittorrent (Phase 2)
-
-### VPN_SERVICE_PROVIDER
-- Purpose: tells Gluetun which provider profile to use.
-- How to get it: provider name from Gluetun docs.
-- Example: `mullvad`, `nordvpn`.
-
-### VPN_TYPE
-- Purpose: connection protocol.
-- Allowed: `wireguard` or `openvpn`.
-
-### WIREGUARD_PRIVATE_KEY
-- Purpose: VPN tunnel private key.
-- How to get it: generated in VPN provider dashboard/client.
-
-### WIREGUARD_ADDRESSES
-- Purpose: assigned tunnel IP/CIDR from provider.
-- Example: `10.x.x.x/32`
-
-### SERVER_COUNTRIES
-- Purpose: preferred VPN exit location.
-- Example: `Netherlands`, `United States`.
-
-Note:
-- Exact variable names differ by provider and protocol. Validate against Gluetun provider docs before first run.
-- qBittorrent and Gluetun are opt-in through the `torrent` Compose profile and will not start on a normal `docker compose up -d`.
-
-## Immich (Phase 2)
-
-### IMMICH_DB_PASSWORD
-- Purpose: password for Immich dedicated PostgreSQL.
-- How to generate:
+Use strong stable values. Do not regenerate secrets for stateful services after first deploy unless you also plan a migration.
 
 ```bash
 openssl rand -hex 32
-```
-
-### IMMICH_DB_USERNAME
-- Purpose: Immich DB username.
-- Default: `immich`
-
-### IMMICH_DB_DATABASE_NAME
-- Purpose: Immich database name.
-- Default: `immich`
-
-Note:
-- Immich uses a dedicated PostgreSQL image in Phase 2 because it needs vector extension support. The shared Phase 1 Postgres is intentionally left generic.
-
-## n8n (Phase 3)
-
-### N8N_ENCRYPTION_KEY
-- Purpose: encrypts n8n credentials and sensitive workflow data.
-- How to generate:
-
-```bash
-openssl rand -hex 32
-```
-
-### N8N_USER_MANAGEMENT_JWT_SECRET
-- Purpose: signs auth tokens in n8n user management.
-- How to generate:
-
-```bash
-openssl rand -hex 32
-```
-
-## Minecraft (Phase 3)
-
-### MINECRAFT_EULA
-- Purpose: confirms Mojang EULA acceptance.
-- Value: must be `TRUE` to start server.
-
-### MINECRAFT_MEMORY
-- Purpose: JVM memory assignment for server.
-- Suggested on 16GB host: `2G` to `4G`.
-
-### MINECRAFT_OPS
-- Purpose: comma-separated operator usernames.
-- Example: `YourMinecraftUsername`
-
-### MINECRAFT_VERSION
-- Purpose: game version selector.
-- Example: `LATEST`, `1.20.1`.
-
-### MINECRAFT_TYPE
-- Purpose: server type.
-- Example: `FORGE`, `FABRIC`, `VANILLA`, `PAPER`.
-
-## Nextcloud (Phase 4 On-Demand)
-
-### NEXTCLOUD_ADMIN_USER
-- Purpose: initial admin account.
-
-### NEXTCLOUD_ADMIN_PASSWORD
-- Purpose: initial admin password.
-- How to generate: `openssl rand -base64 24 | tr -d '\n'`
-
-### NEXTCLOUD_TRUSTED_DOMAINS
-- Purpose: allowed hostnames.
-- Example: `cloud.example.com`
-
-## Gitea (Phase 4 On-Demand)
-
-### GITEA_ADMIN_USER
-- Purpose: initial admin username.
-
-### GITEA_ADMIN_PASSWORD
-- Purpose: initial admin password.
-
-### GITEA_ADMIN_EMAIL
-- Purpose: admin email.
-
-### GITEA_SECRET_KEY
-- Purpose: cryptographic secret for Gitea internals.
-- How to generate: `openssl rand -hex 32`
-
-### GITEA_INTERNAL_TOKEN
-- Purpose: internal service token in Gitea.
-- How to generate: `openssl rand -hex 32`
-
-## Docmost/Outline Secrets (Phase 4 On-Demand)
-
-### OUTLINE_SECRET_KEY
-- Purpose: app secret used by Docmost/Outline-style services.
-- How to generate: `openssl rand -hex 32`
-
-### OUTLINE_UTILS_SECRET
-- Purpose: secondary utility/session secret.
-- How to generate: `openssl rand -hex 32`
-
-## Cal.com (Phase 4 On-Demand)
-
-### CALCOM_NEXTAUTH_SECRET
-- Purpose: NextAuth signing secret.
-- How to generate: `openssl rand -base64 32 | tr -d '\n'`
-
-### CALCOM_CALENDSO_ENCRYPTION_KEY
-- Purpose: encryption key for sensitive Cal.com data.
-- How to generate: `openssl rand -base64 32 | tr -d '\n'`
-
-### CALCOM_EMAIL_FROM
-- Purpose: outbound email sender identity.
-- Example: `noreply@example.com`
-
-## Supabase (Phase 4 On-Demand)
-
-### SUPABASE_POSTGRES_PASSWORD
-- Purpose: Supabase Postgres password.
-- How to generate: `openssl rand -hex 32`
-
-### SUPABASE_JWT_SECRET
-- Purpose: signing root secret for Supabase JWTs.
-- How to generate:
-
-```bash
 openssl rand -base64 48 | tr -d '\n'
 ```
 
-### SUPABASE_ANON_KEY
-- Purpose: public anon API key derived from JWT setup.
-- How to get it:
- 1. Use official Supabase self-hosting docs.
- 2. Generate project JWT keys from your `SUPABASE_JWT_SECRET`.
- 3. Paste generated anon key.
-
-### SUPABASE_SERVICE_ROLE_KEY
-- Purpose: privileged server API key derived from JWT setup.
-- How to get it:
- 1. Use official Supabase self-hosting docs key generation flow.
- 2. Paste generated service role key.
-
-Important:
-- For full Supabase, follow their official docker repo and env generation process. The placeholders exist so this monorepo remains compatible with that migration path.
-
-## NocoDB (Phase 4 On-Demand)
-
-### NOCODB_SECRET
-- Purpose: JWT/signing secret for NocoDB auth.
-- How to generate: `openssl rand -hex 32`
-
-## SSO and OAuth Client Secrets (for Authentik Integration)
-
-These variables are used to configure services to use Authentik as an Identity Provider via OIDC.
-
-### GF_AUTH_GENERIC_OAUTH_CLIENT_ID
-- Purpose: OAuth client ID for Grafana to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
-- Purpose: OAuth client secret for Grafana to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### N8N_AUTH_OAUTH2_GENERIC_CLIENT_ID
-- Purpose: OAuth client ID for n8n to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### N8N_AUTH_OAUTH2_GENERIC_CLIENT_SECRET
-- Purpose: OAuth client secret for n8n to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### HOMEPAGE_AUTH_CLIENT_ID
-- Purpose: OAuth client ID for Homepage to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### HOMEPAGE_AUTH_CLIENT_SECRET
-- Purpose: OAuth client secret for Homepage to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### VAULTWARDEN_OIDC_CLIENT_ID
-- Purpose: OAuth client ID for Vaultwarden to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### VAULTWARDEN_OIDC_CLIENT_SECRET
-- Purpose: OAuth client secret for Vaultwarden to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### PORTAINER_OIDC_CLIENT_ID
-- Purpose: OAuth client ID for Portainer to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### PORTAINER_OIDC_CLIENT_SECRET
-- Purpose: OAuth client secret for Portainer to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### HOME_ASSISTANT_OAUTH2_CLIENT_ID
-- Purpose: OAuth client ID for Home Assistant to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-### HOME_ASSISTANT_OAUTH2_CLIENT_SECRET
-- Purpose: OAuth client secret for Home Assistant to authenticate with Authentik.
-- How to get it: Generated by the `generate-secrets.sh` script or manually from Authentik application/provider.
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-## Resource Optimizer
-
-### OPTIMIZER_INTERVAL
-- Purpose: Interval in seconds between optimization checks.
-- Default: `300` (5 minutes)
-- Example: `300`
-
-### OPTIMIZER_SAFETY_MARGIN
-- Purpose: Safety margin (as a decimal) added to predicted resource usage to avoid under-provisioning.
-- Default: `0.2` (20%)
-- Example: `0.2`
-
-### OPTIMIZER_HISTORY_DAYS
-- Purpose: Number of days of historical data to consider for predictions.
-- Default: `7`
-- Example: `7`
-
-### OPTIMIZER_ENABLE_PREDICTION
-- Purpose: Enable predictive scaling based on historical usage patterns.
-- Default: `true`
-- Example: `true`
-
-### OPTIMIZER_ENABLE_THERMAL
-- Purpose: Enable thermal management to prevent overheating.
-- Default: `true`
-- Example: `true`
-
-### OPTIMIZER_ENABLE_GPU_SHARING
-- Purpose: Enable GPU sharing strategies for multiple AI workloads.
-- Default: `true`
-- Example: `true`
-
-## Optional: Wake-on-LAN (WoL) API
-
-### WOL_API_KEY
-- Purpose: API key for securing the Wake-on-LAN remote trigger endpoint.
-- How to generate: `openssl rand -hex 32`
-- Example: `aBcDeFgHiJkLmNoPqRsTuVwXyZ123456`
-
-## Optional: S3 for backups
-
-### S3_ACCESS_KEY
-- Purpose: AWS S3 access key for offsite backups.
-- How to get it: From your AWS/IAM console.
-
-### S3_SECRET_KEY
-- Purpose: AWS S3 secret key for offsite backups.
-- How to get it: From your AWS/IAM console.
-
-## Validation Checklist Before Bring-Up
+## Bring-Up Order
 
 ```bash
-# 1) Ensure no placeholder values remain
-grep -n 'CHANGEME' .env
+bash scripts/setup.sh
+docker compose --env-file .env -f phase1-core/docker-compose.yml up -d
+docker compose --env-file .env -f phase2-media/docker-compose.yml up -d
+docker compose --env-file .env -f phase3-ai-gaming/docker-compose.yml up -d
+```
 
-# 2) Validate compose rendering
-for p in phase1-core phase2-media phase3-ai-gaming phase4-ondemand; do
-  docker compose --env-file .env -f "$p/docker-compose.yml" config >/dev/null || break
-done
+Phase 4 remains on-demand:
 
-# 3) Confirm data path exists
-[ -d "$(grep '^DATA_PATH=' .env | cut -d= -f2-)" ] && echo OK || echo MISSING
+```bash
+bash scripts/toggle-ondemand.sh up
+bash scripts/toggle-ondemand.sh down
 ```

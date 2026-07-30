@@ -1,249 +1,276 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup.sh – One-time Ground Zero setup script
+# Homelab setup/bootstrap helper
 #
-# Run this ONCE on a fresh system before starting any compose stack.
-# It will:
-#   1. Verify dependencies (Docker, Docker Compose, NVIDIA toolkit)
-#   2. Create all required host directories with correct ownership
-#   3. Copy .env.example → .env (if .env doesn't exist)
-#   4. Create Docker networks
-#   5. Set correct permissions on sensitive paths
-#
-# Usage:  bash scripts/setup.sh
-#         DATA_PATH=/custom/path bash scripts/setup.sh
+# Safe to run repeatedly from any working directory:
+#   bash scripts/setup.sh
+#   bash scripts/setup.sh --validate-only
+#   bash scripts/setup.sh --with-phase1
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_EXAMPLE="${REPO_ROOT}/.env.example"
 ENV_FILE="${REPO_ROOT}/.env"
 
-# ---------------------------------------------------------------------------
-# Load DATA_PATH from .env if it exists, else use default
-# ---------------------------------------------------------------------------
-if [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC2046
-  export $(grep -E '^DATA_PATH=' "$ENV_FILE" | xargs) 2>/dev/null || true
-  export $(grep -E '^PUID=' "$ENV_FILE" | xargs) 2>/dev/null || true
-  export $(grep -E '^PGID=' "$ENV_FILE" | xargs) 2>/dev/null || true
-fi
+VALIDATE_ONLY=false
+WITH_PHASE1=false
 
-DATA_PATH="${DATA_PATH:-/mnt/nvme/homelab}"
-PUID="${PUID:-1000}"
-PGID="${PGID:-1000}"
-
-echo "============================================================"
-echo " Homelab Ground Zero Setup"
-echo " DATA_PATH : ${DATA_PATH}"
-echo " PUID/PGID : ${PUID}/${PGID}"
-echo "============================================================"
-echo ""
-
-# ---------------------------------------------------------------------------
-# STEP 1 – Dependency checks
-# ---------------------------------------------------------------------------
-echo "[1/5] Checking dependencies..."
-
-check_cmd() {
-  if ! command -v "$1" &>/dev/null; then
-    echo "  MISSING: $1 – please install it before continuing."
-    echo "           $2"
-    exit 1
-  else
-    echo "  OK: $1 ($(command -v "$1"))"
-  fi
-}
-
-check_cmd docker         "https://docs.docker.com/engine/install/"
-if docker compose version &>/dev/null; then
-  echo "  OK: docker compose plugin"
-else
-  echo "  MISSING: docker compose plugin"
-  echo "           https://docs.docker.com/compose/install/"
-  exit 1
-fi
-
-# Check NVIDIA toolkit (non-fatal – just warn)
-if nvidia-smi &>/dev/null; then
-  echo "  OK: nvidia-smi found – GPU available"
-  if docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi &>/dev/null 2>&1; then
-    echo "  OK: NVIDIA Container Toolkit is working"
-  else
-    echo "  WARN: nvidia-smi works but NVIDIA Container Toolkit may not be installed."
-    echo "        Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
-    echo "        Ollama (Phase 3) will not use the GPU until this is resolved."
-  fi
-else
-  echo "  INFO: nvidia-smi not found – GPU will not be used (Ollama runs on CPU)."
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# STEP 2 – Create .env
-# ---------------------------------------------------------------------------
-echo "[2/5] Environment file..."
-if [[ -f "$ENV_FILE" ]]; then
-  echo "  OK: .env already exists – skipping copy."
-else
-  cp "${REPO_ROOT}/.env.example" "$ENV_FILE"
-  echo "  CREATED: .env from .env.example"
-  echo "  ACTION REQUIRED: Open .env and fill in every CHANGEME value before continuing!"
-  echo ""
-  read -rp "  Press ENTER once you have edited .env, or Ctrl+C to exit now... "
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# STEP 3 – Create directory tree on NVMe
-# ---------------------------------------------------------------------------
-echo "[3/5] Creating directory structure at ${DATA_PATH}..."
-
-dirs=(
-  # Phase 1 – Core
-  "${DATA_PATH}/phase1-core/data/postgres"
-  "${DATA_PATH}/phase1-core/data/redis"
-  "${DATA_PATH}/phase1-core/data/portainer"
-  "${DATA_PATH}/phase1-core/data/npm/data"
-  "${DATA_PATH}/phase1-core/data/npm/letsencrypt"
-  "${DATA_PATH}/phase1-core/data/authentik/media"
-  "${DATA_PATH}/phase1-core/data/authentik/certs"
-  "${DATA_PATH}/phase1-core/data/authentik/custom-templates"
-  "${DATA_PATH}/phase1-core/data/homepage"
-  "${DATA_PATH}/phase1-core/data/beszel/hub"
-  "${DATA_PATH}/phase1-core/data/uptime-kuma"
-  "${DATA_PATH}/phase1-core/data/ntfy/cache"
-  "${DATA_PATH}/phase1-core/data/ntfy/etc"
-
-  # Phase 2 – Media
-  "${DATA_PATH}/phase2-media/data/jellyfin/config"
-  "${DATA_PATH}/phase2-media/data/jellyfin/cache"
-  "${DATA_PATH}/phase2-media/data/audiobookshelf/config"
-  "${DATA_PATH}/phase2-media/data/audiobookshelf/metadata"
-  "${DATA_PATH}/phase2-media/data/paperless/data"
-  "${DATA_PATH}/phase2-media/data/paperless/media"
-  "${DATA_PATH}/phase2-media/data/paperless/export"
-  "${DATA_PATH}/phase2-media/data/paperless/consume"
-  "${DATA_PATH}/phase2-media/data/immich/upload"
-  "${DATA_PATH}/phase2-media/data/immich/db"
-  "${DATA_PATH}/phase2-media/data/immich/ml-cache"
-  "${DATA_PATH}/phase2-media/data/qbittorrent/config"
-
-  # Phase 3 – AI / Gaming
-  "${DATA_PATH}/phase3-ai-gaming/data/ollama"
-  "${DATA_PATH}/phase3-ai-gaming/data/openwebui"
-  "${DATA_PATH}/phase3-ai-gaming/data/minecraft"
-  "${DATA_PATH}/phase3-ai-gaming/data/n8n"
-  "${DATA_PATH}/phase3-ai-gaming/data/homeassistant"
-  "${DATA_PATH}/phase3-ai-gaming/data/spoolman"
-  "${DATA_PATH}/phase3-ai-gaming/data/actual"
-
-  # Phase 4 – On-Demand
-  "${DATA_PATH}/phase4-ondemand/data/kasm"
-  "${DATA_PATH}/phase4-ondemand/data/kasm/profiles"
-  "${DATA_PATH}/phase4-ondemand/data/guacamole"
-  "${DATA_PATH}/phase4-ondemand/data/nextcloud/html"
-  "${DATA_PATH}/phase4-ondemand/data/nextcloud/data"
-  "${DATA_PATH}/phase4-ondemand/data/gitea"
-  "${DATA_PATH}/phase4-ondemand/data/supabase"
-  "${DATA_PATH}/phase4-ondemand/data/kiwix/library"
-  "${DATA_PATH}/phase4-ondemand/data/docmost"
-  "${DATA_PATH}/phase4-ondemand/data/calcom"
-  "${DATA_PATH}/phase4-ondemand/data/nocodb"
-
-  # Shared media library
-  "${DATA_PATH}/shared/media/movies"
-  "${DATA_PATH}/shared/media/tv"
-  "${DATA_PATH}/shared/media/music"
-  "${DATA_PATH}/shared/media/audiobooks"
-  "${DATA_PATH}/shared/media/podcasts"
-  "${DATA_PATH}/shared/media/books"
-  "${DATA_PATH}/shared/downloads/complete"
-  "${DATA_PATH}/shared/downloads/incomplete"
-)
-
-for dir in "${dirs[@]}"; do
-  mkdir -p "$dir"
+for arg in "$@"; do
+  case "$arg" in
+    --validate-only) VALIDATE_ONLY=true ;;
+    --with-phase1) WITH_PHASE1=true ;;
+    -h|--help)
+      sed -n '1,12p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
 done
 
-echo "  Created $(echo "${dirs[@]}" | wc -w) directories."
+log() {
+  printf '%s\n' "$*"
+}
 
-# Seed Homepage docker discovery config on first run.
-HOMEPAGE_CONFIG_DIR="${DATA_PATH}/phase1-core/data/homepage"
-if [[ ! -f "${HOMEPAGE_CONFIG_DIR}/docker.yaml" ]]; then
-  cp "${REPO_ROOT}/phase1-core/homepage/docker.yaml" "${HOMEPAGE_CONFIG_DIR}/docker.yaml"
-  echo "  Seeded Homepage docker.yaml"
-fi
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
 
-echo ""
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Missing required command '$1'."
+}
 
-# ---------------------------------------------------------------------------
-# STEP 4 – Set ownership
-# ---------------------------------------------------------------------------
-echo "[4/5] Setting ownership (${PUID}:${PGID}) on data directories..."
+load_env() {
+  [[ -f "$ENV_FILE" ]] || cp "$ENV_EXAMPLE" "$ENV_FILE"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+}
 
-# Postgres and Redis data must be owned by the container's internal user,
-# not the host user. Leave those to Docker.
-chown -R "${PUID}:${PGID}" \
-  "${DATA_PATH}/phase1-core/data/portainer" \
-  "${DATA_PATH}/phase1-core/data/npm" \
-  "${DATA_PATH}/phase1-core/data/authentik" \
-  "${DATA_PATH}/phase1-core/data/homepage" \
-  "${DATA_PATH}/phase1-core/data/beszel" \
-  "${DATA_PATH}/phase1-core/data/uptime-kuma" \
-  "${DATA_PATH}/phase1-core/data/ntfy" \
-  "${DATA_PATH}/phase2-media/data/jellyfin" \
-  "${DATA_PATH}/phase2-media/data/audiobookshelf" \
-  "${DATA_PATH}/phase2-media/data/paperless" \
-  "${DATA_PATH}/phase2-media/data/immich/upload" \
-  "${DATA_PATH}/phase2-media/data/immich/ml-cache" \
-  "${DATA_PATH}/phase2-media/data/qbittorrent" \
-  "${DATA_PATH}/phase3-ai-gaming/data/ollama" \
-  "${DATA_PATH}/phase3-ai-gaming/data/openwebui" \
-  "${DATA_PATH}/phase3-ai-gaming/data/minecraft" \
-  "${DATA_PATH}/phase3-ai-gaming/data/n8n" \
-  "${DATA_PATH}/phase3-ai-gaming/data/homeassistant" \
-  "${DATA_PATH}/phase3-ai-gaming/data/spoolman" \
-  "${DATA_PATH}/phase3-ai-gaming/data/actual" \
-  "${DATA_PATH}/phase4-ondemand" \
-  "${DATA_PATH}/shared" \
-  2>/dev/null && echo "  Done." || echo "  WARN: Some paths need sudo to chown. Run with sudo if needed."
+validate_env_file() {
+  [[ -f "$ENV_FILE" ]] || fail ".env not found. Copy .env.example to .env first."
 
-echo ""
+  local missing=0
+  while IFS='=' read -r key _; do
+    [[ -z "$key" || "$key" =~ ^# ]] && continue
+    if ! grep -q "^${key}=" "$ENV_FILE"; then
+      printf 'MISSING: %s\n' "$key" >&2
+      missing=1
+    fi
+  done < "$ENV_EXAMPLE"
 
-# ---------------------------------------------------------------------------
-# STEP 5 – Create Docker networks
-# ---------------------------------------------------------------------------
-echo "[5/5] Creating Docker networks..."
+  if grep -n 'CHANGE_ME' "$ENV_FILE"; then
+    printf 'WARN: .env still contains CHANGE_ME placeholders.\n' >&2
+  fi
 
-create_network() {
-  if docker network inspect "$1" &>/dev/null; then
-    echo "  EXISTS: $1"
-  else
-    docker network create "$1" --driver bridge
-    echo "  CREATED: $1"
+  [[ "$missing" -eq 0 ]] || fail ".env is missing required keys."
+}
+
+ensure_host_values() {
+  : "${TZ:?TZ is required}"
+  : "${PUID:?PUID is required}"
+  : "${PGID:?PGID is required}"
+  : "${DATA_PATH:?DATA_PATH is required}"
+  : "${DOMAIN:?DOMAIN is required}"
+}
+
+create_directories() {
+  log "[1/5] Creating data directories under ${DATA_PATH}"
+
+  local dirs=(
+    "${DATA_PATH}/phase1-core/data/postgres"
+    "${DATA_PATH}/phase1-core/data/redis"
+    "${DATA_PATH}/phase1-core/data/portainer"
+    "${DATA_PATH}/phase1-core/data/npm/data"
+    "${DATA_PATH}/phase1-core/data/npm/letsencrypt"
+    "${DATA_PATH}/phase1-core/data/authentik/media"
+    "${DATA_PATH}/phase1-core/data/authentik/certs"
+    "${DATA_PATH}/phase1-core/data/authentik/custom-templates"
+    "${DATA_PATH}/phase1-core/data/homepage"
+    "${DATA_PATH}/phase1-core/data/beszel/hub"
+    "${DATA_PATH}/phase1-core/data/uptime-kuma"
+    "${DATA_PATH}/phase1-core/data/scrutiny/config"
+    "${DATA_PATH}/phase1-core/data/scrutiny/influxdb"
+    "${DATA_PATH}/phase1-core/data/vaultwarden"
+    "${DATA_PATH}/phase1-core/data/ntfy/cache"
+    "${DATA_PATH}/phase1-core/data/ntfy/etc"
+    "${DATA_PATH}/phase1-core/data/node-exporter/textfile_collector"
+    "${DATA_PATH}/phase1-core/data/backup/repo"
+    "${DATA_PATH}/phase1-core/data/backup/state"
+    "${DATA_PATH}/phase1-core/data/backup/verify"
+    "${DATA_PATH}/phase2-media/data/jellyfin/config"
+    "${DATA_PATH}/phase2-media/data/jellyfin/cache"
+    "${DATA_PATH}/phase2-media/data/audiobookshelf/config"
+    "${DATA_PATH}/phase2-media/data/audiobookshelf/metadata"
+    "${DATA_PATH}/phase2-media/data/navidrome/data"
+    "${DATA_PATH}/phase2-media/data/navidrome/cache"
+    "${DATA_PATH}/phase2-media/data/paperless/data"
+    "${DATA_PATH}/phase2-media/data/paperless/media"
+    "${DATA_PATH}/phase2-media/data/paperless/export"
+    "${DATA_PATH}/phase2-media/data/paperless/consume"
+    "${DATA_PATH}/phase2-media/data/immich/upload"
+    "${DATA_PATH}/phase2-media/data/immich/db"
+    "${DATA_PATH}/phase2-media/data/immich/ml-cache"
+    "${DATA_PATH}/phase2-media/data/prowlarr"
+    "${DATA_PATH}/phase2-media/data/bazarr"
+    "${DATA_PATH}/phase2-media/data/qbittorrent/config"
+    "${DATA_PATH}/phase3-ai-gaming/data/ollama"
+    "${DATA_PATH}/phase3-ai-gaming/data/openwebui"
+    "${DATA_PATH}/phase3-ai-gaming/data/minecraft"
+    "${DATA_PATH}/phase3-ai-gaming/data/n8n"
+    "${DATA_PATH}/phase3-ai-gaming/data/homeassistant"
+    "${DATA_PATH}/phase3-ai-gaming/data/spoolman"
+    "${DATA_PATH}/phase3-ai-gaming/data/actual"
+    "${DATA_PATH}/phase3-ai-gaming/data/stirling-pdf"
+    "${DATA_PATH}/phase4-ondemand/data/kasm/profiles"
+    "${DATA_PATH}/phase4-ondemand/data/guacamole"
+    "${DATA_PATH}/phase4-ondemand/data/nextcloud/html"
+    "${DATA_PATH}/phase4-ondemand/data/nextcloud/data"
+    "${DATA_PATH}/phase4-ondemand/data/gitea"
+    "${DATA_PATH}/phase4-ondemand/data/supabase"
+    "${DATA_PATH}/phase4-ondemand/data/kiwix/library"
+    "${DATA_PATH}/phase4-ondemand/data/docmost"
+    "${DATA_PATH}/phase4-ondemand/data/calcom"
+    "${DATA_PATH}/phase4-ondemand/data/nocodb"
+    "${DATA_PATH}/shared/media/movies"
+    "${DATA_PATH}/shared/media/tv"
+    "${DATA_PATH}/shared/media/music"
+    "${DATA_PATH}/shared/media/audiobooks"
+    "${DATA_PATH}/shared/media/podcasts"
+    "${DATA_PATH}/shared/media/books"
+    "${DATA_PATH}/shared/downloads/complete"
+    "${DATA_PATH}/shared/downloads/incomplete"
+  )
+
+  mkdir -p "${dirs[@]}"
+
+  if [[ -f "${REPO_ROOT}/phase1-core/homepage/docker.yaml" && ! -f "${DATA_PATH}/phase1-core/data/homepage/docker.yaml" ]]; then
+    cp "${REPO_ROOT}/phase1-core/homepage/docker.yaml" "${DATA_PATH}/phase1-core/data/homepage/docker.yaml"
   fi
 }
 
-create_network homelab_proxy
-create_network homelab_internal
+fix_permissions() {
+  log "[2/5] Applying ownership for non-database application data"
 
-echo ""
-echo "============================================================"
-echo " Setup complete!"
-echo "============================================================"
-echo ""
-echo " Next steps:"
-echo "  1. Ensure .env has all CHANGEME values filled in."
-echo "  2. cd phase1-core && docker compose --env-file ../.env up -d"
-echo "  3. Open Homepage at http://<tailnet-host>:3000 and verify service tiles load."
-echo "  4. Set BESZEL_KEY and BESZEL_TOKEN in .env, then restart beszel-agent."
-echo "  5. Seed Uptime Kuma monitors (after creating your Kuma login):"
-echo "     python3 scripts/seed_uptime_kuma.py --username '<kuma-username>'"
-echo "  6. See README.md for the full phased rollout guide."
-echo ""
-echo " Toggle on-demand services:"
-echo "  ./scripts/toggle-ondemand.sh up      # Wake Phase 4"
-echo "  ./scripts/toggle-ondemand.sh down    # Sleep Phase 4"
-echo ""
+  local paths=(
+    "${DATA_PATH}/phase1-core/data/portainer"
+    "${DATA_PATH}/phase1-core/data/npm"
+    "${DATA_PATH}/phase1-core/data/authentik"
+    "${DATA_PATH}/phase1-core/data/homepage"
+    "${DATA_PATH}/phase1-core/data/beszel"
+    "${DATA_PATH}/phase1-core/data/uptime-kuma"
+    "${DATA_PATH}/phase1-core/data/scrutiny"
+    "${DATA_PATH}/phase1-core/data/vaultwarden"
+    "${DATA_PATH}/phase1-core/data/ntfy"
+    "${DATA_PATH}/phase1-core/data/node-exporter"
+    "${DATA_PATH}/phase1-core/data/backup"
+    "${DATA_PATH}/phase2-media"
+    "${DATA_PATH}/phase3-ai-gaming"
+    "${DATA_PATH}/phase4-ondemand"
+    "${DATA_PATH}/shared"
+  )
+
+  if chown -R "${PUID}:${PGID}" "${paths[@]}" 2>/dev/null; then
+    log "Ownership applied."
+  else
+    log "WARN: Some paths could not be chowned. Re-run with sudo on the Linux host if containers hit permission errors."
+  fi
+}
+
+ensure_networks() {
+  log "[3/5] Ensuring Docker networks exist"
+  need_cmd docker
+
+  docker network inspect homelab_proxy >/dev/null 2>&1 || docker network create homelab_proxy >/dev/null
+  docker network inspect homelab_internal >/dev/null 2>&1 || docker network create homelab_internal >/dev/null
+}
+
+validate_compose() {
+  log "[4/5] Validating compose files"
+  need_cmd docker
+
+  local phases=(
+    "phase1-core/docker-compose.yml"
+    "phase2-media/docker-compose.yml"
+    "phase3-ai-gaming/docker-compose.yml"
+    "phase4-ondemand/docker-compose.yml"
+  )
+
+  for file in "${phases[@]}"; do
+    docker compose --env-file "$ENV_FILE" -f "${REPO_ROOT}/${file}" config >/dev/null
+    log "OK: ${file}"
+  done
+}
+
+validate_catalog() {
+  log "Validating services.yaml catalog"
+  need_cmd python3
+  python3 - <<'PY'
+import json
+from pathlib import Path
+
+catalog = json.loads(Path("services.yaml").read_text(encoding="utf-8"))
+services = catalog["services"]
+errors = []
+
+for name, service in services.items():
+    if service["phase"] not in catalog["phases"]:
+        errors.append(f"{name}: unknown phase {service['phase']}")
+    if service.get("schedule") not in catalog["schedules"]:
+        errors.append(f"{name}: unknown schedule {service.get('schedule')}")
+    for dependency in service.get("dependencies", []):
+        if dependency not in services:
+            errors.append(f"{name}: unknown dependency {dependency}")
+
+if errors:
+    raise SystemExit("\n".join(errors))
+
+print(f"OK: services.yaml catalog contains {len(services)} services")
+PY
+}
+
+start_phase1() {
+  log "[5/5] Starting Phase 1"
+  docker compose --env-file "$ENV_FILE" -f "${REPO_ROOT}/phase1-core/docker-compose.yml" up -d
+}
+
+main() {
+  cd "$REPO_ROOT"
+
+  [[ -f "$ENV_EXAMPLE" ]] || fail ".env.example not found at ${ENV_EXAMPLE}"
+  load_env
+  validate_env_file
+  ensure_host_values
+
+  if [[ "$VALIDATE_ONLY" == true ]]; then
+    validate_catalog
+    validate_compose
+    log "Validation complete."
+    exit 0
+  fi
+
+  create_directories
+  fix_permissions
+  ensure_networks
+  validate_catalog
+  validate_compose
+
+  if [[ "$WITH_PHASE1" == true ]]; then
+    start_phase1
+  else
+    log "[5/5] Skipping service start. Use --with-phase1 to start core services."
+  fi
+
+  log "Setup complete."
+  log "Next: replace any CHANGE_ME values in .env, then run:"
+  log "  docker compose --env-file .env -f phase1-core/docker-compose.yml up -d"
+}
+
+main "$@"

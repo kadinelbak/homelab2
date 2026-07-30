@@ -9,6 +9,7 @@
 *.crt
 *.p12
 secrets/
+config/authentik/client-metadata.env
 
 # Runtime data directories – these live on your NVMe, not in git
 data/
@@ -28,6 +29,7 @@ opencode.json
 # Logs
 *.log
 logs/
+__pycache__/
 
 # Backups
 *.bak

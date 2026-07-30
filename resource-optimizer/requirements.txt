@@ -1,4 +1,1 @@
-prometheus-client
-psutil
-pyyaml
-requests
+# No Python package dependencies are required.

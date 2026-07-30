@@ -270,6 +270,23 @@ Backups (minimum):
 2. `${DATA_PATH}` bind-mounted app data.
 3. `.env` secret file in secure vault.
 
+## 10.1 Capacity Governor
+
+`services.yaml` is the service catalog for RAM, CPU, VRAM, profile, dependency,
+and schedule metadata. Use `homelabctl` to plan or execute changes:
+
+```bash
+python3 scripts/homelabctl.py plan always-on
+python3 scripts/homelabctl.py up media
+python3 scripts/homelabctl.py down heavy
+python3 scripts/homelabctl.py status
+python3 scripts/homelabctl.py schedule
+```
+
+On a 16GB host, `homelabctl` reserves host headroom and warns or refuses when a
+requested set exceeds the configured budget. Set `HOMELAB_ADMISSION_MODE=enforce`
+in `.env` to block over-budget starts.
+
 ## 11. Important One-Time Initializations
 
 ### Guacamole DB schema
