@@ -256,12 +256,13 @@ services:
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
       WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
+      VPN_PORT_FORWARDING: ${VPN_PORT_FORWARDING:-off}
       TZ: ${TZ}
       # Expose the qBittorrent Web UI port through Gluetun:
       HTTPPROXY: "off"
       SHADOWSOCKS: "off"
     ports:
-      - "8080:8080"   # qBittorrent Web UI (access via http://host:8080)
+      - "8097:8097"   # qBittorrent Web UI (access via http://host:8097)
       - "6881:6881"   # qBittorrent TCP
       - "6881:6881/udp"
     networks:
@@ -285,7 +286,8 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TZ}
-      WEBUI_PORT: 8080
+      WEBUI_PORT: 8097
+      TORRENTING_PORT: ${QBITTORRENT_LISTEN_PORT:-56789}
     volumes:
       - ${DATA_PATH}/phase2-media/data/qbittorrent/config:/config
       - ${DATA_PATH}/shared/downloads:/downloads
@@ -297,7 +299,7 @@ services:
       - "homepage.group=Media Automations"
       - "homepage.name=qBittorrent"
       - "homepage.icon=qbittorrent"
-      - "homepage.href=http://${DOCKER_HOST_IP}:8080"
+      - "homepage.href=http://${DOCKER_HOST_IP}:8097"
       - "homepage.description=Torrent client over VPN"
 
   # ---------------------------------------------------------------------------

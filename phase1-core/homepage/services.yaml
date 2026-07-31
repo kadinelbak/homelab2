@@ -79,7 +79,7 @@
         description: Subtitle manager
     - qBittorrent:
         icon: qbittorrent
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8080
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8097
         description: Torrent client over VPN
 
 - AI Automations:
