@@ -46,4 +46,4 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - authentik-server:9000
+          - authentik-server:9300

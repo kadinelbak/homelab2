@@ -290,7 +290,8 @@ services:
       - ${DATA_PATH}/phase2-media/data/qbittorrent/config:/config
       - ${DATA_PATH}/shared/downloads:/downloads
     depends_on:
-      - gluetun
+      gluetun:
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media Automations"

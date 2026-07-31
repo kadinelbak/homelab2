@@ -116,6 +116,8 @@ def generate_cert(domain: str, cert_path: Path, key_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Configure Authentik's HTTPS cert for Immich OIDC")
     parser.add_argument("--env-file", default=".env")
+    parser.add_argument("--cert-file", default=None, help="Existing PEM certificate to import")
+    parser.add_argument("--key-file", default=None, help="Existing PEM private key to import")
     parser.add_argument("--out-cert", default=None)
     args = parser.parse_args()
 
@@ -125,10 +127,22 @@ def main() -> int:
     token = env["AUTHENTIK_API_TOKEN"]
     name = f"homelab {domain} web certificate"
 
+    if bool(args.cert_file) != bool(args.key_file):
+        raise SystemExit("ERROR: --cert-file and --key-file must be used together")
+
     with tempfile.TemporaryDirectory(prefix="authentik-web-cert-") as tmp:
-        cert_path = Path(tmp) / "cert.pem"
-        key_path = Path(tmp) / "key.pem"
-        generate_cert(domain, cert_path, key_path)
+        if args.cert_file and args.key_file:
+            cert_path = Path(args.cert_file)
+            key_path = Path(args.key_file)
+        else:
+            cert_path = Path(tmp) / "cert.pem"
+            key_path = Path(tmp) / "key.pem"
+            generate_cert(domain, cert_path, key_path)
+
+        if not cert_path.is_file():
+            raise SystemExit(f"ERROR: certificate file not found: {cert_path}")
+        if not key_path.is_file():
+            raise SystemExit(f"ERROR: key file not found: {key_path}")
 
         body = {
             "name": name,
