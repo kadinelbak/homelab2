@@ -77,6 +77,14 @@
         icon: bazarr
         href: http://kadin-main-sys.tail00cf0e.ts.net:6767
         description: Subtitle manager
+    - Sonarr:
+        icon: sonarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8989
+        description: TV series automation
+    - Radarr:
+        icon: radarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:7878
+        description: Movie automation
     - qBittorrent:
         icon: qbittorrent
         href: http://kadin-main-sys.tail00cf0e.ts.net:8097

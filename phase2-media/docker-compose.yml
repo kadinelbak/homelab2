@@ -361,3 +361,65 @@ services:
       - "homepage.icon=bazarr"
       - "homepage.href=http://${DOMAIN}:6767"
       - "homepage.description=Subtitle manager"
+
+  # ---------------------------------------------------------------------------
+  # SONARR - TV Series Automation
+  # Proxy target: sonarr:8989
+  # Uses Prowlarr for indexers and qBittorrent through Gluetun for downloads.
+  # ---------------------------------------------------------------------------
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    profiles: ["sonarr", "arr"]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/sonarr:/config
+      - ${DATA_PATH}/shared/media/tv:/tv
+      - ${DATA_PATH}/shared/downloads:/downloads
+    ports:
+      - "8989:8989"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media Automations"
+      - "homepage.name=Sonarr"
+      - "homepage.icon=sonarr"
+      - "homepage.href=http://${DOMAIN}:8989"
+      - "homepage.description=TV series automation"
+
+  # ---------------------------------------------------------------------------
+  # RADARR - Movie Automation
+  # Proxy target: radarr:7878
+  # Uses Prowlarr for indexers and qBittorrent through Gluetun for downloads.
+  # ---------------------------------------------------------------------------
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    profiles: ["radarr", "arr"]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/radarr:/config
+      - ${DATA_PATH}/shared/media/movies:/movies
+      - ${DATA_PATH}/shared/downloads:/downloads
+    ports:
+      - "7878:7878"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media Automations"
+      - "homepage.name=Radarr"
+      - "homepage.icon=radarr"
+      - "homepage.href=http://${DOMAIN}:7878"
+      - "homepage.description=Movie automation"
