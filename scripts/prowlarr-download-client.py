@@ -28,6 +28,14 @@ def api_key(env: dict[str, str]) -> str:
     return match.group(1)
 
 
+def app_api_key(env: dict[str, str], app: str) -> str:
+    config = Path(env["DATA_PATH"]) / f"phase2-media/data/{app}/config.xml"
+    match = re.search(r"<ApiKey>([^<]+)</ApiKey>", config.read_text(encoding="utf-8"))
+    if not match:
+        raise SystemExit(f"{app} API key not found")
+    return match.group(1)
+
+
 def request_json(method: str, path: str, key: str, body: object | None = None) -> object:
     payload = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
@@ -128,10 +136,66 @@ def upsert_qbit_client(key: str) -> int:
     return list_clients(key)
 
 
+def application_payload(key: str, env: dict[str, str], app: str) -> dict[str, object]:
+    implementation = app.capitalize()
+    schemas = request_json("GET", "/applications/schema", key)
+    for schema in schemas:
+        if schema.get("implementation") != implementation:
+            continue
+        port = 8989 if app == "sonarr" else 7878
+        schema["name"] = implementation
+        schema["syncLevel"] = "fullSync"
+        schema["enable"] = True
+        values = {
+            "prowlarrUrl": "http://prowlarr:9696",
+            f"{app}Url": f"http://{app}:{port}",
+            "baseUrl": f"http://{app}:{port}",
+            "apiKey": app_api_key(env, app),
+            "syncCategories": [5000, 5030, 5040] if app == "sonarr" else [2000, 2010, 2020, 2030, 2040, 2045, 2050, 2060],
+        }
+        for field in schema.get("fields", []):
+            if field.get("name") in values:
+                field["value"] = values[field["name"]]
+        return schema
+    raise SystemExit(f"{implementation} application schema not found")
+
+
+def upsert_application(key: str, env: dict[str, str], app: str) -> None:
+    implementation = app.capitalize()
+    payload = application_payload(key, env, app)
+    applications = request_json("GET", "/applications", key)
+    existing = next((item for item in applications if item.get("implementation") == implementation), None)
+    test_payload = dict(payload)
+    if existing:
+        payload["id"] = existing["id"]
+        test_payload["id"] = existing["id"]
+    request_json("POST", "/applications/test", key, test_payload)
+    if existing:
+        request_json("PUT", f"/applications/{existing['id']}", key, payload)
+        print(f"Updated {implementation} application in Prowlarr")
+    else:
+        request_json("POST", "/applications", key, payload)
+        print(f"Created {implementation} application in Prowlarr")
+
+
+def list_applications(key: str) -> None:
+    applications = request_json("GET", "/applications", key)
+    print(f"PROWLARR_APPLICATIONS={len(applications)}")
+    for app in applications:
+        print("APP", app.get("id"), app.get("name"), app.get("implementation"), app.get("syncLevel"))
+
+
+def list_indexers(key: str) -> None:
+    indexers = request_json("GET", "/indexer", key)
+    print(f"PROWLARR_INDEXERS={len(indexers)}")
+    for indexer in indexers:
+        print("INDEXER", indexer.get("id"), indexer.get("name"), indexer.get("enable"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", default=".env")
-    parser.add_argument("command", choices=["list", "qbit-schema", "upsert-qbit"])
+    parser.add_argument("command", choices=["list", "qbit-schema", "upsert-qbit", "upsert-apps", "list-apps", "list-indexers"])
     args = parser.parse_args()
 
     env = load_env(Path(args.env_file))
@@ -142,6 +206,17 @@ def main() -> int:
         return qbit_schema(key)
     if args.command == "upsert-qbit":
         return upsert_qbit_client(key)
+    if args.command == "upsert-apps":
+        upsert_application(key, env, "sonarr")
+        upsert_application(key, env, "radarr")
+        list_applications(key)
+        return 0
+    if args.command == "list-apps":
+        list_applications(key)
+        return 0
+    if args.command == "list-indexers":
+        list_indexers(key)
+        return 0
     raise SystemExit(f"Unsupported command: {args.command}")
 
 
