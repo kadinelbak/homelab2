@@ -280,13 +280,20 @@ services:
       homepage.description: Container management
 
   vaultwarden:
-    image: vaultwarden/server:1.31.0
+    image: vaultwarden/server:1.35.0
     container_name: vaultwarden
     restart: unless-stopped
     environment:
-      DOMAIN: https://vaultwarden.${DOMAIN}
+      DOMAIN: https://${DOMAIN}:4443
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/vaultwarden
       ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
+      SSO_ENABLED: "true"
+      SSO_ONLY: "false"
+      SSO_SIGNUPS_MATCH_EMAIL: "true"
+      SSO_AUTHORITY: ${AUTHENTIK_URL}/application/o/vaultwarden/
+      SSO_SCOPES: openid profile email offline_access
+      SSO_CLIENT_ID: ${VAULTWARDEN_OIDC_CLIENT_ID}
+      SSO_CLIENT_SECRET: ${VAULTWARDEN_OIDC_CLIENT_SECRET}
       SIGNUPS_ALLOWED: "false"
       INVITATIONS_ALLOWED: "true"
       LOG_LEVEL: info

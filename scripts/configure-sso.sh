@@ -169,7 +169,10 @@ def provider_by_name(name):
 
 
 def application_by_slug(slug):
-    return first_by_field("/core/applications/", "slug", slug, {"slug": slug})
+    app = first_by_field("/core/applications/", "slug", slug, {"slug": slug})
+    if app:
+        return app
+    return first_by_field("/core/applications/", "slug", slug, {"search": slug})
 
 
 def scope_mapping_pks(scope_names):
@@ -221,7 +224,7 @@ def save_or_update_provider(app, auth_flow, invalidation_flow):
         "redirect_uris": redirect_uris,
         "property_mappings": scope_mapping_pks(app.get("scopes", ["openid", "email", "profile"])),
         "access_code_validity": "minutes=5",
-        "access_token_validity": "minutes=5",
+        "access_token_validity": app.get("access_token_validity", "hours=8"),
         "refresh_token_validity": "days=30",
     }
 

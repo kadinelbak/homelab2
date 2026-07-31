@@ -39,6 +39,25 @@
       ]
     },
     {
+      "slug": "vaultwarden",
+      "name": "Vaultwarden",
+      "description": "Password manager",
+      "icon": "vaultwarden",
+      "launch_url": "https://${DOMAIN}:4443",
+      "client_id_env": "VAULTWARDEN_OIDC_CLIENT_ID",
+      "client_secret_env": "VAULTWARDEN_OIDC_CLIENT_SECRET",
+      "issuer_mode": "per_provider",
+      "scopes": [
+        "openid",
+        "email",
+        "profile",
+        "offline_access"
+      ],
+      "redirect_uris": [
+        "https://${DOMAIN}:4443/identity/connect/oidc-signin"
+      ]
+    },
+    {
       "slug": "portainer",
       "name": "Portainer",
       "description": "Container management",
