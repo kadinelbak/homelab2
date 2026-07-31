@@ -1,48 +1,45 @@
 {
-  "dashboard": {
-    "id": null,
-    "uid": "homelab-overview",
-    "title": "Homelab Overview",
-    "timezone": "browser",
-    "schemaVersion": 38,
-    "version": 1,
-    "refresh": "10s",
-    "panels": [
-      {
-        "type": "table",
-        "title": "Service Status",
-        "gridPos": {
-          "x": 0,
-          "y": 0,
-          "w": 12,
-          "h": 8
-        },
-        "datasource": "Prometheus",
-        "targets": [
-          {
-            "expr": "up",
-            "legendFormat": "{{job}}",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {
-            "custom": {}
-          },
-          "overrides": []
-        },
-        "options": {
-          "showHeader": true,
-          "sortBy": []
+  "id": null,
+  "uid": "homelab-overview",
+  "title": "Homelab Overview",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "table",
+      "title": "Service Status",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "up",
+          "legendFormat": "{{job}}",
+          "refId": "A"
         }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
       }
-    ],
-    "templating": {
-      "list": []
-    },
-    "annotations": {
-      "list": []
     }
+  ],
+  "templating": {
+    "list": []
   },
-  "overwrite": true
+  "annotations": {
+    "list": []
+  }
 }

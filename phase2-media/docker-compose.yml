@@ -174,8 +174,10 @@ services:
       REDIS_HOSTNAME: homelab_redis
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       UPLOAD_LOCATION: /usr/src/app/upload
+      NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/authentik.crt
     volumes:
       - ${DATA_PATH}/phase2-media/data/immich/upload:/usr/src/app/upload
+      - ${DATA_PATH}/phase1-core/data/authentik/certs/immich-authentik-ca.crt:/usr/local/share/ca-certificates/authentik.crt:ro
     ports:
       - "2283:2283"
     networks:

@@ -7,11 +7,11 @@
       "name": "Grafana",
       "description": "Monitoring dashboards",
       "icon": "grafana",
-      "launch_url": "https://grafana.${DOMAIN}",
+      "launch_url": "http://${DOMAIN}:30030",
       "client_id_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_ID",
       "client_secret_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET",
       "redirect_uris": [
-        "https://grafana.${DOMAIN}/login/generic_oauth"
+        "http://${DOMAIN}:30030/login/generic_oauth"
       ]
     },
     {
@@ -19,11 +19,11 @@
       "name": "n8n",
       "description": "Workflow automation",
       "icon": "n8n",
-      "launch_url": "https://n8n.${DOMAIN}",
+      "launch_url": "http://${DOMAIN}:5678",
       "client_id_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_ID",
       "client_secret_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_SECRET",
       "redirect_uris": [
-        "https://n8n.${DOMAIN}/rest/oauth2-credential/callback"
+        "http://${DOMAIN}:5678/rest/oauth2-credential/callback"
       ]
     },
     {
@@ -31,11 +31,11 @@
       "name": "Homepage",
       "description": "Homelab service launcher",
       "icon": "homepage",
-      "launch_url": "https://homepage.${DOMAIN}",
+      "launch_url": "http://${DOMAIN}:3000",
       "client_id_env": "HOMEPAGE_AUTH_CLIENT_ID",
       "client_secret_env": "HOMEPAGE_AUTH_CLIENT_SECRET",
       "redirect_uris": [
-        "https://homepage.${DOMAIN}/api/auth/callback/authentik"
+        "http://${DOMAIN}:3000/api/auth/callback/authentik"
       ]
     },
     {
@@ -43,11 +43,11 @@
       "name": "Portainer",
       "description": "Container management",
       "icon": "portainer",
-      "launch_url": "https://portainer.${DOMAIN}",
+      "launch_url": "http://${DOMAIN}:9000",
       "client_id_env": "PORTAINER_OIDC_CLIENT_ID",
       "client_secret_env": "PORTAINER_OIDC_CLIENT_SECRET",
       "redirect_uris": [
-        "https://portainer.${DOMAIN}/"
+        "http://${DOMAIN}:9000/"
       ]
     },
     {
@@ -55,11 +55,26 @@
       "name": "Home Assistant",
       "description": "Smart home hub",
       "icon": "home-assistant",
-      "launch_url": "https://homeassistant.${DOMAIN}",
+      "launch_url": "http://${DOMAIN}:8123",
       "client_id_env": "HOME_ASSISTANT_OAUTH2_CLIENT_ID",
       "client_secret_env": "HOME_ASSISTANT_OAUTH2_CLIENT_SECRET",
       "redirect_uris": [
-        "https://homeassistant.${DOMAIN}/auth/external/callback"
+        "http://${DOMAIN}:8123/auth/external/callback"
+      ]
+    },
+    {
+      "slug": "immich",
+      "name": "Immich",
+      "description": "Photo and video library",
+      "icon": "immich",
+      "launch_url": "http://${DOMAIN}:2283",
+      "client_id_env": "IMMICH_OIDC_CLIENT_ID",
+      "client_secret_env": "IMMICH_OIDC_CLIENT_SECRET",
+      "issuer_mode": "per_provider",
+      "redirect_uris": [
+        "http://${DOMAIN}:2283/auth/login",
+        "http://${DOMAIN}:2283/user-settings",
+        "app.immich:///oauth-callback"
       ]
     }
   ]

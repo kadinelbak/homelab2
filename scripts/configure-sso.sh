@@ -44,17 +44,9 @@ done
   exit 1
 }
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+export ENV_FILE SPEC_FILE OUTPUT_FILE DRY_RUN
 
-: "${AUTHENTIK_URL:?AUTHENTIK_URL is required}"
-: "${AUTHENTIK_API_TOKEN:?AUTHENTIK_API_TOKEN is required. Do not use AUTHENTIK_SECRET_KEY here.}"
-
-export AUTHENTIK_URL AUTHENTIK_API_TOKEN SPEC_FILE OUTPUT_FILE DRY_RUN DOMAIN
-
-python - <<'PY'
+python3 - <<'PY'
 import json
 import os
 import re
@@ -64,11 +56,41 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-base_url = os.environ["AUTHENTIK_URL"].rstrip("/")
-token = os.environ["AUTHENTIK_API_TOKEN"]
+env_file = Path(os.environ["ENV_FILE"])
 spec_file = Path(os.environ["SPEC_FILE"])
 output_file = Path(os.environ["OUTPUT_FILE"])
 dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
+
+
+def load_env_file(path):
+    values = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if value and value[0] in "\"'":
+            quote = value[0]
+            end = value.find(quote, 1)
+            value = value[1:end] if end != -1 else value[1:]
+        else:
+            value = value.split(" #", 1)[0].strip()
+        values[key] = value
+    return values
+
+
+file_env = load_env_file(env_file)
+for key, value in file_env.items():
+    os.environ.setdefault(key, value)
+
+base_url = os.environ.get("AUTHENTIK_URL", "").rstrip("/")
+token = os.environ.get("AUTHENTIK_API_TOKEN", "")
+if not base_url:
+    raise SystemExit("ERROR: AUTHENTIK_URL is required")
+if not token or token.startswith("CHANGE_ME"):
+    raise SystemExit("ERROR: AUTHENTIK_API_TOKEN is required. Do not use AUTHENTIK_SECRET_KEY here.")
 
 headers = {
     "Authorization": f"Bearer {token}",
@@ -150,6 +172,28 @@ def application_by_slug(slug):
     return first_by_field("/core/applications/", "slug", slug, {"slug": slug})
 
 
+def scope_mapping_pks(scope_names):
+    pks = []
+    for scope_name in scope_names:
+        mapping = first_by_field(
+            "/propertymappings/provider/scope/",
+            "scope_name",
+            scope_name,
+            {"scope_name": scope_name},
+        )
+        if not mapping:
+            mapping = first_by_field(
+                "/propertymappings/provider/scope/",
+                "scope_name",
+                scope_name,
+                {"search": scope_name},
+            )
+        if not mapping:
+            die(f"Authentik OAuth scope mapping '{scope_name}' was not found")
+        pks.append(mapping["pk"])
+    return pks
+
+
 def save_or_update_provider(app, auth_flow, invalidation_flow):
     provider_name = f"{app['name']} OIDC"
     client_id = os.environ.get(app["client_id_env"], "")
@@ -172,10 +216,10 @@ def save_or_update_provider(app, auth_flow, invalidation_flow):
         "client_id": client_id,
         "client_secret": client_secret,
         "include_claims_in_id_token": True,
-        "issuer_mode": "global",
+        "issuer_mode": app.get("issuer_mode", "global"),
         "sub_mode": app.get("sub_mode", "hashed_user_id"),
         "redirect_uris": redirect_uris,
-        "property_mappings": [],
+        "property_mappings": scope_mapping_pks(app.get("scopes", ["openid", "email", "profile"])),
         "access_code_validity": "minutes=5",
         "access_token_validity": "minutes=5",
         "refresh_token_validity": "days=30",
@@ -226,7 +270,6 @@ def main():
     spec = json.loads(spec_file.read_text(encoding="utf-8"))
     spec = expand(spec)
 
-    request("GET", "/core/meta/")
     auth_flow = flow_pk(spec.get("authorization_flow_slug", "default-provider-authorization-implicit-consent"))
     invalidation_flow = flow_pk(spec.get("invalidation_flow_slug", "default-provider-invalidation-flow"))
 

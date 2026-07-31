@@ -132,8 +132,12 @@ services:
       - ${DATA_PATH}/phase1-core/data/npm/data:/data
       - ${DATA_PATH}/phase1-core/data/npm/letsencrypt:/etc/letsencrypt
     networks:
-      - homelab_proxy
-      - homelab_internal
+      homelab_proxy:
+        aliases:
+          - ${DOMAIN}
+      homelab_internal:
+        aliases:
+          - ${DOMAIN}
     labels:
       <<: [*common-labels, *critical]
       homelab.service: npm
@@ -152,6 +156,7 @@ services:
     environment:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_REDIS__HOST: homelab_redis
+      AUTHENTIK_REDIS__DB: "1"
       AUTHENTIK_REDIS__PASSWORD: ${REDIS_PASSWORD}
       AUTHENTIK_POSTGRESQL__HOST: homelab_postgres
       AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
@@ -169,8 +174,10 @@ services:
       - "9001:9000"
       - "9443:9443"
     networks:
-      - homelab_proxy
-      - homelab_internal
+      homelab_proxy:
+      homelab_internal:
+        aliases:
+          - ${DOMAIN}
     depends_on:
       postgres:
         condition: service_healthy
@@ -194,6 +201,7 @@ services:
     environment:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_REDIS__HOST: homelab_redis
+      AUTHENTIK_REDIS__DB: "1"
       AUTHENTIK_REDIS__PASSWORD: ${REDIS_PASSWORD}
       AUTHENTIK_POSTGRESQL__HOST: homelab_postgres
       AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
@@ -201,6 +209,9 @@ services:
       AUTHENTIK_POSTGRESQL__NAME: authentik
       TZ: ${TZ}
     user: root
+    shm_size: 512m
+    tmpfs:
+      - /dev/shm:rw,noexec,nosuid,size=536870912
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${DATA_PATH}/phase1-core/data/authentik/media:/media
@@ -333,13 +344,9 @@ services:
     image: louislam/uptime-kuma:1.23.13
     container_name: uptime_kuma
     restart: unless-stopped
+    network_mode: host
     volumes:
       - ${DATA_PATH}/phase1-core/data/uptime-kuma:/app/data
-    ports:
-      - "3001:3001"
-    networks:
-      - homelab_proxy
-      - homelab_internal
     labels:
       <<: [*common-labels, *important]
       homelab.service: uptime-kuma
@@ -459,15 +466,18 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+      GF_SERVER_ROOT_URL: http://${DOMAIN}:30030
       GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
       GF_AUTH_GENERIC_OAUTH_NAME: Authentik
       GF_AUTH_GENERIC_OAUTH_CLIENT_ID: ${GF_AUTH_GENERIC_OAUTH_CLIENT_ID}
       GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET}
       GF_AUTH_GENERIC_OAUTH_SCOPES: openid profile email
       GF_AUTH_GENERIC_OAUTH_AUTH_URL: ${AUTHENTIK_URL}/application/o/authorize/
-      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: ${AUTHENTIK_URL}/application/o/token/
-      GF_AUTH_GENERIC_OAUTH_API_URL: ${AUTHENTIK_URL}/application/o/userinfo/
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: http://${DOMAIN}:9000/application/o/token/
+      GF_AUTH_GENERIC_OAUTH_API_URL: http://${DOMAIN}:9000/application/o/userinfo/
+      GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH: email
+      GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH: preferred_username
+      GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH: name
       GF_AUTH_SIGNOUT_REDIRECT_URL: ${AUTHENTIK_URL}/application/o/grafana/end-session/
       TZ: ${TZ}
     volumes:
@@ -651,6 +661,31 @@ services:
       homepage.icon: remote
       homepage.href: http://${DOMAIN}:9999/health
       homepage.description: Authenticated Wake-on-LAN endpoint
+
+  homelab-control:
+    build:
+      context: ../homelab-control
+    image: homelab/control:local
+    container_name: homelab_control
+    restart: unless-stopped
+    ports:
+      - "5055:5055"
+    environment:
+      HOMELAB_REPO: /homelab
+      HOMELAB_CONTROL_TOKEN: ${HOMELAB_CONTROL_TOKEN}
+      HOMELAB_CONTROL_TIMEOUT: 420
+    volumes:
+      - ../:/homelab:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      <<: [*common-labels, *important]
+      homelab.service: homelab-control
+      homelab.depends_on: portainer
+      homepage.group: Core
+      homepage.name: Homelab Control
+      homepage.icon: mdi-tune
+      homepage.href: http://${DOMAIN}:5055
+      homepage.description: Start and stop homelab services
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1

@@ -1,0 +1,33 @@
+title: Homelab
+description: Tailscale-only homelab launcher
+theme: dark
+color: slate
+target: _self
+hideVersion: true
+showStats: true
+statusStyle: dot
+layout:
+  Core:
+    style: row
+    columns: 4
+  Monitoring:
+    style: row
+    columns: 4
+  Media:
+    style: row
+    columns: 4
+  Media Automations:
+    style: row
+    columns: 4
+  AI Automations:
+    style: row
+    columns: 4
+  Tools:
+    style: row
+    columns: 4
+  Gaming:
+    style: row
+    columns: 4
+  On-Demand:
+    style: row
+    columns: 4

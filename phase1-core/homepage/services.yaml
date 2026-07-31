@@ -1,0 +1,175 @@
+- Core:
+    - Homepage:
+        icon: homepage
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3000
+        description: Service launcher
+    - Nginx Proxy Manager:
+        icon: nginx-proxy-manager
+        href: http://kadin-main-sys.tail00cf0e.ts.net:81
+        description: Reverse proxy and TLS
+    - Portainer:
+        icon: portainer
+        href: http://kadin-main-sys.tail00cf0e.ts.net:9000
+        description: Container management
+    - Homelab Control:
+        icon: mdi-tune
+        href: http://kadin-main-sys.tail00cf0e.ts.net:5055
+        description: Start and stop service groups
+    - Authentik:
+        icon: authentik
+        href: http://kadin-main-sys.tail00cf0e.ts.net:9001
+        description: Identity provider and SSO
+    - Vaultwarden:
+        icon: vaultwarden
+        href: http://kadin-main-sys.tail00cf0e.ts.net:7070
+        description: Password manager
+    - ntfy:
+        icon: ntfy
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8085
+        description: Push notifications
+
+- Monitoring:
+    - Uptime Kuma:
+        icon: uptime-kuma
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3001
+        description: Uptime checks
+    - Beszel:
+        icon: beszel
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8090
+        description: Lightweight system monitoring
+    - Scrutiny:
+        icon: scrutiny
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8089
+        description: Disk health
+    - Grafana:
+        icon: grafana
+        href: http://kadin-main-sys.tail00cf0e.ts.net:30030
+        description: Dashboards
+
+- Media:
+    - Jellyfin:
+        icon: jellyfin
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8096
+        description: Media server
+    - Audiobookshelf:
+        icon: audiobookshelf
+        href: http://kadin-main-sys.tail00cf0e.ts.net:13378
+        description: Audiobooks and podcasts
+    - Navidrome:
+        icon: navidrome
+        href: http://kadin-main-sys.tail00cf0e.ts.net:4533
+        description: Music server
+    - Immich:
+        icon: immich
+        href: http://kadin-main-sys.tail00cf0e.ts.net:2283
+        description: Photo and video backup
+    - Paperless-ngx:
+        icon: paperless-ngx
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8000
+        description: Document management
+
+- Media Automations:
+    - Prowlarr:
+        icon: prowlarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:9696
+        description: Indexer aggregator
+    - Bazarr:
+        icon: bazarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:6767
+        description: Subtitle manager
+    - qBittorrent:
+        icon: qbittorrent
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8080
+        description: Torrent client over VPN
+
+- AI Automations:
+    - Open WebUI:
+        icon: open-webui
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8080
+        description: Chat interface for Ollama
+    - n8n:
+        icon: n8n
+        href: http://kadin-main-sys.tail00cf0e.ts.net:5678
+        description: Workflow automation
+    - Wake-on-LAN API:
+        icon: mdi-power
+        href: http://kadin-main-sys.tail00cf0e.ts.net:9999/health
+        description: Wake endpoint health
+
+- Tools:
+    - Home Assistant:
+        icon: home-assistant
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8123
+        description: Smart home hub
+    - Spoolman:
+        icon: spoolman
+        href: http://kadin-main-sys.tail00cf0e.ts.net:7912
+        description: Filament tracking
+    - Actual Budget:
+        icon: actual-budget
+        href: http://kadin-main-sys.tail00cf0e.ts.net:5006
+        description: Personal finance
+    - Stirling PDF:
+        icon: stirling-pdf
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8086
+        description: PDF toolkit
+    - IT-Tools:
+        icon: it-tools
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8087
+        description: Developer utilities
+
+- Gaming:
+    - Web Games:
+        icon: nintendo-switch
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8092
+        description: Browser games
+    - Game Server API:
+        icon: mdi-gamepad-variant
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8093
+        description: Multiplayer backend
+    - Hearts Multiplayer:
+        icon: mdi-cards-heart
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8094
+        description: Room-based Hearts
+    - Minecraft:
+        icon: minecraft
+        href: tcp://kadin-main-sys.tail00cf0e.ts.net:25565
+        description: Game server
+
+- On-Demand:
+    - Kasm:
+        icon: kasm-workspaces
+        href: https://kadin-main-sys.tail00cf0e.ts.net:444
+        description: Browser desktops
+    - Guacamole:
+        icon: apache-guacamole
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8088
+        description: Remote desktop gateway
+    - Nextcloud:
+        icon: nextcloud
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8091
+        description: File sync and collaboration
+    - Gitea:
+        icon: gitea
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3002
+        description: Git hosting
+    - Supabase Studio:
+        icon: supabase
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3003
+        description: Supabase admin UI
+    - Kiwix:
+        icon: kiwix
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8095
+        description: Offline knowledge library
+    - Docmost:
+        icon: docmost
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3004
+        description: Knowledge base
+    - Cal.com:
+        icon: mdi-calendar-clock
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3005
+        description: Scheduling platform
+    - NocoDB:
+        icon: nocodb
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8098
+        description: No-code database UI

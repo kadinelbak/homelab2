@@ -58,6 +58,7 @@
     "node_exporter": {"phase": "phase1-core", "container": "homelab_node_exporter", "tier": "background", "profiles": ["always-on", "monitoring"], "ram_mb": 64, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
     "backup": {"phase": "phase1-core", "container": "homelab_backup", "tier": "background", "profiles": ["always-on", "backup-window"], "ram_mb": 512, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": ["postgres", "node_exporter"], "schedule": "nightly"},
     "wol-api": {"phase": "phase1-core", "container": "homelab_wol_api", "tier": "background", "profiles": ["always-on", "maintenance"], "ram_mb": 64, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
+    "homelab-control": {"phase": "phase1-core", "container": "homelab_control", "tier": "important", "profiles": ["always-on", "management"], "ram_mb": 160, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": ["portainer"], "schedule": "always"},
     "cadvisor": {"phase": "phase1-core", "container": "homelab_cadvisor", "tier": "background", "profiles": ["always-on", "monitoring"], "ram_mb": 192, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
     "watchtower": {"phase": "phase1-core", "container": "watchtower", "tier": "background", "profiles": ["always-on", "maintenance"], "ram_mb": 128, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": ["ntfy"], "schedule": "nightly"},
 

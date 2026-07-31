@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed core Uptime Kuma monitors for this homelab.
+"""Seed Uptime Kuma monitors for this homelab.
 
 Usage:
   python3 scripts/seed_uptime_kuma.py --username admin
@@ -29,51 +29,129 @@ except ImportError:
     sys.exit(1)
 
 
-def build_monitors(base_host: str, interval: int) -> list[dict]:
-    return [
-        {
-            "name": "Homepage",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:3000",
-            "interval": interval,
-            "maxretries": 3,
-        },
-        {
-            "name": "Portainer",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:9000",
-            "interval": interval,
-            "maxretries": 3,
-        },
-        {
-            "name": "Authentik",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:9001",
-            "interval": interval,
-            "maxretries": 3,
-        },
-        {
-            "name": "Beszel Hub",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:8090",
-            "interval": interval,
-            "maxretries": 3,
-        },
-        {
-            "name": "ntfy",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:8085",
-            "interval": interval,
-            "maxretries": 3,
-        },
-        {
-            "name": "Uptime Kuma",
-            "type": MonitorType.HTTP,
-            "url": f"http://{base_host}:3001",
-            "interval": interval,
-            "maxretries": 3,
-        },
+def http(
+    name: str,
+    url: str,
+    interval: int,
+    active: bool = True,
+    accepted_statuscodes: list[str] | None = None,
+) -> dict:
+    monitor = {
+        "name": name,
+        "type": MonitorType.HTTP,
+        "url": url,
+        "interval": interval,
+        "maxretries": 3,
+        "active": active,
+    }
+    if accepted_statuscodes:
+        monitor["accepted_statuscodes"] = accepted_statuscodes
+    return monitor
+
+
+def tcp(name: str, hostname: str, port: int, interval: int, active: bool = True) -> dict:
+    return {
+        "name": name,
+        "type": MonitorType.PORT,
+        "hostname": hostname,
+        "port": port,
+        "interval": interval,
+        "maxretries": 3,
+        "active": active,
+    }
+
+
+def push(name: str, interval: int, active: bool = True) -> dict:
+    return {
+        "name": name,
+        "type": MonitorType.PUSH,
+        "interval": interval,
+        "maxretries": 3,
+        "active": active,
+    }
+
+
+def build_monitors(base_host: str, interval: int, include_ondemand: bool) -> list[dict]:
+    monitors = [
+        http("Homepage", f"http://{base_host}:3000", interval),
+        http("Nginx Proxy Manager", f"http://{base_host}:81", interval),
+        http("Portainer", f"http://{base_host}:9000", interval),
+        http("Authentik", f"http://{base_host}:9001/-/health/live/", interval),
+        http("Vaultwarden", f"http://{base_host}:7070", interval),
+        http("ntfy", f"http://{base_host}:8085", interval),
+        http("Uptime Kuma", f"http://{base_host}:3001", interval),
+        http("Beszel", f"http://{base_host}:8090", interval),
+        http("Scrutiny", f"http://{base_host}:8089", interval),
+        http("Grafana", f"http://{base_host}:30030", interval),
+        http("Prometheus", f"http://{base_host}:9090", interval),
+        http("Alertmanager", f"http://{base_host}:9093", interval),
+        http("Loki", f"http://{base_host}:3100/ready", interval),
+        http("Jellyfin", f"http://{base_host}:8096", interval),
+        http("Audiobookshelf", f"http://{base_host}:13378", interval),
+        http("Navidrome", f"http://{base_host}:4533", interval),
+        http("Immich", f"http://{base_host}:2283", interval),
+        http("Paperless-ngx", f"http://{base_host}:8000", interval),
+        http("Prowlarr", f"http://{base_host}:9696", interval),
+        http("Bazarr", f"http://{base_host}:6767", interval),
+        http("Open WebUI", f"http://{base_host}:8080", interval),
+        http("n8n", f"http://{base_host}:5678/healthz", interval),
+        http("Home Assistant", f"http://{base_host}:8123", interval),
+        http("Spoolman", f"http://{base_host}:7912", interval),
+        http("Actual Budget", f"http://{base_host}:5006", interval),
+        http("Stirling PDF", f"http://{base_host}:8086", interval),
+        http("IT-Tools", f"http://{base_host}:8087", interval),
+        http("Web Games", f"http://{base_host}:8092", interval, accepted_statuscodes=["200-299", "300-399", "400-499"]),
+        http("Game Server API", f"http://{base_host}:8093/health", interval),
+        http("Hearts Multiplayer", f"http://{base_host}:8094", interval),
+        http("Wake-on-LAN API", f"http://{base_host}:9999/health", interval),
+        tcp("Minecraft", base_host, 25565, interval),
     ]
+
+    if include_ondemand:
+        monitors.extend(
+            [
+                http("Kasm", f"https://{base_host}:444", interval, active=False),
+                http("Guacamole", f"http://{base_host}:8088/guacamole", interval, active=False),
+                http("Nextcloud", f"http://{base_host}:8091", interval, active=False),
+                http("Gitea", f"http://{base_host}:3002", interval, active=False),
+                http("Supabase Studio", f"http://{base_host}:3003", interval, active=False),
+                http("Kiwix", f"http://{base_host}:8095", interval, active=False),
+                http("Docmost", f"http://{base_host}:3004", interval, active=False),
+                http("Cal.com", f"http://{base_host}:3005", interval, active=False),
+                http("NocoDB", f"http://{base_host}:8098", interval, active=False),
+            ]
+        )
+
+    return monitors
+
+
+def update_monitor(api: UptimeKumaApi, monitor_id: int, monitor: dict) -> None:
+    monitor = {k: v for k, v in monitor.items() if k != "active"}
+    if hasattr(api, "edit_monitor"):
+        api.edit_monitor(monitor_id, **monitor)
+        return
+    if hasattr(api, "update_monitor"):
+        api.update_monitor(monitor_id, **monitor)
+        return
+    print(f"warn: cannot update {monitor['name']} with this uptime-kuma-api version")
+
+
+def apply_monitor_state(api: UptimeKumaApi, monitor_id: int, active: bool) -> None:
+    if active and hasattr(api, "resume_monitor"):
+        api.resume_monitor(monitor_id)
+        return
+    if not active and hasattr(api, "pause_monitor"):
+        api.pause_monitor(monitor_id)
+        return
+    print(f"warn: cannot set monitor state for id={monitor_id} with this uptime-kuma-api version")
+
+
+def monitor_target(monitor: dict) -> str:
+    if monitor["type"] == MonitorType.PORT:
+        return f"{monitor['hostname']}:{monitor['port']}"
+    if monitor["type"] == MonitorType.PUSH:
+        return "push"
+    return monitor["url"]
 
 
 def main() -> int:
@@ -104,6 +182,16 @@ def main() -> int:
         default=60,
         help="Monitor interval in seconds",
     )
+    parser.add_argument(
+        "--include-ondemand",
+        action="store_true",
+        help="Create paused monitors for Phase 4 on-demand services.",
+    )
+    parser.add_argument(
+        "--update-existing",
+        action="store_true",
+        help="Update existing monitors by name instead of only creating missing monitors.",
+    )
 
     args = parser.parse_args()
 
@@ -120,22 +208,39 @@ def main() -> int:
     api.login(args.username, password)
 
     existing = {m.get("name"): m for m in api.get_monitors()}
-    desired = build_monitors(args.base_host, args.interval)
+    desired = build_monitors(args.base_host, args.interval, args.include_ondemand)
 
     created = 0
+    updated = 0
     skipped = 0
 
     for monitor in desired:
-        if monitor["name"] in existing:
+        current = existing.get(monitor["name"])
+        if current and args.update_existing:
+            monitor_id = current.get("id")
+            if monitor_id is None:
+                skipped += 1
+                print(f"skip: {monitor['name']} (missing monitor id)")
+                continue
+            update_monitor(api, monitor_id, monitor)
+            apply_monitor_state(api, monitor_id, monitor.get("active", True))
+            updated += 1
+            print(f"edit: {monitor['name']}")
+            continue
+        if current:
             skipped += 1
             print(f"skip: {monitor['name']} (already exists)")
             continue
 
-        api.add_monitor(**monitor)
+        payload = {k: v for k, v in monitor.items() if k != "active"}
+        created_monitor = api.add_monitor(**payload)
+        monitor_id = created_monitor.get("monitorID") or created_monitor.get("id")
+        if monitor_id is not None:
+            apply_monitor_state(api, monitor_id, monitor.get("active", True))
         created += 1
-        print(f"add:  {monitor['name']} -> {monitor['url']}")
+        print(f"add:  {monitor['name']} -> {monitor_target(monitor)}")
 
-    print(f"done: created={created}, skipped={skipped}")
+    print(f"done: created={created}, updated={updated}, skipped={skipped}")
     return 0
 
 

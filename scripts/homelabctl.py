@@ -101,8 +101,6 @@ class HomelabCtl:
             str(ENV_FILE),
             "-f",
             str(REPO_ROOT / phase_info["compose"]),
-            "--project-name",
-            phase_info["project"],
         ]
         return cmd + extra
 
