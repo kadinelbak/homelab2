@@ -68,6 +68,9 @@ mkdir -p \
   "${DATA_PATH}/shared/downloads/{complete,incomplete}"
 
 # Step 3: Set permissions (assuming PUID=1000, PGID=1000 from .env)
+echo "Ensuring Actual Budget HTTPS certificate exists..."
+bash "${PWD}/ensure-actual-https-cert.sh"
+
 echo "Setting ownership to ${PUID}:${PGID}..."
 chown -R ${PUID}:${PGID} $DATA_PATH
 

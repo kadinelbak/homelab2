@@ -55,6 +55,18 @@ App-specific or manual integrations:
 
 - Home Assistant: can use trusted proxy/header or OAuth add-ons, but it needs
   careful local network handling.
+- Tools section auth/access:
+  - Home Assistant: native username/password, with protocol-relative Homepage
+    link support.
+  - Actual Budget: native password login enabled through `ACTUAL_LOGIN_METHOD`.
+    Actual must be opened over HTTPS for SharedArrayBuffer support in Chrome;
+    direct-port HTTPS uses `/data/selfhost.key` and `/data/selfhost.crt`.
+  - Stirling PDF: native username/password login enabled through `SECURITY_*`
+    environment values.
+  - Spoolman and IT-Tools: protect with Authentik proxy/forward auth; see
+    `config/authentik/proxy-providers.json`.
+  - Set `TOOLS_PUBLIC_SCHEME=https` after TLS/reverse-proxy access is ready for
+    Docker-discovered Homepage links.
 - n8n: usually keep native users; OAuth is mostly for credentials/callbacks,
   not a simple global login replacement.
 - Paperless-ngx: prefer built-in users or forward auth unless you add an OIDC

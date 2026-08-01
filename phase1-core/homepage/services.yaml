@@ -115,23 +115,23 @@
 - Tools:
     - Home Assistant:
         icon: home-assistant
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8123
+        href: //kadin-main-sys.tail00cf0e.ts.net:8123
         description: Smart home hub
     - Spoolman:
         icon: spoolman
-        href: http://kadin-main-sys.tail00cf0e.ts.net:7912
+        href: //kadin-main-sys.tail00cf0e.ts.net:7912
         description: Filament tracking
     - Actual Budget:
         icon: actual-budget
-        href: http://kadin-main-sys.tail00cf0e.ts.net:5006
+        href: https://kadin-main-sys.tail00cf0e.ts.net:5006
         description: Personal finance
     - Stirling PDF:
         icon: stirling-pdf
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8086
+        href: //kadin-main-sys.tail00cf0e.ts.net:8086
         description: PDF toolkit
     - IT-Tools:
         icon: it-tools
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8087
+        href: //kadin-main-sys.tail00cf0e.ts.net:8087
         description: Developer utilities
 
 - Gaming:

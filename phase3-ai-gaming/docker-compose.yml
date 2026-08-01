@@ -178,8 +178,9 @@ services:
       - "homepage.group=Tools"
       - "homepage.name=Home Assistant"
       - "homepage.icon=home-assistant"
-      - "homepage.href=http://${DOMAIN}:8123"
+      - "homepage.href=${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:8123"
       - "homepage.description=Smart home hub"
+      - "homelab.auth=native-password"
 
   # ---------------------------------------------------------------------------
   # SPOOLMAN – 3D Printing Filament Tracker
@@ -203,8 +204,9 @@ services:
       - "homepage.group=Tools"
       - "homepage.name=Spoolman"
       - "homepage.icon=spoolman"
-      - "homepage.href=http://${DOMAIN}:7912"
+      - "homepage.href=${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:7912"
       - "homepage.description=Filament tracking"
+      - "homelab.auth=authentik-proxy"
 
   # ---------------------------------------------------------------------------
   # ACTUAL BUDGET – Local-First Personal Finance
@@ -218,6 +220,11 @@ services:
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
+      ACTUAL_LOGIN_METHOD: ${ACTUAL_LOGIN_METHOD:-password}
+      ACTUAL_ALLOWED_LOGIN_METHODS: ${ACTUAL_ALLOWED_LOGIN_METHODS:-password,openid}
+      ACTUAL_TRUSTED_PROXIES: ${ACTUAL_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7,::1/128}
+      ACTUAL_HTTPS_KEY: ${ACTUAL_HTTPS_KEY:-/data/selfhost.key}
+      ACTUAL_HTTPS_CERT: ${ACTUAL_HTTPS_CERT:-/data/selfhost.crt}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/actual:/data
     ports:
@@ -229,8 +236,9 @@ services:
       - "homepage.group=Tools"
       - "homepage.name=Actual Budget"
       - "homepage.icon=actual-budget"
-      - "homepage.href=http://localhost:5006"
+      - "homepage.href=${ACTUAL_PUBLIC_SCHEME:-https}://${DOMAIN}:5006"
       - "homepage.description=Personal finance"
+      - "homelab.auth=native-password"
 
   # ---------------------------------------------------------------------------
   # STIRLING PDF – Local PDF Toolkit
@@ -243,6 +251,9 @@ services:
     profiles: ["stirling-pdf", "tools"]
     environment:
       TZ: ${TZ}
+      SECURITY_ENABLELOGIN: "${STIRLING_PDF_ENABLE_LOGIN:-true}"
+      SECURITY_INITIALLOGIN_USERNAME: ${STIRLING_PDF_INITIAL_USERNAME:-admin}
+      SECURITY_INITIALLOGIN_PASSWORD: ${STIRLING_PDF_INITIAL_PASSWORD:-stirling}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/stirling-pdf:/configs
     ports:
@@ -254,8 +265,9 @@ services:
       - "homepage.group=Tools"
       - "homepage.name=Stirling PDF"
       - "homepage.icon=stirling-pdf"
-      - "homepage.href=http://${DOMAIN}:8086"
+      - "homepage.href=${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:8086"
       - "homepage.description=Self-hosted PDF tools"
+      - "homelab.auth=native-password"
 
   # ---------------------------------------------------------------------------
   # IT-TOOLS – Handy Utility Toolbox for Developers
@@ -277,8 +289,9 @@ services:
       - "homepage.group=Tools"
       - "homepage.name=IT-Tools"
       - "homepage.icon=it-tools"
-      - "homepage.href=http://${DOMAIN}:8087"
+      - "homepage.href=${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:8087"
       - "homepage.description=Developer utility toolbox"
+      - "homelab.auth=authentik-proxy"
 
   # ---------------------------------------------------------------------------
   # WEB GAMES – Local no-ads browser games (Tailscale/port access recommended)

@@ -90,6 +90,16 @@ bash scripts/setup.sh --validate-only
 | `N8N_USER_MANAGEMENT_JWT_SECRET` | Yes for n8n | JWT signing secret for n8n user management. |
 | `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
 | `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
+| `TOOLS_PUBLIC_SCHEME` | Optional | Protocol used by Docker-discovered Tools dashboard links. Use `http` for direct tailnet ports or `https` after TLS/reverse proxy access is ready. |
+| `ACTUAL_PUBLIC_SCHEME` | Optional | Protocol for Actual Budget dashboard links. Defaults to `https` because Actual requires HTTPS for SharedArrayBuffer outside localhost. |
+| `ACTUAL_LOGIN_METHOD` | Optional | Actual Budget login method. Defaults to `password`; keep password enabled unless OpenID has been fully configured in Actual. |
+| `ACTUAL_ALLOWED_LOGIN_METHODS` | Optional | Comma-separated Actual Budget login methods allowed by the server, for example `password,openid`. |
+| `ACTUAL_TRUSTED_PROXIES` | Optional | Proxy CIDRs trusted by Actual Budget for forwarded client information. Defaults to private/internal networks. |
+| `ACTUAL_HTTPS_KEY` | Yes for direct-port Actual HTTPS | Path inside the container to Actual's HTTPS private key. Defaults to `/data/selfhost.key`; generate it with `bash scripts/ensure-actual-https-cert.sh`. |
+| `ACTUAL_HTTPS_CERT` | Yes for direct-port Actual HTTPS | Path inside the container to Actual's HTTPS certificate. Defaults to `/data/selfhost.crt`; generate it with `bash scripts/ensure-actual-https-cert.sh`. |
+| `STIRLING_PDF_ENABLE_LOGIN` | Optional | Enables Stirling PDF native username/password login. Defaults to `true`. |
+| `STIRLING_PDF_INITIAL_USERNAME` | Optional | Initial Stirling PDF admin username, used only before the Stirling database/account exists. |
+| `STIRLING_PDF_INITIAL_PASSWORD` | Yes for Stirling PDF | Initial Stirling PDF admin password. Change it in the app after first login; later env changes do not rotate an existing account. |
 | `MINECRAFT_EULA` | Yes for Minecraft | Must be `TRUE` to accept the Minecraft server EULA. |
 | `MINECRAFT_MEMORY` | Yes for Minecraft | JVM memory limit, for example `3G` on a 16 GB host. |
 | `MINECRAFT_TYPE` | Yes for Minecraft | Server type such as `PAPER`, `VANILLA`, `FORGE`, or `FABRIC`. |

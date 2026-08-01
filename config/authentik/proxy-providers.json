@@ -1,0 +1,25 @@
+{
+  "notes": [
+    "Use these entries for Authentik Proxy Provider or Nginx Proxy Manager forward-auth protection.",
+    "Keep the upstream internal_host on http; TLS should terminate at the proxy/client-facing edge.",
+    "Spoolman and IT-Tools do not have native username/password settings in this stack."
+  ],
+  "applications": [
+    {
+      "slug": "spoolman",
+      "name": "Spoolman",
+      "description": "Filament tracking",
+      "external_host": "${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:7912",
+      "internal_host": "http://spoolman:8000",
+      "auth": "authentik_proxy"
+    },
+    {
+      "slug": "it-tools",
+      "name": "IT-Tools",
+      "description": "Developer utilities",
+      "external_host": "${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:8087",
+      "internal_host": "http://it-tools:80",
+      "auth": "authentik_proxy"
+    }
+  ]
+}
