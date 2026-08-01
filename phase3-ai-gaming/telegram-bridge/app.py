@@ -21,6 +21,9 @@ WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 POLL_TIMEOUT = int(os.environ.get("JARVIS_TELEGRAM_POLL_TIMEOUT", "45"))
 MAX_REPLY_CHARS = int(os.environ.get("JARVIS_TELEGRAM_MAX_REPLY_CHARS", "3500"))
+DATA_DIR = Path(os.environ.get("JARVIS_TELEGRAM_DATA_DIR", "/data"))
+MEMORY_PATH = DATA_DIR / "memory.json"
+MEMORY_TURNS = int(os.environ.get("JARVIS_TELEGRAM_MEMORY_TURNS", "12"))
 
 
 def telegram_api(method, payload=None):
@@ -57,6 +60,45 @@ def send_message(chat_id, text):
 
 def allowed(chat_id):
     return not ALLOWED_CHAT_IDS or str(chat_id) in ALLOWED_CHAT_IDS
+
+
+def load_memory():
+    if not MEMORY_PATH.exists():
+        return {}
+    try:
+        return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_memory(memory):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = MEMORY_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(memory, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(MEMORY_PATH)
+
+
+def conversation_context(chat_id):
+    memory = load_memory()
+    return memory.get(str(chat_id), [])[-MEMORY_TURNS:]
+
+
+def remember(chat_id, role, text):
+    text = (text or "").strip()
+    if not text:
+        return
+    memory = load_memory()
+    key = str(chat_id)
+    turns = memory.get(key, [])
+    turns.append({"role": role, "text": text[:2000], "ts": int(time.time())})
+    memory[key] = turns[-MEMORY_TURNS:]
+    save_memory(memory)
+
+
+def forget(chat_id):
+    memory = load_memory()
+    memory.pop(str(chat_id), None)
+    save_memory(memory)
 
 
 def post_json(url, payload=None, timeout=240):
@@ -133,7 +175,10 @@ def plan_request(chat_id, text):
     payload = {
         "request": text,
         "source": "telegram",
-        "inputs": {"telegram_chat_id": str(chat_id)},
+        "inputs": {
+            "telegram_chat_id": str(chat_id),
+            "conversation_context": conversation_context(chat_id),
+        },
         "limits": {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
         "permissions": {"may_execute": False, "may_publish": False},
     }
@@ -173,13 +218,18 @@ def summarize_plan(planned):
 
 
 def handle_request(chat_id, text):
+    remember(chat_id, "user", text)
     planned = plan_request(chat_id, text)
     action = (planned.get("actions") or [{}])[0]
     if action.get("permissions", {}).get("may_execute"):
         executed = execute_action(action["action_id"])
         result = (executed.get("action") or {}).get("result") or {}
-        return result.get("text") or result.get("summary") or "Done."
-    return summarize_plan(planned)
+        response = result.get("text") or result.get("summary") or "Done."
+        remember(chat_id, "assistant", response)
+        return response
+    response = summarize_plan(planned)
+    remember(chat_id, "assistant", response)
+    return response
 
 
 def handle_command(chat_id, text):
@@ -188,7 +238,8 @@ def handle_command(chat_id, text):
         return (
             "Jarvis Telegram is online.\n\n"
             "Send text or a voice note.\n"
-            "For approval-gated actions, I will give you an /approve command."
+            "For approval-gated actions, I will give you an /approve command.\n"
+            "Use /forget to clear this chat's memory."
         )
     if command == "/health":
         data = get_json(ORCHESTRATOR_URL + "/health", timeout=60)
@@ -200,6 +251,9 @@ def handle_command(chat_id, text):
         executed = approve_and_execute(action_id)
         result = (executed.get("action") or {}).get("result") or {}
         return result.get("text") or result.get("summary") or "Approved and executed."
+    if command == "/forget":
+        forget(chat_id)
+        return "Forgot this Telegram chat's recent Jarvis context."
     return handle_request(chat_id, text)
 
 
@@ -235,6 +289,7 @@ def handle_update(update):
 
 
 def main():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not BOT_TOKEN or BOT_TOKEN.startswith("CHANGE_ME"):
         print("Telegram bridge disabled: set JARVIS_TELEGRAM_BOT_TOKEN to enable polling.", flush=True)
         while True:

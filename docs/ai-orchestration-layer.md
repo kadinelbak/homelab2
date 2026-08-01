@@ -33,6 +33,7 @@ Set these values in `.env`:
 ```text
 JARVIS_TELEGRAM_BOT_TOKEN=<token from BotFather>
 JARVIS_TELEGRAM_ALLOWED_CHAT_IDS=<optional comma-separated chat ids>
+JARVIS_TELEGRAM_BOT_URL=https://t.me/<your_bot_username>
 ```
 
 If `JARVIS_TELEGRAM_ALLOWED_CHAT_IDS` is blank, any chat that can message the bot is accepted. For private use, set it after sending `/health` once and checking the bridge logs for the chat id.
@@ -44,9 +45,49 @@ Supported commands:
 /help
 /health
 /approve act-...
+/forget
 ```
 
-Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text.
+Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text. The bridge keeps a short per-chat memory in `${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge`; use `/forget` to clear it for the current chat.
+
+## Google Tools
+
+The `google-tools-worker` service is the Gmail and Google Calendar connector. It exposes a Tailscale-bound OAuth callback on port `18200` and stores the Google refresh token under the homelab data path.
+
+Set these values in `.env`:
+
+```text
+GOOGLE_CLIENT_ID=<Google OAuth client id>
+GOOGLE_CLIENT_SECRET=<Google OAuth client secret>
+GOOGLE_REDIRECT_URI=http://localhost:18200/oauth/google/callback
+```
+
+Start the OAuth flow with an SSH tunnel from your workstation:
+
+```bash
+ssh -L 18200:100.79.132.39:18200 kelbakkouri@kadin-main-sys
+```
+
+Then open:
+
+```text
+http://localhost:18200/oauth/google/start
+```
+
+After consent, Google redirects back to localhost through the tunnel and Jarvis stores the refresh token.
+
+Current Google worker endpoints:
+
+```text
+GET  /health
+GET  /oauth/google/start
+GET  /oauth/google/callback
+POST /gmail/search
+POST /gmail/assist
+POST /gmail/create-draft
+POST /calendar/list
+POST /calendar/assist
+```
 
 ## Model Tiers
 

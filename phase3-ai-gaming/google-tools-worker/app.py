@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import re
 import secrets
 import time
 import urllib.error
@@ -27,6 +28,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
 ]
+DEFAULT_TIMEZONE = os.environ.get("TZ", "America/New_York")
 
 
 def now_iso():
@@ -186,6 +188,110 @@ def calendar_bounds(day):
     start = target.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     return start.isoformat(), end.isoformat()
+
+
+def combined_request_text(payload):
+    parts = []
+    for turn in payload.get("conversation_context") or []:
+        role = turn.get("role", "user")
+        text = turn.get("text", "")
+        if text:
+            parts.append(f"{role}: {text}")
+    current = payload.get("request", "")
+    if current:
+        parts.append(f"user: {current}")
+    return "\n".join(parts)
+
+
+def calendar_write_intent(text):
+    lowered = text.lower()
+    return any(
+        term in lowered
+        for term in (
+            "create",
+            "make",
+            "add",
+            "schedule",
+            "put",
+            "book",
+            "event",
+            "appointment",
+            "create one",
+        )
+    )
+
+
+def parse_event_payload(payload):
+    text = combined_request_text(payload)
+    lowered = text.lower()
+    target = datetime.now().astimezone()
+    if "tomorrow" in lowered:
+        target = target + timedelta(days=1)
+
+    time_matches = list(re.finditer(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", lowered))
+    if not time_matches:
+        raise ValueError("calendar_event_time_missing")
+    match = time_matches[-1]
+    hour = int(match.group(1))
+    minute = int(match.group(2) or "0")
+    meridiem = match.group(3)
+    if meridiem == "pm" and hour != 12:
+        hour += 12
+    if meridiem == "am" and hour == 12:
+        hour = 0
+
+    duration = timedelta(hours=1)
+    duration_match = re.search(r"lasts?\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?)", lowered)
+    if duration_match:
+        amount = float(duration_match.group(1))
+        unit = duration_match.group(2)
+        duration = timedelta(minutes=amount if unit.startswith("min") else amount * 60)
+
+    start = target.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    end = start + duration
+
+    summary = "Untitled event"
+    title_match = re.search(r"(?:title|called|named)\s+['\"]?([^'\"\n]+)", text, re.IGNORECASE)
+    if title_match and "no title" not in lowered:
+        summary = title_match.group(1).strip()[:120]
+    elif "dentist" in lowered:
+        summary = "Dentist appointment"
+    elif "meeting" in lowered:
+        summary = "Meeting"
+
+    description = ""
+    description_match = re.search(r"(?:description|desc)\s+['\"]?([^'\"\n]+)", text, re.IGNORECASE)
+    if description_match and "no description" not in lowered:
+        description = description_match.group(1).strip()[:1000]
+
+    return {
+        "summary": summary,
+        "description": description,
+        "start": {"dateTime": start.isoformat(), "timeZone": DEFAULT_TIMEZONE},
+        "end": {"dateTime": end.isoformat(), "timeZone": DEFAULT_TIMEZONE},
+    }
+
+
+def calendar_create_event(payload):
+    event = parse_event_payload(payload)
+    created = google_request(
+        "POST",
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        event,
+        timeout=60,
+    )
+    return {
+        "id": created.get("id"),
+        "htmlLink": created.get("htmlLink"),
+        "summary": created.get("summary"),
+        "start": created.get("start", {}),
+        "end": created.get("end", {}),
+        "text": (
+            f"Created calendar event: {created.get('summary') or 'Untitled event'}\n"
+            f"Start: {(created.get('start') or {}).get('dateTime')}\n"
+            f"End: {(created.get('end') or {}).get('dateTime')}"
+        ),
+    }
 
 
 def calendar_list(request_text):
@@ -360,8 +466,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.OK, {"ok": True, **result, "text": response_text_for_calendar(result)})
                 return
             if path == "/calendar/assist":
-                result = calendar_list(payload.get("request", "today"))
-                self.write_json(HTTPStatus.OK, {"ok": True, **result, "text": response_text_for_calendar(result)})
+                text = combined_request_text(payload)
+                if calendar_write_intent(text):
+                    created = calendar_create_event(payload)
+                    self.write_json(HTTPStatus.OK, {"ok": True, "event": created, "text": created["text"]})
+                else:
+                    result = calendar_list(payload.get("request", "today"))
+                    self.write_json(HTTPStatus.OK, {"ok": True, **result, "text": response_text_for_calendar(result)})
+                return
+            if path == "/calendar/create-event":
+                created = calendar_create_event(payload)
+                self.write_json(HTTPStatus.OK, {"ok": True, "event": created, "text": created["text"]})
                 return
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})

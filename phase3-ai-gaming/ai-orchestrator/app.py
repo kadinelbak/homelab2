@@ -25,6 +25,8 @@ OLLAMA_ROUTER_ENABLED = os.environ.get("AI_ORCHESTRATOR_USE_OLLAMA_ROUTER", "tru
 }
 OLLAMA_ROUTER_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_ROUTER_TIMEOUT", "12"))
 LLM_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_LLM_TIMEOUT", "120"))
+GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://google-tools-worker:18200").rstrip("/")
+GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN", TOKEN)
 LLM_PROFILES = {
     "local": {
         "profile": "local",
@@ -86,21 +88,21 @@ CAPABILITIES = [
     {
         "capability": "manage_calendar",
         "worker": "calendar_worker",
-        "adapter_type": "local_llm_fallback",
+        "adapter_type": "google_tools_worker",
         "cost_class": "local",
         "requires_approval": False,
         "execution_requires_approval": True,
-        "tools": ["calendar.local_proposal"],
+        "tools": ["google.calendar"],
         "description": "Plan, create, reschedule, cancel, or inspect calendar events and availability.",
     },
     {
         "capability": "manage_email",
         "worker": "email_worker",
-        "adapter_type": "local_llm_fallback",
+        "adapter_type": "google_tools_worker",
         "cost_class": "local",
         "requires_approval": True,
         "execution_requires_approval": True,
-        "tools": ["email.local_proposal"],
+        "tools": ["google.gmail"],
         "description": "Prepare email actions such as send, reply, label, search, summarize, or fetch.",
     },
     {
@@ -453,6 +455,86 @@ def call_ollama_assistant(prompt_text, model, system_text=None):
     return data.get("message", {}).get("content", "").strip()
 
 
+def call_google_tools(path, payload):
+    body = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(
+        GOOGLE_TOOLS_URL + path,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {GOOGLE_TOOLS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=90) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def google_tools_result(action):
+    inputs = action.get("inputs", {}) or {}
+    request = inputs.get("request", "")
+    google_payload = {
+        "request": request,
+        "conversation_context": inputs.get("conversation_context") or [],
+    }
+    if action.get("capability") == "manage_email":
+        data = call_google_tools("/gmail/assist", {**google_payload, "max_results": 10})
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": "completed",
+            "summary": "Fetched Gmail results from Google Tools.",
+            "text": data.get("text") or "Fetched Gmail results.",
+            "artifacts": [{"type": "gmail_messages", "items": data.get("messages", [])}],
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
+    if action.get("capability") == "manage_calendar":
+        data = call_google_tools("/calendar/assist", google_payload)
+        artifacts = []
+        if data.get("event"):
+            artifacts.append({"type": "calendar_event", "item": data.get("event")})
+        else:
+            artifacts.append({"type": "calendar_events", "items": data.get("events", [])})
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": "completed",
+            "summary": "Fetched Calendar results from Google Tools.",
+            "text": data.get("text") or "Fetched Calendar results.",
+            "artifacts": artifacts,
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
+    raise ValueError("unsupported_google_tools_capability")
+
+
+def google_request_requires_approval(payload, capability):
+    if capability["capability"] not in {"manage_email", "manage_calendar"}:
+        return capability["execution_requires_approval"]
+    text = request_text(payload).lower()
+    outward_terms = (
+        "send",
+        "send it",
+        "send this",
+        "send email",
+        "email them",
+        "forward",
+        "reply to",
+        "respond to",
+        "invite",
+        "attendee",
+        "attendees",
+        "share",
+    )
+    draft_terms = ("draft", "compose", "write")
+    if any(term in text for term in outward_terms):
+        if any(term in text for term in draft_terms) and not any(term in text for term in ("send", "forward", "invite", "share")):
+            return False
+        return True
+    return False
+
+
 def fallback_system_prompt(action):
     if action["worker"] == "llm_worker":
         return (
@@ -503,6 +585,12 @@ def execute_action(action):
             "next_actions": [],
         }
 
+    if action.get("adapter_type") == "google_tools_worker":
+        try:
+            return google_tools_result(action)
+        except Exception as exc:
+            action.setdefault("inputs", {})["google_tools_error"] = str(exc)[:500]
+
     profile = action.get("execution_profile", {})
     model = profile.get("model") or OLLAMA_ROUTER_MODEL
     if profile.get("provider") != "ollama":
@@ -527,6 +615,8 @@ def make_action(request_id, payload, capability):
     permissions = payload.get("permissions") or {}
     limits = payload.get("limits") or {}
     requires_approval = capability["execution_requires_approval"]
+    if capability["capability"] in {"manage_email", "manage_calendar"}:
+        requires_approval = google_request_requires_approval(payload, capability)
     may_execute = True if not requires_approval else bool(permissions.get("may_execute", False))
     action_inputs = dict(payload.get("inputs") or {})
     action_inputs.setdefault("request", request_text(payload))
