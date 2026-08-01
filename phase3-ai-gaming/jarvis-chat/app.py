@@ -12,6 +12,8 @@ HOST = os.environ.get("JARVIS_CHAT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("JARVIS_CHAT_PORT", "8096"))
 ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
+WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
+WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 CHAT_TOKEN = os.environ.get("JARVIS_CHAT_TOKEN", "")
 
 
@@ -119,6 +121,30 @@ def page():
       font-size: 13px;
       line-height: 1.45;
     }}
+    .chat {{
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 420px;
+      overflow: auto;
+    }}
+    .msg {{
+      max-width: 86%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }}
+    .msg.user {{
+      align-self: flex-end;
+      background: #14302d;
+      border-color: rgba(94, 234, 212, 0.45);
+    }}
+    .msg.jarvis {{
+      align-self: flex-start;
+      background: var(--panel2);
+    }}
     .muted {{ color: var(--muted); }}
     .hidden {{ display: none; }}
     @media (max-width: 760px) {{
@@ -147,13 +173,21 @@ def page():
     </section>
 
     <section class="panel">
+      <label>Chat</label>
+      <div id="chat" class="chat">
+        <div class="msg jarvis">Ready. Ask me for a draft, plan, idea, or a homelab action.</div>
+      </div>
+    </section>
+
+    <section class="panel">
       <label for="request">Request</label>
-      <textarea id="request" placeholder="Ask Jarvis to plan something..."></textarea>
+      <textarea id="request" placeholder="Message Jarvis..."></textarea>
       <div class="grid">
         <div>
           <label for="capability">Capability</label>
           <select id="capability">
             <option value="">Auto route</option>
+            <option value="general_assistant">General assistant</option>
             <option value="edit_repository">Edit repository</option>
             <option value="generate_3d_concept">Generate 3D concept</option>
             <option value="generate_parametric_part">Generate parametric part</option>
@@ -175,6 +209,10 @@ def page():
         <button class="warn" id="approve" disabled>Approve Action</button>
         <button id="execute" disabled>Queue Execution</button>
       </div>
+      <div class="row" style="margin-top: 12px;">
+        <input id="audio" type="file" accept="audio/*,video/*">
+        <button id="transcribe">Transcribe Audio</button>
+      </div>
     </section>
 
     <section class="panel">
@@ -194,9 +232,18 @@ def page():
     const healthEl = document.getElementById('health');
     const planEl = document.getElementById('plan');
     const rawEl = document.getElementById('raw');
+    const chatEl = document.getElementById('chat');
     const approveButton = document.getElementById('approve');
     const executeButton = document.getElementById('execute');
     let currentActionId = '';
+
+    function appendMessage(role, text) {{
+      const div = document.createElement('div');
+      div.className = `msg ${{role}}`;
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }}
 
     tokenInput.value = localStorage.getItem('jarvisChatToken') || '';
 
@@ -220,6 +267,13 @@ def page():
           `Worker: ${{action.worker}}`,
           `Tool: ${{action.tool}}`,
           `Status: ${{action.status}}`,
+          `Workflow level: ${{action.workflow_level?.level ?? 'unknown'}} - ${{action.workflow_level?.name || 'unknown'}}`,
+          `Router: ${{data.request?.route?.router || 'unknown'}}`,
+          `Rationale: ${{data.request?.route?.rationale || 'none'}}`,
+          `Model profile: ${{action.execution_profile?.profile || 'unknown'}}`,
+          `Model: ${{action.execution_profile?.model || 'unknown'}}`,
+          `Requested profile: ${{action.execution_profile?.requested_profile || action.execution_profile?.profile || 'unknown'}}`,
+          `Profile note: ${{action.execution_profile?.fallback_reason || action.execution_profile?.use_for || 'none'}}`,
           `Action: ${{action.action_id}}`
         ].join('\\n');
       }} else if (data.action) {{
@@ -231,6 +285,11 @@ def page():
           `Worker: ${{data.action.worker}}`,
           `Tool: ${{data.action.tool}}`,
           `Status: ${{data.action.status}}`,
+          `Workflow level: ${{data.action.workflow_level?.level ?? 'unknown'}} - ${{data.action.workflow_level?.name || 'unknown'}}`,
+          `Model profile: ${{data.action.execution_profile?.profile || 'unknown'}}`,
+          `Model: ${{data.action.execution_profile?.model || 'unknown'}}`,
+          `Requested profile: ${{data.action.execution_profile?.requested_profile || data.action.execution_profile?.profile || 'unknown'}}`,
+          `Profile note: ${{data.action.execution_profile?.fallback_reason || data.action.execution_profile?.use_for || 'none'}}`,
           `Action: ${{data.action.action_id}}`
         ].join('\\n');
       }}
@@ -246,6 +305,26 @@ def page():
       show(data);
       if (!res.ok) throw new Error(data.error || `HTTP ${{res.status}}`);
       return data;
+    }}
+
+    async function transcribeAudio() {{
+      const file = document.getElementById('audio').files[0];
+      if (!file) {{
+        healthEl.textContent = 'Choose an audio file first.';
+        return;
+      }}
+      appendMessage('user', `Transcribe: ${{file.name}}`);
+      const form = new FormData();
+      form.append('audio', file);
+      const h = {{}};
+      const token = tokenInput.value.trim();
+      if (token) h.Authorization = `Bearer ${{token}}`;
+      const res = await fetch('/api/transcribe', {{method: 'POST', headers: h, body: form}});
+      const data = await res.json();
+      rawEl.textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) throw new Error(data.error || `HTTP ${{res.status}}`);
+      document.getElementById('request').value = data.text || '';
+      appendMessage('jarvis', data.text || 'No speech detected.');
     }}
 
     async function health() {{
@@ -268,6 +347,8 @@ def page():
     document.getElementById('send').onclick = async () => {{
       try {{
         const request = document.getElementById('request').value.trim();
+        if (!request) return;
+        appendMessage('user', request);
         const capability = document.getElementById('capability').value;
         const payload = {{
           request,
@@ -278,9 +359,27 @@ def page():
           permissions: {{may_execute: false, may_publish: false}}
         }};
         if (capability) payload.capability = capability;
-        await call('/api/requests', payload);
+        const planned = await call('/api/requests', payload);
+        const action = planned.actions?.[0];
+        if (action?.permissions?.may_execute && action?.worker === 'llm_worker') {{
+          const executed = await call(`/api/actions/${{action.action_id}}/execute`);
+          appendMessage('jarvis', executed.action?.result?.text || executed.action?.result?.summary || 'Done.');
+        }} else {{
+          appendMessage('jarvis', planned.request?.summary || 'I created a plan for approval.');
+        }}
+        document.getElementById('request').value = '';
       }} catch (err) {{
         healthEl.textContent = err.message;
+        appendMessage('jarvis', `Error: ${{err.message}}`);
+      }}
+    }};
+
+    document.getElementById('transcribe').onclick = async () => {{
+      try {{
+        await transcribeAudio();
+      }} catch (err) {{
+        healthEl.textContent = err.message;
+        appendMessage('jarvis', `Transcription error: ${{err.message}}`);
       }}
     }};
 
@@ -289,7 +388,10 @@ def page():
     }};
 
     executeButton.onclick = async () => {{
-      if (currentActionId) await call(`/api/actions/${{currentActionId}}/execute`);
+      if (currentActionId) {{
+        const executed = await call(`/api/actions/${{currentActionId}}/execute`);
+        if (executed.action?.result?.text) appendMessage('jarvis', executed.action.result.text);
+      }}
     }};
 
     document.getElementById('refresh').onclick = health;
@@ -339,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=15) as response:
+            with urllib.request.urlopen(req, timeout=180) as response:
                 return response.status, json.loads(response.read().decode("utf-8") or "{}")
         except urllib.error.HTTPError as exc:
             try:
@@ -378,6 +480,31 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/requests":
             status, data = self.proxy("POST", "/requests", self.read_json())
             self.write_json(status, data)
+            return
+
+        if path == "/api/transcribe":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length else b""
+            headers = {"Content-Type": self.headers.get("Content-Type", "")}
+            if WHISPER_WORKER_TOKEN and not WHISPER_WORKER_TOKEN.startswith("CHANGE_ME"):
+                headers["Authorization"] = f"Bearer {WHISPER_WORKER_TOKEN}"
+            req = urllib.request.Request(
+                WHISPER_WORKER_URL + "/transcribe",
+                data=body,
+                method="POST",
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    self.write_json(response.status, json.loads(response.read().decode("utf-8") or "{}"))
+            except urllib.error.HTTPError as exc:
+                try:
+                    data = json.loads(exc.read().decode("utf-8") or "{}")
+                except Exception:
+                    data = {"ok": False, "error": str(exc)}
+                self.write_json(exc.code, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
             return
 
         if path.startswith("/api/actions/"):

@@ -28,7 +28,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
-    profiles: ["ollama", "open-webui", "ai"]
+    profiles: ["ollama", "open-webui", "ai", "orchestration"]
     environment:
       OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
     volumes:
@@ -149,6 +149,7 @@ services:
       N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      WHISPER_WORKER_URL: http://whisper-worker:8099
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
     volumes:
@@ -211,6 +212,19 @@ services:
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       AI_ORCHESTRATOR_PORT: 8095
       AI_ORCHESTRATOR_DATA_DIR: /data
+      AI_ORCHESTRATOR_USE_OLLAMA_ROUTER: ${AI_ORCHESTRATOR_USE_OLLAMA_ROUTER:-true}
+      AI_ORCHESTRATOR_ROUTER_MODEL: ${AI_ORCHESTRATOR_ROUTER_MODEL:-llama3.1:latest}
+      AI_ORCHESTRATOR_ROUTER_TIMEOUT: ${AI_ORCHESTRATOR_ROUTER_TIMEOUT:-30}
+      AI_ORCHESTRATOR_LLM_TIMEOUT: ${AI_ORCHESTRATOR_LLM_TIMEOUT:-120}
+      OLLAMA_HOST: http://ollama:11434
+      JARVIS_FAST_LLM_PROVIDER: ${JARVIS_FAST_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_FAST_LLM_MODEL: ${JARVIS_FAST_LLM_MODEL:-llama-70b}
+      JARVIS_FAST_LLM_BASE_URL: ${JARVIS_FAST_LLM_BASE_URL:-}
+      JARVIS_FAST_LLM_API_KEY: ${JARVIS_FAST_LLM_API_KEY:-}
+      JARVIS_DEEP_LLM_PROVIDER: ${JARVIS_DEEP_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-ultra-120b}
+      JARVIS_DEEP_LLM_BASE_URL: ${JARVIS_DEEP_LLM_BASE_URL:-}
+      JARVIS_DEEP_LLM_API_KEY: ${JARVIS_DEEP_LLM_API_KEY:-}
     volumes:
       - ./ai-orchestrator/state:/data
     ports:
@@ -219,6 +233,7 @@ services:
       - homelab_internal
     depends_on:
       - n8n
+      - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -240,6 +255,8 @@ services:
       TZ: ${TZ}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      WHISPER_WORKER_URL: http://whisper-worker:8099
+      WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
       JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
       JARVIS_CHAT_PORT: 18100
     ports:
@@ -248,6 +265,7 @@ services:
       - homelab_internal
     depends_on:
       - ai-orchestrator
+      - whisper-worker
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -255,6 +273,38 @@ services:
       - "homepage.icon=si-openai"
       - "homepage.href=http://${DOMAIN}:18100"
       - "homepage.description=Simple request console for Jarvis"
+
+  # ---------------------------------------------------------------------------
+  # WHISPER WORKER - On-demand speech-to-text API for Jarvis
+  # ---------------------------------------------------------------------------
+  whisper-worker:
+    build:
+      context: ./whisper-worker
+    container_name: whisper_worker
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai", "voice"]
+    environment:
+      TZ: ${TZ}
+      WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
+      WHISPER_WORKER_PORT: 8099
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_CACHE_DIR: /models
+      WHISPER_MAX_UPLOAD_MB: ${WHISPER_MAX_UPLOAD_MB:-100}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/whisper:/models
+    ports:
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18101:8099"
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=Whisper Worker"
+      - "homepage.icon=si-openai"
+      - "homepage.href=http://${DOMAIN}:18101/health"
+      - "homepage.description=Speech-to-text worker for Jarvis"
 
   # ---------------------------------------------------------------------------
   # HOME ASSISTANT – Smart Home Hub

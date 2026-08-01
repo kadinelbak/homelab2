@@ -24,6 +24,25 @@ http://<tailscale-host-or-ip>:18100
 
 Jarvis Chat is a small request console that sends requests to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
 
+## Model Tiers
+
+The orchestrator uses local Ollama first for routing, then attaches an execution profile to each planned action:
+
+```text
+local      Ollama llama3.1:latest for cheap routing and fallback
+fast_70b   External 70B-style model for drafting, summaries, and normal planning
+deep_120b  External larger reasoning model for architecture, coding plans, and complex decomposition
+```
+
+External model keys belong only in `.env`, never in tracked files. Set:
+
+```text
+JARVIS_FAST_LLM_BASE_URL
+JARVIS_FAST_LLM_API_KEY
+JARVIS_DEEP_LLM_BASE_URL
+JARVIS_DEEP_LLM_API_KEY
+```
+
 Import this workflow into n8n:
 
 ```text

@@ -3,6 +3,8 @@ import json
 import os
 import time
 import uuid
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,8 +15,64 @@ HOST = os.environ.get("AI_ORCHESTRATOR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AI_ORCHESTRATOR_PORT", "8095"))
 DATA_DIR = Path(os.environ.get("AI_ORCHESTRATOR_DATA_DIR", "/data"))
 STATE_PATH = DATA_DIR / "requests.json"
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
+OLLAMA_ROUTER_MODEL = os.environ.get("AI_ORCHESTRATOR_ROUTER_MODEL", os.environ.get("OLLAMA_MODEL", "llama3.1"))
+OLLAMA_ROUTER_ENABLED = os.environ.get("AI_ORCHESTRATOR_USE_OLLAMA_ROUTER", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+OLLAMA_ROUTER_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_ROUTER_TIMEOUT", "12"))
+LLM_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_LLM_TIMEOUT", "120"))
+LLM_PROFILES = {
+    "local": {
+        "profile": "local",
+        "provider": "ollama",
+        "model": os.environ.get("OLLAMA_MODEL", "llama3.1:latest"),
+        "base_url": OLLAMA_URL,
+        "configured": True,
+        "use_for": "cheap routing, quick local fallback, private low-stakes tasks",
+    },
+    "fast_70b": {
+        "profile": "fast_70b",
+        "provider": os.environ.get("JARVIS_FAST_LLM_PROVIDER", "external_openai_compatible"),
+        "model": os.environ.get("JARVIS_FAST_LLM_MODEL", "llama-70b"),
+        "base_url": os.environ.get("JARVIS_FAST_LLM_BASE_URL", ""),
+        "configured": bool(os.environ.get("JARVIS_FAST_LLM_API_KEY") and os.environ.get("JARVIS_FAST_LLM_BASE_URL")),
+        "use_for": "general assistant answers, drafting, summarization, normal planning",
+    },
+    "deep_120b": {
+        "profile": "deep_120b",
+        "provider": os.environ.get("JARVIS_DEEP_LLM_PROVIDER", "external_openai_compatible"),
+        "model": os.environ.get("JARVIS_DEEP_LLM_MODEL", "nemotron-ultra-120b"),
+        "base_url": os.environ.get("JARVIS_DEEP_LLM_BASE_URL", ""),
+        "configured": bool(os.environ.get("JARVIS_DEEP_LLM_API_KEY") and os.environ.get("JARVIS_DEEP_LLM_BASE_URL")),
+        "use_for": "complex reasoning, architecture, coding plans, multi-step decomposition",
+    },
+}
 
 CAPABILITIES = [
+    {
+        "capability": "general_assistant",
+        "worker": "llm_worker",
+        "adapter_type": "local_llm",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["ollama.chat"],
+        "description": "Conversational help, brainstorming, writing, drafting, planning, and general questions.",
+    },
+    {
+        "capability": "transcribe_speech",
+        "worker": "whisper_worker",
+        "adapter_type": "local_application",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["whisper.transcribe"],
+        "description": "Transcribe or translate uploaded audio into text using a local Whisper worker.",
+    },
     {
         "capability": "edit_repository",
         "worker": "coding_worker",
@@ -23,6 +81,7 @@ CAPABILITIES = [
         "requires_approval": False,
         "execution_requires_approval": True,
         "tools": ["codex_cli", "opencode", "aider"],
+        "description": "Modify, inspect, test, or review code repositories and developer projects.",
     },
     {
         "capability": "generate_3d_concept",
@@ -32,6 +91,7 @@ CAPABILITIES = [
         "requires_approval": True,
         "execution_requires_approval": True,
         "tools": ["meshy.text_to_3d", "meshy.image_to_3d"],
+        "description": "Generate organic or concept 3D models with a paid external 3D generation service.",
     },
     {
         "capability": "generate_parametric_part",
@@ -41,6 +101,7 @@ CAPABILITIES = [
         "requires_approval": False,
         "execution_requires_approval": True,
         "tools": ["cadquery.generate", "openscad.render", "blender.preview"],
+        "description": "Generate precise CAD, STEP, STL, OpenSCAD, or CadQuery parametric parts.",
     },
     {
         "capability": "manage_smart_home",
@@ -50,6 +111,7 @@ CAPABILITIES = [
         "requires_approval": True,
         "execution_requires_approval": True,
         "tools": ["homeassistant.call_service"],
+        "description": "Control Home Assistant devices, scenes, lights, climate, or other smart-home state.",
     },
     {
         "capability": "organize_media",
@@ -59,6 +121,7 @@ CAPABILITIES = [
         "requires_approval": True,
         "execution_requires_approval": True,
         "tools": ["radarr.add_movie", "sonarr.add_series", "paperless.search"],
+        "description": "Organize movies, TV, documents, Paperless, Radarr, Sonarr, or media libraries.",
     },
 ]
 
@@ -87,30 +150,262 @@ def capability_by_name(name):
     return None
 
 
+def request_text(payload):
+    return " ".join(
+        str(payload.get(key, ""))
+        for key in ("request", "instruction", "prompt", "goal", "natural_language")
+    ).strip()
+
+
+def route_with_keywords(payload):
+    text = request_text(payload).lower()
+
+    routes = [
+        (("repo", "code", "commit", "pull request", "github", "branch", "test", "lint"), "edit_repository"),
+        (("3d", "meshy", "organic model", "concept model", "glb", "obj"), "generate_3d_concept"),
+        (("cad", "step", "stl", "openscad", "cadquery", "parametric", "dimension"), "generate_parametric_part"),
+        (("light", "thermostat", "home assistant", "smart home", "scene"), "manage_smart_home"),
+        (("movie", "series", "paperless", "document", "radarr", "sonarr", "media"), "organize_media"),
+        (("transcribe", "transcription", "audio", "voice", "whisper", "speech"), "transcribe_speech"),
+        (("email", "draft", "write", "brainstorm", "idea", "plan", "summarize", "explain"), "general_assistant"),
+    ]
+    for keywords, capability in routes:
+        if any(keyword in text for keyword in keywords):
+            return capability_by_name(capability), {
+                "router": "keyword",
+                "rationale": f"Matched keyword route for {capability}.",
+            }
+
+    return capability_by_name("general_assistant"), {
+        "router": "keyword",
+        "rationale": "No specific tool keywords matched; using general assistant.",
+    }
+
+
+def parse_json_object(text):
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("no JSON object found")
+    return json.loads(text[start : end + 1])
+
+
+def route_with_ollama(payload):
+    names = [capability["capability"] for capability in CAPABILITIES]
+    catalog = [
+        {
+            "capability": capability["capability"],
+            "description": capability["description"],
+            "requires_approval": capability["requires_approval"],
+        }
+        for capability in CAPABILITIES
+    ]
+    prompt = {
+        "role": "system",
+        "content": (
+            "You are a strict routing classifier for a personal homelab assistant. "
+            "Choose exactly one capability from the provided catalog. "
+            "Return only compact JSON with keys capability, confidence, rationale. "
+            "Use general_assistant for ordinary chat, drafting, brainstorming, planning, or unclear requests."
+        ),
+    }
+    user = {
+        "role": "user",
+        "content": json.dumps(
+            {
+                "catalog": catalog,
+                "request": request_text(payload),
+                "explicit_inputs": payload.get("inputs") or {},
+            },
+            separators=(",", ":"),
+        ),
+    }
+    body = json.dumps(
+        {
+            "model": OLLAMA_ROUTER_MODEL,
+            "messages": [prompt, user],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "num_predict": 160},
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/chat",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=OLLAMA_ROUTER_TIMEOUT) as response:
+        data = json.loads(response.read().decode("utf-8") or "{}")
+    content = data.get("message", {}).get("content", "")
+    routed = parse_json_object(content)
+    capability_name = routed.get("capability")
+    if capability_name not in names:
+        raise ValueError(f"unknown capability: {capability_name}")
+    return capability_by_name(capability_name), {
+        "router": "ollama",
+        "model": OLLAMA_ROUTER_MODEL,
+        "confidence": routed.get("confidence"),
+        "rationale": str(routed.get("rationale", ""))[:500],
+    }
+
+
 def route_request(payload):
     requested = payload.get("capability") or payload.get("requested_capability")
     if requested:
         matched = capability_by_name(str(requested))
         if matched:
-            return matched
+            return matched, {
+                "router": "explicit",
+                "rationale": f"Request specified capability {matched['capability']}.",
+            }
 
-    text = " ".join(
-        str(payload.get(key, ""))
-        for key in ("request", "instruction", "prompt", "goal", "natural_language")
-    ).lower()
+    if OLLAMA_ROUTER_ENABLED and request_text(payload):
+        try:
+            return route_with_ollama(payload)
+        except Exception as exc:
+            capability, metadata = route_with_keywords(payload)
+            metadata["fallback_from"] = "ollama"
+            metadata["fallback_error"] = str(exc)[:300]
+            return capability, metadata
 
-    routes = [
-        (("repo", "code", "commit", "pull request", "github", "branch"), "edit_repository"),
-        (("3d", "meshy", "model", "glb", "obj"), "generate_3d_concept"),
-        (("cad", "step", "stl", "openscad", "cadquery", "parametric"), "generate_parametric_part"),
-        (("light", "thermostat", "home assistant", "smart home", "scene"), "manage_smart_home"),
-        (("movie", "series", "paperless", "document", "radarr", "sonarr"), "organize_media"),
+    return route_with_keywords(payload)
+
+
+def choose_execution_profile(payload, capability):
+    text = request_text(payload).lower()
+    deep_terms = (
+        "architecture",
+        "architect",
+        "complex",
+        "multi-step",
+        "decompose",
+        "strategy",
+        "debug",
+        "refactor",
+        "repo",
+        "code",
+        "codex",
+        "security",
+        "database",
+        "orchestration",
+    )
+    if capability["capability"] in {"edit_repository", "generate_parametric_part"}:
+        profile_name = "deep_120b"
+    elif any(term in text for term in deep_terms):
+        profile_name = "deep_120b"
+    elif capability["capability"] == "general_assistant":
+        profile_name = "fast_70b"
+    else:
+        profile_name = "local"
+
+    profile = dict(LLM_PROFILES[profile_name])
+    if not profile["configured"] and profile_name != "local":
+        fallback = dict(LLM_PROFILES["local"])
+        fallback["requested_profile"] = profile_name
+        fallback["fallback_reason"] = "External model profile is missing base URL or API key."
+        return fallback
+    return profile
+
+
+def choose_workflow_level(payload, capability):
+    text = request_text(payload).lower()
+    publish = bool((payload.get("permissions") or {}).get("may_publish"))
+    cost = float((payload.get("limits") or {}).get("maximum_cost_usd", 0) or 0)
+    if any(term in text for term in ("delete", "wipe", "format", "factory reset", "disable firewall")):
+        return {
+            "level": 4,
+            "name": "danger_zone",
+            "approval": "blocked_until_manual_review",
+            "rationale": "Potentially destructive request.",
+        }
+    if publish or cost > 0 or capability["cost_class"] in {"paid", "metered"}:
+        return {
+            "level": 3,
+            "name": "external_or_spend",
+            "approval": "explicit_approval_required",
+            "rationale": "External cost, publish, or metered execution may be involved.",
+        }
+    if capability["capability"] in {"manage_smart_home", "organize_media"}:
+        return {
+            "level": 2,
+            "name": "homelab_state_change",
+            "approval": "approval_required",
+            "rationale": "Request may change homelab or home state.",
+        }
+    if capability["capability"] == "general_assistant":
+        return {
+            "level": 0,
+            "name": "answer_only",
+            "approval": "none",
+            "rationale": "Conversational response does not change external state.",
+        }
+    return {
+        "level": 1,
+        "name": "draft_or_plan",
+        "approval": "approval_before_execution",
+        "rationale": "Produces a plan or draft action contract before worker execution.",
+    }
+
+
+def call_ollama_assistant(prompt_text, model):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Jarvis, a concise personal homelab assistant. "
+                "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
+            ),
+        },
+        {"role": "user", "content": prompt_text},
     ]
-    for keywords, capability in routes:
-        if any(keyword in text for keyword in keywords):
-            return capability_by_name(capability)
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": 0.3, "num_predict": 900},
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL + "/api/chat",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as response:
+        data = json.loads(response.read().decode("utf-8") or "{}")
+    return data.get("message", {}).get("content", "").strip()
 
-    return capability_by_name("edit_repository")
+
+def execute_action(action):
+    if action["worker"] == "llm_worker":
+        prompt_text = action.get("inputs", {}).get("request", "")
+        profile = action.get("execution_profile", {})
+        model = profile.get("model") or OLLAMA_ROUTER_MODEL
+        if profile.get("provider") != "ollama":
+            model = LLM_PROFILES["local"]["model"]
+        answer = call_ollama_assistant(prompt_text, model)
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": "completed",
+            "summary": "Generated a conversational response.",
+            "text": answer,
+            "artifacts": [],
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
+
+    return {
+        "request_id": action["request_id"],
+        "tool": action["tool"],
+        "status": "queued_for_worker",
+        "summary": "Action contract is approved and ready for the dedicated worker adapter.",
+        "artifacts": [],
+        "cost": {"estimated_usd": 0},
+        "next_actions": [],
+    }
 
 
 def make_action(request_id, payload, capability):
@@ -118,7 +413,7 @@ def make_action(request_id, payload, capability):
     permissions = payload.get("permissions") or {}
     limits = payload.get("limits") or {}
     requires_approval = capability["execution_requires_approval"]
-    may_execute = bool(permissions.get("may_execute", not requires_approval))
+    may_execute = True if not requires_approval else bool(permissions.get("may_execute", False))
 
     return {
         "action_id": action_id,
@@ -146,6 +441,8 @@ def make_action(request_id, payload, capability):
             "may_execute": may_execute,
             "may_publish": bool(permissions.get("may_publish", False)),
         },
+        "workflow_level": choose_workflow_level(payload, capability),
+        "execution_profile": choose_execution_profile(payload, capability),
         "result": None,
     }
 
@@ -199,6 +496,12 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "configured": bool(TOKEN and not TOKEN.startswith("CHANGE_ME")),
                     "capabilities": len(CAPABILITIES),
+                    "router": {
+                        "ollama_enabled": OLLAMA_ROUTER_ENABLED,
+                        "ollama_url": OLLAMA_URL,
+                        "model": OLLAMA_ROUTER_MODEL,
+                        "timeout_seconds": OLLAMA_ROUTER_TIMEOUT,
+                    },
                 },
             )
             return
@@ -239,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.BAD_REQUEST, error_payload(f"invalid_json: {exc}"))
                 return
 
-            capability = route_request(payload)
+            capability, route = route_request(payload)
             request_id = payload.get("request_id") or f"req-{uuid.uuid4().hex[:12]}"
             action = make_action(request_id, payload, capability)
             request = {
@@ -249,6 +552,7 @@ class Handler(BaseHTTPRequestHandler):
                 "capability": capability["capability"],
                 "worker": capability["worker"],
                 "summary": f"Routed request to {capability['capability']} via {capability['worker']}.",
+                "route": route,
                 "original": payload,
                 "next_actions": [
                     {
@@ -299,17 +603,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.CONFLICT, error_payload("approval_required"))
                 return
 
-            action["status"] = "queued_for_worker"
-            action["result"] = {
-                "request_id": action["request_id"],
-                "tool": action["tool"],
-                "status": "queued_for_worker",
-                "summary": "Action contract is approved and ready for the dedicated worker adapter.",
-                "artifacts": [],
-                "cost": {"estimated_usd": 0},
-                "next_actions": [],
-            }
-            state["requests"][action["request_id"]]["status"] = "action_queued"
+            result = execute_action(action)
+            action["result"] = result
+            action["status"] = result["status"]
+            state["requests"][action["request_id"]]["status"] = result["status"]
             save_state(state)
             self.write_json(HTTPStatus.ACCEPTED, {"ok": True, "action": action})
             return

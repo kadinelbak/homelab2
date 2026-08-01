@@ -92,7 +92,14 @@ bash scripts/setup.sh --validate-only
 | `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
 | `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
 | `AI_ORCHESTRATOR_TOKEN` | Yes for AI orchestrator | Bearer token required for request intake, approval, and action handoff endpoints. |
+| `AI_ORCHESTRATOR_USE_OLLAMA_ROUTER` | Optional | Enables local Ollama model routing before deterministic keyword fallback. |
+| `AI_ORCHESTRATOR_ROUTER_MODEL` | Optional | Ollama model used for request routing. Defaults to `llama3.1:latest`. |
+| `AI_ORCHESTRATOR_ROUTER_TIMEOUT` | Optional | Seconds to wait for Ollama routing before using keyword fallback. Defaults to `30`. |
+| `AI_ORCHESTRATOR_LLM_TIMEOUT` | Optional | Seconds to wait for local assistant responses before returning an upstream timeout. |
 | `JARVIS_CHAT_TOKEN` | Optional | Optional bearer token for the Jarvis Chat web GUI. Leave blank for no browser token prompt. |
+| `JARVIS_FAST_LLM_*` | Optional | External 70B-style model profile for general assistant drafting, summaries, and normal planning. Requires provider base URL and API key. |
+| `JARVIS_DEEP_LLM_*` | Optional | External larger reasoning model profile for architecture, coding plans, decomposition, and complex work. Requires provider base URL and API key. |
+| `WHISPER_*` | Optional | Whisper worker settings for speech-to-text. Defaults to CPU `base` with `int8` compute. |
 | `TOOLS_PUBLIC_SCHEME` | Optional | Protocol used by Docker-discovered Tools dashboard links. Use `http` for direct tailnet ports or `https` after TLS/reverse proxy access is ready. |
 | `ACTUAL_PUBLIC_SCHEME` | Optional | Protocol for Actual Budget dashboard links. Defaults to `https` because Actual requires HTTPS for SharedArrayBuffer outside localhost. |
 | `ACTUAL_LOGIN_METHOD` | Optional | Actual Budget login method. Defaults to `password`; keep password enabled unless OpenID has been fully configured in Actual. |

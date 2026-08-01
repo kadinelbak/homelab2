@@ -1,0 +1,54 @@
+{
+  "id": "jarvis-voice-transcription",
+  "name": "Jarvis - Voice Transcription",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jarvis/voice/transcribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a5249718-e2d6-4781-8d52-e1b375265c44",
+      "name": "Receive Voice Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-660, -20],
+      "webhookId": "jarvis-voice-transcribe"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{($env.WHISPER_WORKER_URL || 'http://whisper-worker:8099') + '/health'}}",
+        "options": {}
+      },
+      "id": "0b81f481-80d7-4a38-aaf3-01ac43694457",
+      "name": "Check Whisper Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, -20]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {ok: true, worker: $json, usage: 'For file upload, use Jarvis Chat Transcribe Audio or POST multipart/form-data with field audio directly to http://100.79.132.39:18101/transcribe.'} }}",
+        "options": {"responseCode": 200}
+      },
+      "id": "4ee5ceba-09d5-4c40-8318-876a7941a978",
+      "name": "Return Voice Instructions",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-140, -20]
+    }
+  ],
+  "connections": {
+    "Receive Voice Request": {"main": [[{"node": "Check Whisper Worker", "type": "main", "index": 0}]]},
+    "Check Whisper Worker": {"main": [[{"node": "Return Voice Instructions", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "pinData": {},
+  "versionId": "3650a2e0-d611-4f33-9678-b39ca2d5de91",
+  "triggerCount": 0,
+  "tags": [{"name": "jarvis"}, {"name": "voice"}, {"name": "whisper"}]
+}
