@@ -27,6 +27,8 @@ OLLAMA_ROUTER_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_ROUTER_TIMEOUT", "
 LLM_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_LLM_TIMEOUT", "120"))
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://google-tools-worker:18200").rstrip("/")
 GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN", TOKEN)
+CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
+CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN", TOKEN)
 LLM_PROFILES = {
     "local": {
         "profile": "local",
@@ -39,7 +41,7 @@ LLM_PROFILES = {
     "fast_70b": {
         "profile": "fast_70b",
         "provider": os.environ.get("JARVIS_FAST_LLM_PROVIDER", "external_openai_compatible"),
-        "model": os.environ.get("JARVIS_FAST_LLM_MODEL", "llama-70b"),
+        "model": os.environ.get("JARVIS_FAST_LLM_MODEL", "llama-3.1-70b-instruct"),
         "base_url": os.environ.get("JARVIS_FAST_LLM_BASE_URL", ""),
         "configured": bool(os.environ.get("JARVIS_FAST_LLM_API_KEY") and os.environ.get("JARVIS_FAST_LLM_BASE_URL")),
         "use_for": "general assistant answers, drafting, summarization, normal planning",
@@ -224,6 +226,7 @@ def route_with_keywords(payload):
 
     routes = [
         (("repo", "code", "commit", "pull request", "github", "branch", "test", "lint"), "edit_repository"),
+        (("gmail draft", "draft in gmail", "create draft", "make a draft", "save draft"), "manage_email"),
         (("draft email", "email draft", "draft reply", "write an email", "write email"), "draft_email"),
         (("send email", "reply to", "gmail", "inbox", "label email", "search email"), "manage_email"),
         (("calendar", "schedule", "meeting", "appointment", "reschedule", "availability"), "manage_calendar"),
@@ -328,6 +331,13 @@ def route_request(payload):
                 "rationale": f"Request specified capability {matched['capability']}.",
             }
 
+    text = request_text(payload).lower()
+    if gmail_draft_create_intent(text):
+        return capability_by_name("manage_email"), {
+            "router": "intent_override",
+            "rationale": "User asked to create or save a Gmail draft.",
+        }
+
     if OLLAMA_ROUTER_ENABLED and request_text(payload):
         try:
             return route_with_ollama(payload)
@@ -425,17 +435,7 @@ def choose_workflow_level(payload, capability):
 
 
 def call_ollama_assistant(prompt_text, model, system_text=None):
-    messages = [
-        {
-            "role": "system",
-            "content": system_text
-            or (
-                "You are Jarvis, a concise personal homelab assistant. "
-                "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
-            ),
-        },
-        {"role": "user", "content": prompt_text},
-    ]
+    messages = assistant_messages(prompt_text, system_text)
     body = json.dumps(
         {
             "model": model,
@@ -455,6 +455,67 @@ def call_ollama_assistant(prompt_text, model, system_text=None):
     return data.get("message", {}).get("content", "").strip()
 
 
+def assistant_messages(prompt_text, system_text=None):
+    return [
+        {
+            "role": "system",
+            "content": system_text
+            or (
+                "You are Jarvis, a concise personal homelab assistant. "
+                "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
+            ),
+        },
+        {"role": "user", "content": prompt_text},
+    ]
+
+
+def profile_api_key(profile):
+    name = profile.get("profile")
+    if name == "fast_70b":
+        return os.environ.get("JARVIS_FAST_LLM_API_KEY", "")
+    if name == "deep_120b":
+        return os.environ.get("JARVIS_DEEP_LLM_API_KEY", "")
+    return ""
+
+
+def call_openai_compatible_assistant(prompt_text, profile, system_text=None):
+    base_url = (profile.get("base_url") or "").rstrip("/")
+    api_key = profile_api_key(profile)
+    if not base_url or not api_key:
+        raise RuntimeError("external_profile_missing_base_url_or_api_key")
+    body = json.dumps(
+        {
+            "model": profile.get("model"),
+            "messages": assistant_messages(prompt_text, system_text),
+            "temperature": 0.3,
+            "max_tokens": 1200,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        base_url + "/chat/completions",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as response:
+        data = json.loads(response.read().decode("utf-8") or "{}")
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    return choices[0].get("message", {}).get("content", "").strip()
+
+
+def call_profile_assistant(prompt_text, profile, system_text=None):
+    if profile.get("provider") == "ollama":
+        return call_ollama_assistant(prompt_text, profile.get("model") or OLLAMA_ROUTER_MODEL, system_text)
+    if profile.get("provider") == "external_openai_compatible":
+        return call_openai_compatible_assistant(prompt_text, profile, system_text)
+    return call_ollama_assistant(prompt_text, LLM_PROFILES["local"]["model"], system_text)
+
+
 def call_google_tools(path, payload):
     body = json.dumps(payload or {}).encode("utf-8")
     req = urllib.request.Request(
@@ -470,6 +531,92 @@ def call_google_tools(path, payload):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def call_codex_worker(action):
+    payload = {
+        "action": action,
+        "job_id": action.get("action_id"),
+        "limits": action.get("limits") or {},
+    }
+    body = json.dumps(payload).encode("utf-8")
+    timeout = int((action.get("limits") or {}).get("maximum_runtime_seconds") or 1800) + 30
+    req = urllib.request.Request(
+        CODEX_WORKER_URL + "/run",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {CODEX_WORKER_TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def gmail_draft_create_intent(text):
+    text = (text or "").lower()
+    if "gmail" in text and any(term in text for term in ("draft", "compose", "write")):
+        return True
+    return any(term in text for term in ("create draft", "make a draft", "save draft"))
+
+
+def gmail_draft_prompt(request):
+    return (
+        "Create a Gmail draft payload from the user's request. "
+        "Return only compact JSON with keys to, subject, body. "
+        "If the recipient is missing, use an empty string for to. "
+        "If the subject is missing, write a short useful subject. "
+        "The body must be the complete email draft. "
+        "Benign romantic or affectionate writing between consenting adults is allowed; "
+        "refuse only unsafe, coercive, exploitative, or explicit sexual content involving minors.\n\n"
+        f"User request: {request}"
+    )
+
+
+def create_gmail_draft_from_request(action, request, google_payload):
+    profile = action.get("execution_profile") or LLM_PROFILES["local"]
+    draft_json = call_profile_assistant(gmail_draft_prompt(request), profile, "You produce Gmail draft JSON only.")
+    draft = parse_json_object(draft_json)
+    data = call_google_tools(
+        "/gmail/create-draft",
+        {
+            **google_payload,
+            "to": draft.get("to", ""),
+            "subject": draft.get("subject", ""),
+            "body": draft.get("body", ""),
+        },
+    )
+    return {
+        "request_id": action["request_id"],
+        "tool": action["tool"],
+        "status": "completed" if data.get("draft", {}).get("verified") else "verification_incomplete",
+        "summary": "Created and verified a Gmail draft." if data.get("draft", {}).get("verified") else "Created a Gmail draft but verification was incomplete.",
+        "text": data.get("text") or "Created Gmail draft.",
+        "artifacts": [{"type": "gmail_draft", "item": data.get("draft")}],
+        "cost": {"estimated_usd": 0},
+        "next_actions": [],
+    }
+
+
+def codex_worker_result(action):
+    data = call_codex_worker(action)
+    status = data.get("status") or ("completed" if data.get("ok") else "failed")
+    return {
+        "request_id": action["request_id"],
+        "tool": action["tool"],
+        "status": status,
+        "summary": data.get("summary") or "Codex worker returned a result.",
+        "text": data.get("text") or data.get("summary") or "",
+        "artifacts": data.get("artifacts") or [],
+        "cost": {"estimated_usd": 0},
+        "next_actions": [],
+        "worker_result": {
+            "job_id": data.get("job_id"),
+            "return_code": data.get("return_code"),
+            "codex": data.get("codex"),
+        },
+    }
+
+
 def google_tools_result(action):
     inputs = action.get("inputs", {}) or {}
     request = inputs.get("request", "")
@@ -478,6 +625,8 @@ def google_tools_result(action):
         "conversation_context": inputs.get("conversation_context") or [],
     }
     if action.get("capability") == "manage_email":
+        if gmail_draft_create_intent(request):
+            return create_gmail_draft_from_request(action, request, google_payload)
         data = call_google_tools("/gmail/assist", {**google_payload, "max_results": 10})
         return {
             "request_id": action["request_id"],
@@ -508,6 +657,35 @@ def google_tools_result(action):
             "cost": {"estimated_usd": 0},
             "next_actions": [],
         }
+    if action.get("capability") == "manage_contacts":
+        data = call_google_tools("/contacts/assist", google_payload)
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": "completed",
+            "summary": "Fetched Contacts results from Google Tools.",
+            "text": data.get("text") or "Fetched Contacts results.",
+            "artifacts": [{"type": "contacts", "items": data.get("contacts", [])}],
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
+    if action.get("capability") == "manage_tasks":
+        data = call_google_tools("/tasks/assist", google_payload)
+        artifacts = []
+        if data.get("task"):
+            artifacts.append({"type": "task", "item": data.get("task")})
+        else:
+            artifacts.append({"type": "tasks", "items": data.get("tasks", [])})
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": "completed",
+            "summary": "Handled Tasks request with Google Tools.",
+            "text": data.get("text") or "Handled Tasks request.",
+            "artifacts": artifacts,
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
     raise ValueError("unsupported_google_tools_capability")
 
 
@@ -515,6 +693,8 @@ def google_request_requires_approval(payload, capability):
     if capability["capability"] not in {"manage_email", "manage_calendar"}:
         return capability["execution_requires_approval"]
     text = request_text(payload).lower()
+    if capability["capability"] == "manage_email" and gmail_draft_create_intent(text):
+        return False
     outward_terms = (
         "send",
         "send it",
@@ -541,7 +721,8 @@ def fallback_system_prompt(action):
     if action["worker"] == "llm_worker":
         return (
             "You are Jarvis, a concise personal homelab assistant. "
-            "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
+            "Be practical, friendly, and direct. If the user asks for a draft, produce the draft. "
+            "Benign romantic or affectionate writing between consenting adults is allowed; refuse only unsafe, coercive, exploitative, or explicit sexual content involving minors."
         )
     return (
         "You are Jarvis Core running in local fallback mode. "
@@ -593,11 +774,22 @@ def execute_action(action):
         except Exception as exc:
             action.setdefault("inputs", {})["google_tools_error"] = str(exc)[:500]
 
+    if action.get("adapter_type") == "cli_worker" and action.get("worker") == "coding_worker":
+        try:
+            return codex_worker_result(action)
+        except Exception as exc:
+            action.setdefault("inputs", {})["codex_worker_error"] = str(exc)[:500]
+
     profile = action.get("execution_profile", {})
-    model = profile.get("model") or OLLAMA_ROUTER_MODEL
-    if profile.get("provider") != "ollama":
-        model = LLM_PROFILES["local"]["model"]
-    answer = call_ollama_assistant(fallback_prompt(action), model, fallback_system_prompt(action))
+    try:
+        answer = call_profile_assistant(fallback_prompt(action), profile, fallback_system_prompt(action))
+    except Exception as exc:
+        action.setdefault("inputs", {})["llm_profile_error"] = str(exc)[:500]
+        fallback = dict(LLM_PROFILES["local"])
+        fallback["requested_profile"] = profile.get("profile")
+        fallback["fallback_reason"] = str(exc)[:300]
+        action["execution_profile"] = fallback
+        answer = call_profile_assistant(fallback_prompt(action), fallback, fallback_system_prompt(action))
     return {
         "request_id": action["request_id"],
         "tool": action["tool"],

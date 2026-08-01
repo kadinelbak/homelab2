@@ -221,12 +221,14 @@ services:
       OLLAMA_HOST: http://ollama:11434
       GOOGLE_TOOLS_URL: http://google-tools-worker:18200
       GOOGLE_TOOLS_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      CODEX_WORKER_URL: http://codex-worker:18300
+      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       JARVIS_FAST_LLM_PROVIDER: ${JARVIS_FAST_LLM_PROVIDER:-external_openai_compatible}
-      JARVIS_FAST_LLM_MODEL: ${JARVIS_FAST_LLM_MODEL:-llama-70b}
+      JARVIS_FAST_LLM_MODEL: ${JARVIS_FAST_LLM_MODEL:-llama-3.1-70b-instruct}
       JARVIS_FAST_LLM_BASE_URL: ${JARVIS_FAST_LLM_BASE_URL:-}
       JARVIS_FAST_LLM_API_KEY: ${JARVIS_FAST_LLM_API_KEY:-}
       JARVIS_DEEP_LLM_PROVIDER: ${JARVIS_DEEP_LLM_PROVIDER:-external_openai_compatible}
-      JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-ultra-120b}
+      JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-3-super-120b-a12b}
       JARVIS_DEEP_LLM_BASE_URL: ${JARVIS_DEEP_LLM_BASE_URL:-}
       JARVIS_DEEP_LLM_API_KEY: ${JARVIS_DEEP_LLM_API_KEY:-}
     volumes:
@@ -237,6 +239,7 @@ services:
       - homelab_internal
     depends_on:
       - ollama
+      - codex-worker
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -244,6 +247,46 @@ services:
       - "homepage.icon=si-openai"
       - "homepage.href=http://${DOMAIN}:8095/health"
       - "homepage.description=Request routing and worker handoff"
+
+  # ---------------------------------------------------------------------------
+  # CODEX WORKER - Approval-gated coding worker for Jarvis
+  # ---------------------------------------------------------------------------
+  codex-worker:
+    build:
+      context: ./codex-worker
+    container_name: jarvis_codex_worker
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai", "codex"]
+    environment:
+      TZ: ${TZ}
+      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      CODEX_WORKER_PORT: 18300
+      CODEX_WORKER_DATA_DIR: /data
+      CODEX_WORKSPACE: /workspace
+      CODEX_WORKER_TIMEOUT_SECONDS: ${CODEX_WORKER_TIMEOUT_SECONDS:-1800}
+      CODEX_WORKER_MAX_OUTPUT_CHARS: ${CODEX_WORKER_MAX_OUTPUT_CHARS:-12000}
+      CODEX_COMMAND_PREFIX: ${CODEX_COMMAND_PREFIX:-codex exec --json --sandbox workspace-write --ask-for-approval never}
+    volumes:
+      - ./ai-orchestrator:/workspace/ai-orchestrator
+      - ./codex-worker:/workspace/codex-worker
+      - ./google-tools-worker:/workspace/google-tools-worker
+      - ./jarvis-chat:/workspace/jarvis-chat
+      - ./telegram-bridge:/workspace/telegram-bridge
+      - ./whisper-worker:/workspace/whisper-worker
+      - ./docker-compose.yml:/workspace/docker-compose.yml
+      - ${DATA_PATH}/phase3-ai-gaming/data/codex-worker:/data
+      - ${DATA_PATH}/phase3-ai-gaming/data/codex-home:/home/appuser/.codex
+    ports:
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18300:18300"
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=Codex Worker"
+      - "homepage.icon=si-openai"
+      - "homepage.href=http://${DOMAIN}:18300/health"
+      - "homepage.description=Approval-gated coding worker for Jarvis"
 
   # ---------------------------------------------------------------------------
   # JARVIS CHAT - Simple homelab request GUI for the AI orchestrator
@@ -294,12 +337,22 @@ services:
       JARVIS_TELEGRAM_MAX_REPLY_CHARS: ${JARVIS_TELEGRAM_MAX_REPLY_CHARS:-3500}
       JARVIS_TELEGRAM_DATA_DIR: /data
       JARVIS_TELEGRAM_MEMORY_TURNS: ${JARVIS_TELEGRAM_MEMORY_TURNS:-12}
+      JARVIS_TELEGRAM_MAX_DOCUMENT_BYTES: ${JARVIS_TELEGRAM_MAX_DOCUMENT_BYTES:-52428800}
+      PAPERLESS_PICKUP_WAIT_SECONDS: ${PAPERLESS_PICKUP_WAIT_SECONDS:-20}
+      PAPERLESS_IMPORT_WAIT_SECONDS: ${PAPERLESS_IMPORT_WAIT_SECONDS:-180}
+      PAPERLESS_CONSUME_DIR: /paperless-consume
+      PAPERLESS_API_URL: http://paperless:8000
+      PAPERLESS_PUBLIC_URL: http://${DOMAIN}:8000
+      PAPERLESS_USERNAME: ${PAPERLESS_USERNAME:-admin}
+      PAPERLESS_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:-}
+      PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge:/data
+      - ${DATA_PATH}/phase2-media/data/paperless/consume:/paperless-consume
     networks:
       - homelab_internal
     depends_on:

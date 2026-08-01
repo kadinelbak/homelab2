@@ -2,6 +2,7 @@
 import json
 import mimetypes
 import os
+import re
 import tempfile
 import time
 import urllib.error
@@ -24,6 +25,15 @@ MAX_REPLY_CHARS = int(os.environ.get("JARVIS_TELEGRAM_MAX_REPLY_CHARS", "3500"))
 DATA_DIR = Path(os.environ.get("JARVIS_TELEGRAM_DATA_DIR", "/data"))
 MEMORY_PATH = DATA_DIR / "memory.json"
 MEMORY_TURNS = int(os.environ.get("JARVIS_TELEGRAM_MEMORY_TURNS", "12"))
+PAPERLESS_CONSUME_DIR = Path(os.environ.get("PAPERLESS_CONSUME_DIR", "/paperless-consume"))
+MAX_DOCUMENT_BYTES = int(os.environ.get("JARVIS_TELEGRAM_MAX_DOCUMENT_BYTES", str(50 * 1024 * 1024)))
+PAPERLESS_PICKUP_WAIT_SECONDS = int(os.environ.get("PAPERLESS_PICKUP_WAIT_SECONDS", "20"))
+PAPERLESS_API_URL = os.environ.get("PAPERLESS_API_URL", "http://paperless:8000").rstrip("/")
+PAPERLESS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "").rstrip("/")
+PAPERLESS_API_TOKEN = os.environ.get("PAPERLESS_API_TOKEN", "")
+PAPERLESS_USERNAME = os.environ.get("PAPERLESS_USERNAME", "admin")
+PAPERLESS_PASSWORD = os.environ.get("PAPERLESS_PASSWORD", "")
+PAPERLESS_IMPORT_WAIT_SECONDS = int(os.environ.get("PAPERLESS_IMPORT_WAIT_SECONDS", "180"))
 
 
 def telegram_api(method, payload=None):
@@ -122,6 +132,81 @@ def get_json(url, headers=None, timeout=60):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def paperless_headers():
+    headers = {"Accept": "application/json"}
+    if PAPERLESS_API_TOKEN:
+        headers["Authorization"] = f"Token {PAPERLESS_API_TOKEN}"
+    elif PAPERLESS_PASSWORD:
+        raw = f"{PAPERLESS_USERNAME}:{PAPERLESS_PASSWORD}".encode("utf-8")
+        import base64
+
+        headers["Authorization"] = "Basic " + base64.b64encode(raw).decode("ascii")
+    return headers
+
+
+def paperless_api_get(path, query=None, timeout=30):
+    if not PAPERLESS_API_URL:
+        return {}
+    suffix = path if path.startswith("/") else f"/{path}"
+    url = PAPERLESS_API_URL + suffix
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    return get_json(url, headers=paperless_headers(), timeout=timeout)
+
+
+def document_matches_upload(doc, original_name, queued_name, upload_started_at):
+    haystack = " ".join(
+        str(doc.get(key, ""))
+        for key in ("title", "original_file_name", "archive_filename", "filename")
+    ).lower()
+    stems = {
+        Path(original_name).stem.lower(),
+        Path(queued_name).stem.lower(),
+        original_name.lower(),
+        queued_name.lower(),
+    }
+    if any(stem and stem in haystack for stem in stems):
+        return True
+    return False
+
+
+def wait_for_paperless_document(original_name, queued_name, upload_started_at):
+    if not (PAPERLESS_API_TOKEN or PAPERLESS_PASSWORD):
+        return {"status": "api_not_configured"}
+    deadline = time.time() + max(0, PAPERLESS_IMPORT_WAIT_SECONDS)
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            data = paperless_api_get(
+                "/api/documents/",
+                {
+                    "page_size": 10,
+                    "ordering": "-created",
+                    "query": Path(original_name).stem,
+                },
+                timeout=30,
+            )
+            results = data.get("results") or []
+            if not results:
+                data = paperless_api_get("/api/documents/", {"page_size": 10, "ordering": "-created"}, timeout=30)
+                results = data.get("results") or []
+            for doc in results:
+                if document_matches_upload(doc, original_name, queued_name, upload_started_at):
+                    return {"status": "completed", "document": doc}
+        except Exception as exc:
+            last_error = str(exc)[:200]
+        time.sleep(5)
+    return {"status": "pending", "error": last_error}
+
+
+def paperless_document_url(doc):
+    doc_id = doc.get("id")
+    if not doc_id:
+        return ""
+    base = PAPERLESS_PUBLIC_URL or PAPERLESS_API_URL
+    return f"{base}/documents/{doc_id}/details"
+
+
 def encode_multipart(field_name, file_path, filename):
     boundary = f"----jarvis-telegram-{int(time.time() * 1000)}"
     content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -135,15 +220,90 @@ def encode_multipart(field_name, file_path, filename):
     return body, f"multipart/form-data; boundary={boundary}"
 
 
-def transcribe_telegram_file(file_id):
+def safe_filename(name):
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "_", name or "telegram-upload")
+    cleaned = cleaned.strip(" ._-") or "telegram-upload"
+    return cleaned[:180]
+
+
+def telegram_file_info(file_id):
     file_info = telegram_api("getFile", {"file_id": file_id})
     if not file_info.get("ok"):
         raise RuntimeError(file_info.get("description") or "Telegram getFile failed")
-    file_path = file_info["result"]["file_path"]
+    return file_info["result"]
+
+
+def download_telegram_file(file_id):
+    info = telegram_file_info(file_id)
+    file_path = info["file_path"]
     suffix = Path(file_path).suffix or ".ogg"
     download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     with urllib.request.urlopen(download_url, timeout=120) as response:
-        audio_bytes = response.read()
+        data = response.read()
+    return data, file_path, suffix
+
+
+def ingest_document(chat_id, document):
+    file_size = int(document.get("file_size") or 0)
+    if file_size and file_size > MAX_DOCUMENT_BYTES:
+        return f"That file is too large for Telegram ingest right now ({file_size} bytes)."
+
+    data, file_path, suffix = download_telegram_file(document["file_id"])
+    if len(data) > MAX_DOCUMENT_BYTES:
+        return f"That file is too large for Telegram ingest right now ({len(data)} bytes)."
+
+    PAPERLESS_CONSUME_DIR.mkdir(parents=True, exist_ok=True)
+    original_name = document.get("file_name") or Path(file_path).name or f"telegram-upload{suffix}"
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    upload_started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    target = PAPERLESS_CONSUME_DIR / f"{timestamp}-chat-{chat_id}-{safe_filename(original_name)}"
+    target.write_bytes(data)
+    target_size = target.stat().st_size if target.exists() else 0
+    queued = target.exists() and target_size == len(data)
+    picked_up = False
+    if queued:
+        deadline = time.time() + max(0, PAPERLESS_PICKUP_WAIT_SECONDS)
+        while time.time() < deadline:
+            if not target.exists():
+                picked_up = True
+                break
+            time.sleep(1)
+    lines = [
+        (
+            "Verified Paperless picked up document for OCR/import."
+            if picked_up
+            else "Verified queued for Paperless; pickup is still pending."
+            if queued
+            else "Queue verification failed."
+        ),
+        f"File: {target.name}\n"
+        f"Bytes queued: {target_size}/{len(data)}"
+    ]
+    if queued or picked_up:
+        result = wait_for_paperless_document(original_name, target.name, upload_started_at)
+        if result.get("status") == "completed":
+            doc = result.get("document") or {}
+            title = doc.get("title") or original_name
+            lines.extend(
+                [
+                    "",
+                    "Verified Paperless import completed.",
+                    f"Document ID: {doc.get('id')}",
+                    f"Title: {title}",
+                ]
+            )
+            url = paperless_document_url(doc)
+            if url:
+                lines.append(f"Link: {url}")
+        elif result.get("status") == "api_not_configured":
+            lines.extend(["", "Paperless API verification is not configured."])
+        else:
+            lines.extend(["", "Paperless import is still processing. I verified the handoff, but OCR/import has not appeared in the API yet."])
+    return "\n".join(lines)
+
+
+def transcribe_telegram_file(file_id):
+    audio_bytes, file_path, suffix = download_telegram_file(file_id)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(audio_bytes)
@@ -276,6 +436,10 @@ def handle_update(update):
     elif not text and message.get("audio"):
         send_message(chat_id, "Transcribing audio...")
         text = transcribe_telegram_file(message["audio"]["file_id"])
+    elif not text and message.get("document"):
+        send_message(chat_id, "Sending document to Paperless...")
+        send_message(chat_id, ingest_document(chat_id, message["document"]))
+        return
 
     if not text:
         send_message(chat_id, "Send me text or a voice note.")

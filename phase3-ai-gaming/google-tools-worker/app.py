@@ -27,6 +27,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/contacts.readonly",
+    "https://www.googleapis.com/auth/tasks",
 ]
 DEFAULT_TIMEZONE = os.environ.get("TZ", "America/New_York")
 
@@ -180,6 +182,130 @@ def create_gmail_draft(to_addr, subject, body_text):
     )
 
 
+def gmail_get_draft(draft_id):
+    params = urllib.parse.urlencode({"format": "metadata"})
+    return google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}?{params}", timeout=60)
+
+
+def create_verified_gmail_draft(to_addr, subject, body_text):
+    draft = create_gmail_draft(to_addr, subject, body_text)
+    draft_id = draft.get("id")
+    verified = {}
+    if draft_id:
+        verified = gmail_get_draft(draft_id)
+    message = verified.get("message") or draft.get("message") or {}
+    return {
+        "id": draft_id,
+        "message_id": message.get("id"),
+        "thread_id": message.get("threadId"),
+        "verified": bool(verified.get("id") == draft_id),
+        "raw": draft,
+    }
+
+
+def contacts_search(query, max_results=10):
+    data = google_request(
+        "GET",
+        "https://people.googleapis.com/v1/people/me/connections?"
+        + urllib.parse.urlencode(
+            {
+                "pageSize": 100,
+                "personFields": "names,emailAddresses,phoneNumbers",
+            }
+        ),
+        timeout=60,
+    )
+    needle = (query or "").lower().strip()
+    contacts = []
+    for person in data.get("connections", []):
+        names = [item.get("displayName", "") for item in person.get("names", [])]
+        emails = [item.get("value", "") for item in person.get("emailAddresses", [])]
+        phones = [item.get("value", "") for item in person.get("phoneNumbers", [])]
+        haystack = " ".join(names + emails + phones).lower()
+        if not needle or needle in haystack:
+            contacts.append({"names": names, "emails": emails, "phones": phones})
+        if len(contacts) >= max_results:
+            break
+    return contacts
+
+
+def infer_contact_query(request_text):
+    text = request_text.strip()
+    for prefix in ("find", "lookup", "look up", "get", "contact", "contacts", "email for", "phone for"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix) :].strip()
+    return text.replace("?", "").strip()
+
+
+def response_text_for_contacts(contacts):
+    if not contacts:
+        return "I did not find matching contacts."
+    lines = ["Contacts:"]
+    for index, contact in enumerate(contacts, 1):
+        lines.append(f"{index}. {', '.join(contact.get('names') or ['(no name)'])}")
+        if contact.get("emails"):
+            lines.append(f"   Email: {', '.join(contact['emails'])}")
+        if contact.get("phones"):
+            lines.append(f"   Phone: {', '.join(contact['phones'])}")
+    return "\n".join(lines)
+
+
+def tasklists():
+    return google_request("GET", "https://tasks.googleapis.com/tasks/v1/users/@me/lists", timeout=60).get("items", [])
+
+
+def default_tasklist_id():
+    lists = tasklists()
+    if not lists:
+        raise RuntimeError("google_tasks_no_tasklists_found")
+    return lists[0]["id"]
+
+
+def tasks_list():
+    list_id = default_tasklist_id()
+    data = google_request(
+        "GET",
+        f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks?"
+        + urllib.parse.urlencode({"showCompleted": "false", "maxResults": 20}),
+        timeout=60,
+    )
+    return data.get("items", [])
+
+
+def task_title_from_request(request_text):
+    text = request_text.strip()
+    lowered = text.lower()
+    for prefix in ("add task", "create task", "new task", "todo", "to do", "remind me to", "add"):
+        if lowered.startswith(prefix):
+            return text[len(prefix) :].strip(" :.-")
+    return text.strip(" :.-")
+
+
+def task_create(request_text):
+    list_id = default_tasklist_id()
+    title = task_title_from_request(request_text) or "Untitled task"
+    return google_request(
+        "POST",
+        f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks",
+        {"title": title},
+        timeout=60,
+    )
+
+
+def task_create_intent(request_text):
+    lowered = request_text.lower()
+    return any(term in lowered for term in ("add task", "create task", "new task", "todo", "to do", "remind me to"))
+
+
+def response_text_for_tasks(tasks):
+    if not tasks:
+        return "I did not find open Google Tasks."
+    lines = ["Open tasks:"]
+    for index, task in enumerate(tasks, 1):
+        lines.append(f"{index}. {task.get('title') or '(untitled task)'}")
+    return "\n".join(lines)
+
+
 def calendar_bounds(day):
     today = datetime.now().astimezone()
     if day == "tomorrow":
@@ -304,7 +430,8 @@ def calendar_create_event(payload):
         "start": created.get("start", {}),
         "end": created.get("end", {}),
         "text": (
-            f"Created calendar event: {created.get('summary') or 'Untitled event'}\n"
+            f"Verified calendar event created: {created.get('summary') or 'Untitled event'}\n"
+            f"Event ID: {created.get('id')}\n"
             f"Start: {(created.get('start') or {}).get('dateTime')}\n"
             f"End: {(created.get('end') or {}).get('dateTime')}"
         ),
@@ -355,7 +482,7 @@ def calendar_delete_event(payload):
     return {
         "deleted_count": len(deleted),
         "deleted": deleted,
-        "text": f"Deleted {len(deleted)} matching calendar event(s)." if deleted else "I did not find a matching calendar event to delete.",
+        "text": f"Verified deleted {len(deleted)} matching calendar event(s)." if deleted else "I did not find a matching calendar event to delete.",
     }
 
 
@@ -523,8 +650,36 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.OK, {"ok": True, "messages": messages, "text": response_text_for_gmail(messages)})
                 return
             if path == "/gmail/create-draft":
-                draft = create_gmail_draft(payload["to"], payload.get("subject", ""), payload.get("body", ""))
-                self.write_json(HTTPStatus.OK, {"ok": True, "draft": draft, "text": "Created a Gmail draft."})
+                draft = create_verified_gmail_draft(payload["to"], payload.get("subject", ""), payload.get("body", ""))
+                status = "Verified Gmail draft created" if draft.get("verified") else "Gmail draft created, verification incomplete"
+                self.write_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "draft": draft,
+                        "text": f"{status}.\nDraft ID: {draft.get('id')}\nThread ID: {draft.get('thread_id')}",
+                    },
+                )
+                return
+            if path == "/contacts/assist":
+                contacts = contacts_search(infer_contact_query(payload.get("request", "")), int(payload.get("max_results", 10)))
+                self.write_json(HTTPStatus.OK, {"ok": True, "contacts": contacts, "text": response_text_for_contacts(contacts)})
+                return
+            if path == "/tasks/assist":
+                request_text = payload.get("request", "")
+                if task_create_intent(request_text):
+                    task = task_create(request_text)
+                    self.write_json(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "task": task,
+                            "text": f"Verified Google Task created: {task.get('title')}\nTask ID: {task.get('id')}",
+                        },
+                    )
+                else:
+                    tasks = tasks_list()
+                    self.write_json(HTTPStatus.OK, {"ok": True, "tasks": tasks, "text": response_text_for_tasks(tasks)})
                 return
             if path == "/calendar/list":
                 result = calendar_list(payload.get("request", "today"))

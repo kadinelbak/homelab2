@@ -48,7 +48,7 @@ Supported commands:
 /forget
 ```
 
-Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text. The bridge keeps a short per-chat memory in `${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge`; use `/forget` to clear it for the current chat.
+Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text. Document uploads are saved into Paperless' consume folder so Paperless can OCR/import them; Jarvis verifies the file was queued, waits briefly to see whether Paperless picked it up, then polls the Paperless API until the imported document appears or the import wait expires. The bridge keeps a short per-chat memory in `${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge`; use `/forget` to clear it for the current chat.
 
 ## Google Tools
 
@@ -85,9 +85,53 @@ GET  /oauth/google/callback
 POST /gmail/search
 POST /gmail/assist
 POST /gmail/create-draft
+POST /contacts/assist
+POST /tasks/assist
 POST /calendar/list
 POST /calendar/assist
 ```
+
+Contacts and Tasks require enabling the People API and Google Tasks API in Google Cloud, then rerunning the Google OAuth flow because the worker requests additional scopes.
+
+## Codex Worker
+
+The `codex-worker` service is the approval-gated coding backend for Jarvis. Jarvis Core routes repo/code/test/debug requests to the `edit_repository` capability, but execution still requires approval before the worker runs.
+
+Runtime shape:
+
+```text
+Telegram / Jarvis Chat -> ai-orchestrator -> approval gate -> codex-worker -> /workspace
+```
+
+Useful endpoints:
+
+```text
+GET  http://<tailscale-host-or-ip>:18300/health
+POST http://<tailscale-host-or-ip>:18300/run
+```
+
+The worker stores per-action artifacts under `${DATA_PATH}/phase3-ai-gaming/data/codex-worker/jobs`. Its Codex home/auth directory is mounted at `${DATA_PATH}/phase3-ai-gaming/data/codex-home`. The workspace mount is intentionally limited to Phase 3 Jarvis service code plus `phase3-ai-gaming/docker-compose.yml`; the root homelab `.env` is not mounted into Codex.
+
+Required configuration:
+
+```env
+CODEX_COMMAND_PREFIX=codex exec --json --sandbox workspace-write --ask-for-approval never
+CODEX_WORKER_TIMEOUT_SECONDS=1800
+```
+
+Codex should be authenticated with the ChatGPT sign-in flow inside the worker, not with an API key:
+
+```bash
+docker exec -it jarvis_codex_worker codex logout
+docker exec -it jarvis_codex_worker codex login
+```
+
+Safety rules:
+
+- Jarvis coding actions are approval-gated.
+- The worker prompt instructs Codex to stay inside `/workspace`.
+- The worker must not push, publish, or expose secrets.
+- If Codex CLI is missing or not authenticated, the worker returns `worker_not_configured` instead of pretending it completed work.
 
 ## Model Tiers
 
@@ -97,6 +141,14 @@ The orchestrator uses local Ollama first for routing, then attaches an execution
 local      Ollama llama3.1:latest for cheap routing and fallback
 fast_70b   External 70B-style model for drafting, summaries, and normal planning
 deep_120b  External larger reasoning model for architecture, coding plans, and complex decomposition
+```
+
+UF LiteLLM/OpenAI-compatible profiles use:
+
+```text
+JARVIS_FAST_LLM_BASE_URL=https://api.ai.it.ufl.edu/v1
+JARVIS_DEEP_LLM_BASE_URL=https://api.ai.it.ufl.edu/v1
+JARVIS_DEEP_LLM_MODEL=nemotron-3-super-120b-a12b
 ```
 
 External model keys belong only in `.env`, never in tracked files. Set:
