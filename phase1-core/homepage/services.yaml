@@ -99,6 +99,14 @@
         description: Torrent client over VPN
 
 - AI Automations:
+    - Jarvis Chat:
+        icon: si-openai
+        href: http://kadin-main-sys.tail00cf0e.ts.net:18100
+        description: Simple request console for Jarvis
+    - AI Orchestrator:
+        icon: si-openai
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8095/health
+        description: Request routing and worker handoff
     - Open WebUI:
         icon: open-webui
         href: http://kadin-main-sys.tail00cf0e.ts.net:8080

@@ -212,7 +212,7 @@ services:
       AI_ORCHESTRATOR_PORT: 8095
       AI_ORCHESTRATOR_DATA_DIR: /data
     volumes:
-      - ${DATA_PATH}/phase3-ai-gaming/data/ai-orchestrator:/data
+      - ./ai-orchestrator/state:/data
     ports:
       - "8095:8095"
     networks:
