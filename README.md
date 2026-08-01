@@ -74,7 +74,7 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
   - Gluetun + qBittorrent are gated behind the `torrent` Compose profile
 - `phase3-ai-gaming/docker-compose.yml`
   - Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant, Spoolman,
-    Actual, Stirling PDF, IT-Tools
+    Actual, Stirling PDF, IT-Tools, AI Orchestrator
 - `phase4-ondemand/docker-compose.yml`
   - Kasm, Guacamole, Nextcloud, Gitea, Supabase Studio, Kiwix, Docmost, Cal.com, NocoDB
   - All services `restart: "no"` for memory protection

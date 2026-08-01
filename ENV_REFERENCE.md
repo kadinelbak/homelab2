@@ -90,6 +90,7 @@ bash scripts/setup.sh --validate-only
 | `N8N_USER_MANAGEMENT_JWT_SECRET` | Yes for n8n | JWT signing secret for n8n user management. |
 | `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
 | `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
+| `AI_ORCHESTRATOR_TOKEN` | Yes for AI orchestrator | Bearer token required for request intake, approval, and action handoff endpoints. |
 | `TOOLS_PUBLIC_SCHEME` | Optional | Protocol used by Docker-discovered Tools dashboard links. Use `http` for direct tailnet ports or `https` after TLS/reverse proxy access is ready. |
 | `ACTUAL_PUBLIC_SCHEME` | Optional | Protocol for Actual Budget dashboard links. Defaults to `https` because Actual requires HTTPS for SharedArrayBuffer outside localhost. |
 | `ACTUAL_LOGIN_METHOD` | Optional | Actual Budget login method. Defaults to `password`; keep password enabled unless OpenID has been fully configured in Actual. |

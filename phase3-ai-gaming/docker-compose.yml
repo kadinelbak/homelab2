@@ -83,7 +83,7 @@ services:
   # See all env vars: https://github.com/itzg/docker-minecraft-server
   # ---------------------------------------------------------------------------
   minecraft:
-    image: itzg/minecraft-server:latest
+    image: itzg/minecraft-server:java17
     container_name: minecraft
     restart: unless-stopped
     profiles: ["minecraft", "gaming"]
@@ -93,20 +93,30 @@ services:
       - "25565:25565"
     environment:
       EULA: ${MINECRAFT_EULA}
-      MEMORY: ${MINECRAFT_MEMORY}
-      TYPE: ${MINECRAFT_TYPE}       # FORGE for Biomes O' Plenty
-      VERSION: ${MINECRAFT_VERSION}
+      MEMORY: ${MINECRAFT_MEMORY:-8G}
+      TYPE: MODRINTH
+      VERSION: "1.20.1"
+      MODRINTH_MODPACK: prominence-2-fabric
+      MODRINTH_LOADER: fabric
+      MODRINTH_MODPACK_VERSION_TYPE: release
+      MODRINTH_FORCE_SYNCHRONIZE: "true"
+      MODRINTH_EXCLUDE_FILES: |
+        shut-up-mcd
+        bettertrims
+        Debugify
+        ftbxemicompat-no-ambient
       OPS: ${MINECRAFT_OPS}
       TZ: ${TZ}
       # Biomes O' Plenty & heavy mods need more memory – tune MINECRAFT_MEMORY.
       # For a CurseForge modpack, set TYPE=AUTO and MODPACK_URL=<manifest url>
       DIFFICULTY: normal
       MAX_PLAYERS: 10
-      VIEW_DISTANCE: 8             # Reduce if server lags under 16GB RAM
-      MOTD: "Homelab Minecraft"
+      VIEW_DISTANCE: 8
+      SIMULATION_DISTANCE: 6
+      MOTD: "Prominence II RPG - Homelab"
       SPAWN_PROTECTION: 0
     volumes:
-      - ${DATA_PATH}/phase3-ai-gaming/data/minecraft:/data
+      - ${DATA_PATH}/phase3-ai-gaming/data/minecraft-prominence:/data
     # No network needed – only exposes port to LAN
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin game server version
@@ -137,6 +147,8 @@ services:
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET}
+      AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
+      AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
     volumes:
@@ -153,6 +165,38 @@ services:
       - "homepage.icon=n8n"
       - "homepage.href=http://${DOMAIN}:5678"
       - "homepage.description=Workflow automation"
+
+  # ---------------------------------------------------------------------------
+  # AI ORCHESTRATOR - Request intake, routing, approval, and worker handoff
+  # Internal target for n8n: ai-orchestrator:8095
+  # ---------------------------------------------------------------------------
+  ai-orchestrator:
+    build:
+      context: ./ai-orchestrator
+    container_name: ai_orchestrator
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai"]
+    environment:
+      TZ: ${TZ}
+      AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      AI_ORCHESTRATOR_PORT: 8095
+      AI_ORCHESTRATOR_DATA_DIR: /data
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/ai-orchestrator:/data
+    ports:
+      - "8095:8095"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      - n8n
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=AI Orchestrator"
+      - "homepage.icon=si-openai"
+      - "homepage.href=http://${DOMAIN}:8095/health"
+      - "homepage.description=Request routing and worker handoff"
 
   # ---------------------------------------------------------------------------
   # HOME ASSISTANT – Smart Home Hub

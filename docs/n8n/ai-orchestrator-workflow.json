@@ -1,0 +1,267 @@
+{
+  "name": "Jarvis - AI Orchestrator Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jarvis/request",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1f60fc9-4d71-4d15-8b67-df5d4e7d6a01",
+      "name": "Receive Jarvis Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        -180
+      ],
+      "webhookId": "jarvis-request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.AI_ORCHESTRATOR_URL || 'http://ai-orchestrator:8095') + '/requests'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AI_ORCHESTRATOR_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({request: $json.body.request || $json.body.prompt || $json.body.goal || $json.body.instruction, capability: $json.body.capability, inputs: $json.body.inputs || {}, limits: $json.body.limits || {maximum_runtime_seconds: 1800, maximum_cost_usd: 0}, permissions: $json.body.permissions || {may_execute: false, may_publish: false}})}}",
+        "options": {}
+      },
+      "id": "6ee6ac61-df06-45dc-9b23-29a6c59b8356",
+      "name": "Plan Action Contract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -360,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "38a2a664-9fe7-45ac-9b90-22af3096e86f",
+      "name": "Return Plan",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -100,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jarvis/action/approve",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "87ea33d9-4c59-4385-8ca4-adc940564e11",
+      "name": "Receive Approval",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        80
+      ],
+      "webhookId": "jarvis-action-approve"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.AI_ORCHESTRATOR_URL || 'http://ai-orchestrator:8095') + '/actions/' + $json.body.action_id + '/approve'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AI_ORCHESTRATOR_TOKEN}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a59511b2-fbb5-49c4-9c4f-c5a128dcd904",
+      "name": "Approve Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "d1328830-5890-421a-abd5-7f6720d99d86",
+      "name": "Return Approval",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -100,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jarvis/action/execute",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c4359574-4198-45fd-878b-2dc11ea69dd1",
+      "name": "Receive Execute",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        340
+      ],
+      "webhookId": "jarvis-action-execute"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.AI_ORCHESTRATOR_URL || 'http://ai-orchestrator:8095') + '/actions/' + $json.body.action_id + '/execute'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.AI_ORCHESTRATOR_TOKEN}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ba937a10-5e2b-4a4b-9b6e-4252150448f9",
+      "name": "Queue Worker Handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -360,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "a14bb3a9-90c7-48a6-bd3a-6a423997f6db",
+      "name": "Return Execution",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -100,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Receive Jarvis Request": {
+      "main": [
+        [
+          {
+            "node": "Plan Action Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Action Contract": {
+      "main": [
+        [
+          {
+            "node": "Return Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive Approval": {
+      "main": [
+        [
+          {
+            "node": "Approve Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve Action": {
+      "main": [
+        [
+          {
+            "node": "Return Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive Execute": {
+      "main": [
+        [
+          {
+            "node": "Queue Worker Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Worker Handoff": {
+      "main": [
+        [
+          {
+            "node": "Return Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "7f2042db-f69f-49c6-b5b6-a9e1adf2269b",
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "jarvis"
+    },
+    {
+      "name": "orchestration"
+    }
+  ]
+}
