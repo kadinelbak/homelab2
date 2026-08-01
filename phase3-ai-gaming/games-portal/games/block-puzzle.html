@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Block Puzzle</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      :root { --cell: min(9.2vw, 48px); }
+      .game { display: grid; gap: 16px; justify-items: center; }
+      .stats { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+      .stat { border: 1px solid #456797; border-radius: 8px; padding: 8px 12px; background: #14233a; }
+      .board { display: grid; grid-template-columns: repeat(8, var(--cell)); gap: 4px; padding: 8px; background: #0a1423; border: 1px solid #385a89; border-radius: 8px; }
+      .cell { width: var(--cell); aspect-ratio: 1; border-radius: 5px; background: #1b2c47; box-shadow: inset 0 0 0 1px #2b456b; }
+      .cell.filled, .mini.filled { background: var(--color); box-shadow: inset 0 -3px 0 rgba(0,0,0,.22); }
+      .cell.preview { outline: 3px solid #f5d36b; outline-offset: -3px; }
+      .pieces { display: grid; grid-template-columns: repeat(3, minmax(86px, 1fr)); gap: 12px; width: min(520px, 100%); }
+      .piece { min-height: 104px; border: 1px solid #456797; border-radius: 8px; background: #14233a; display: grid; place-items: center; cursor: grab; touch-action: none; }
+      .piece.used { opacity: .28; cursor: default; }
+      .shape { display: grid; gap: 4px; }
+      .mini { width: 20px; aspect-ratio: 1; border-radius: 4px; background: transparent; }
+      .message { color: #ffcc66; min-height: 24px; }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Block Puzzle</h1>
+      <p class="lead">Place all three pieces, clear full rows or columns, and keep the board open.</p>
+      <div class="toolbar"><button id="newGame" type="button">New Game</button></div>
+      <section class="game">
+        <div class="stats"><div class="stat">Score: <strong id="score">0</strong></div><div class="stat">Best: <strong id="best">0</strong></div></div>
+        <div id="board" class="board" aria-label="Block puzzle board"></div>
+        <div id="pieces" class="pieces"></div>
+        <div id="message" class="message"></div>
+      </section>
+    </main>
+    <script>
+      const SIZE = 8;
+      const COLORS = ["#59d7a5", "#ffcc66", "#6ea1e9", "#ff7b7b", "#c084fc", "#fb923c"];
+      const SHAPES = [
+        [[1]], [[1, 1]], [[1], [1]], [[1, 1, 1]], [[1], [1], [1]],
+        [[1, 1], [1, 1]], [[1, 0], [1, 0], [1, 1]], [[0, 1], [0, 1], [1, 1]],
+        [[1, 1, 1], [0, 1, 0]], [[1, 1, 0], [0, 1, 1]], [[0, 1, 1], [1, 1, 0]],
+        [[1, 1, 1], [1, 0, 0]], [[1, 1, 1, 1]], [[1], [1], [1], [1]]
+      ];
+      const boardEl = document.getElementById("board");
+      const piecesEl = document.getElementById("pieces");
+      const scoreEl = document.getElementById("score");
+      const bestEl = document.getElementById("best");
+      const messageEl = document.getElementById("message");
+      let board, pieces, score, active = null;
+      let best = Number(localStorage.getItem("homelab-block-best") || 0);
+
+      function start() {
+        board = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+        score = 0;
+        pieces = nextPieces();
+        messageEl.textContent = "";
+        render();
+      }
+      function nextPieces() {
+        return Array.from({ length: 3 }, (_, i) => {
+          const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+          return { shape, color: COLORS[Math.floor(Math.random() * COLORS.length)], used: false, id: String(Date.now() + i) };
+        });
+      }
+      function canPlace(piece, row, col) {
+        if (!piece || piece.used) return false;
+        return piece.shape.every((line, r) => line.every((v, c) => !v || (row + r < SIZE && col + c < SIZE && !board[row + r][col + c])));
+      }
+      function place(piece, row, col) {
+        piece.shape.forEach((line, r) => line.forEach((v, c) => { if (v) board[row + r][col + c] = piece.color; }));
+        piece.used = true;
+        active = null;
+        score += piece.shape.flat().filter(Boolean).length;
+        clearLines();
+        if (pieces.every((p) => p.used)) pieces = nextPieces();
+        if (!hasMove()) messageEl.textContent = "No moves left. Start a new game.";
+        best = Math.max(best, score);
+        localStorage.setItem("homelab-block-best", String(best));
+        render();
+      }
+      function clearLines() {
+        const rows = [], cols = [];
+        for (let i = 0; i < SIZE; i += 1) {
+          if (board[i].every(Boolean)) rows.push(i);
+          if (board.every((row) => row[i])) cols.push(i);
+        }
+        rows.forEach((r) => board[r].fill(null));
+        cols.forEach((c) => board.forEach((row) => row[c] = null));
+        if (rows.length || cols.length) score += (rows.length + cols.length) * 16;
+      }
+      function hasMove() {
+        return pieces.some((piece) => !piece.used && board.some((row, r) => row.some((_, c) => canPlace(piece, r, c))));
+      }
+      function render() {
+        scoreEl.textContent = score;
+        bestEl.textContent = best;
+        boardEl.innerHTML = "";
+        board.forEach((row, r) => row.forEach((color, c) => {
+          const cell = document.createElement("button");
+          cell.type = "button"; cell.className = "cell"; cell.dataset.row = r; cell.dataset.col = c;
+          if (color) { cell.classList.add("filled"); cell.style.setProperty("--color", color); }
+          cell.addEventListener("click", () => { if (active && canPlace(active, r, c)) place(active, r, c); });
+          boardEl.appendChild(cell);
+        }));
+        piecesEl.innerHTML = "";
+        pieces.forEach((piece) => {
+          const wrap = document.createElement("button");
+          wrap.type = "button"; wrap.className = "piece" + (piece.used ? " used" : ""); wrap.disabled = piece.used;
+          wrap.addEventListener("click", () => { active = piece; render(); });
+          const shape = document.createElement("div");
+          shape.className = "shape"; shape.style.gridTemplateColumns = `repeat(${piece.shape[0].length}, 20px)`;
+          piece.shape.forEach((line) => line.forEach((v) => {
+            const mini = document.createElement("div"); mini.className = "mini" + (v ? " filled" : ""); mini.style.setProperty("--color", piece.color); shape.appendChild(mini);
+          }));
+          wrap.appendChild(shape); piecesEl.appendChild(wrap);
+          if (active === piece) wrap.style.outline = "3px solid #f5d36b";
+        });
+      }
+      document.getElementById("newGame").addEventListener("click", start);
+      start();
+    </script>
+  </body>
+</html>

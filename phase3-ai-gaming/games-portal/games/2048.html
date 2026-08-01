@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2048</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .game { display: grid; gap: 14px; justify-items: center; touch-action: none; }
+      .score-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+      .score-box { background: #14233a; border: 1px solid #456797; border-radius: 8px; padding: 8px 12px; }
+      .grid { display: grid; grid-template-columns: repeat(4, minmax(58px, 96px)); gap: 8px; padding: 8px; border-radius: 8px; background: #0a1423; }
+      .tile { aspect-ratio: 1; border-radius: 6px; display: grid; place-items: center; font-weight: 800; font-size: clamp(22px, 7vw, 38px); background: #1b2c47; color: #edf3ff; }
+      .v2 { background: #d9e7ff; color: #15243a; } .v4 { background: #b9f5dc; color: #15243a; }
+      .v8 { background: #ffcc66; color: #15243a; } .v16 { background: #fb923c; }
+      .v32 { background: #ff7b7b; } .v64 { background: #ef4444; }
+      .v128 { background: #6ea1e9; } .v256 { background: #59d7a5; color: #10271d; }
+      .v512 { background: #c084fc; } .v1024 { background: #a78bfa; } .v2048 { background: #f5d36b; color: #172033; }
+      .message { color: #ffcc66; min-height: 24px; }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>2048</h1>
+      <p class="lead">Use arrow keys or swipe to merge matching tiles.</p>
+      <div class="toolbar"><button id="newGame" type="button">New Game</button></div>
+      <section class="game">
+        <div class="score-row"><div class="score-box">Score: <strong id="score">0</strong></div><div class="score-box">Best: <strong id="best">0</strong></div></div>
+        <div id="grid" class="grid" aria-label="2048 board"></div>
+        <div id="message" class="message"></div>
+      </section>
+    </main>
+    <script>
+      const gridEl = document.getElementById("grid"), scoreEl = document.getElementById("score"), bestEl = document.getElementById("best"), messageEl = document.getElementById("message");
+      let grid, score, won, startX, startY, best = Number(localStorage.getItem("homelab-2048-best") || 0);
+      function start() { grid = Array.from({ length: 4 }, () => Array(4).fill(0)); score = 0; won = false; addTile(); addTile(); render(); }
+      function addTile() { const empty = []; grid.forEach((r, y) => r.forEach((v, x) => { if (!v) empty.push([y, x]); })); if (!empty.length) return; const [y, x] = empty[Math.floor(Math.random() * empty.length)]; grid[y][x] = Math.random() < .9 ? 2 : 4; }
+      function merge(line) { const nums = line.filter(Boolean); const out = []; for (let i = 0; i < nums.length; i++) { if (nums[i] === nums[i + 1]) { out.push(nums[i] * 2); score += nums[i] * 2; i++; } else out.push(nums[i]); } while (out.length < 4) out.push(0); return out; }
+      function move(dir) {
+        const before = JSON.stringify(grid);
+        for (let i = 0; i < 4; i++) {
+          let line = dir === "left" || dir === "right" ? grid[i].slice() : grid.map((row) => row[i]);
+          if (dir === "right" || dir === "down") line.reverse();
+          line = merge(line);
+          if (dir === "right" || dir === "down") line.reverse();
+          for (let j = 0; j < 4; j++) { if (dir === "left" || dir === "right") grid[i][j] = line[j]; else grid[j][i] = line[j]; }
+        }
+        if (JSON.stringify(grid) !== before) { addTile(); best = Math.max(best, score); localStorage.setItem("homelab-2048-best", String(best)); render(); }
+      }
+      function hasMoves() { return grid.some((r) => r.includes(0)) || grid.some((r, y) => r.some((v, x) => (grid[y][x + 1] === v) || (grid[y + 1]?.[x] === v))); }
+      function render() {
+        scoreEl.textContent = score; bestEl.textContent = best; gridEl.innerHTML = "";
+        grid.flat().forEach((value) => { const tile = document.createElement("div"); tile.className = "tile" + (value ? " v" + value : ""); tile.textContent = value || ""; gridEl.appendChild(tile); });
+        if (!won && grid.flat().includes(2048)) { won = true; messageEl.textContent = "2048 reached. Keep going."; }
+        else if (!hasMoves()) messageEl.textContent = "No moves left. Start a new game.";
+        else if (!won) messageEl.textContent = "";
+      }
+      window.addEventListener("keydown", (e) => { const map = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }; if (map[e.key]) { e.preventDefault(); move(map[e.key]); } });
+      gridEl.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; }, { passive: true });
+      gridEl.addEventListener("touchend", (e) => { const dx = e.changedTouches[0].clientX - startX, dy = e.changedTouches[0].clientY - startY; if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return; move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up")); }, { passive: true });
+      document.getElementById("newGame").addEventListener("click", start);
+      start();
+    </script>
+  </body>
+</html>

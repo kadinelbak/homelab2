@@ -33,15 +33,24 @@
     <main class="container">
       <h1>Hearts Multiplayer (Open Source)</h1>
       <p class="lead">MIT-licensed multiplayer Hearts adapted for local tailnet play.</p>
-      <p class="muted">Create or join a room inside the game. Server runs locally on port 8094.</p>
+      <p class="muted">
+        Create or join a room inside the game. Server runs locally on port 8094.
+        If it is not running, use <a href="hearts.html">Hearts Lite</a>.
+      </p>
       <div class="frame-wrap">
         <iframe class="game-frame" src="about:blank" title="Open source hearts multiplayer" id="heartsFrame"></iframe>
       </div>
+      <p class="muted">
+        Direct multiplayer page:
+        <a id="heartsDirect" href="#">open Hearts Multiplayer</a>
+      </p>
     </main>
 
     <script>
       const frame = document.getElementById("heartsFrame");
-      frame.src = window.location.protocol + "//" + window.location.hostname + ":8094";
+      const url = window.location.protocol + "//" + window.location.hostname + ":8094";
+      frame.src = url;
+      document.getElementById("heartsDirect").href = url;
     </script>
   </body>
 </html>

@@ -1,175 +1,206 @@
-var myWords = ["BANANA", "KIWI", "MANGO", "ORANGE", "APPLE", "WATERMELON", "GRAPES", "PINEAPPLE"];
-var tempWords = [];
-var selectedWord = "";
-var selectedLetters = []; // Array to store selected letter indices
+const WORDS = [
+  "BANANA",
+  "KIWI",
+  "MANGO",
+  "ORANGE",
+  "APPLE",
+  "WATERMELON",
+  "GRAPES",
+  "PINEAPPLE",
+];
 
-$(document).ready(function() {
-    alert("RULES\n1. Words could be displayed horizontally, vertically or diagonally.\n2. To select the letters, press Shift or Cmd key and then click the letters in the correct order and then release the Shift or Cmd key.");
-    arrangeGame();
+const SIZE = 12;
+const DIRECTIONS = [
+  { row: 0, col: 1 },
+  { row: 1, col: 0 },
+  { row: 1, col: 1 },
+  { row: 1, col: -1 },
+];
 
-    $(".individual").click(function(event) {
-        if (event.shiftKey || event.metaKey) { // Check for Shift or Cmd key
-            $(this).addClass("colorPurple");
-            selectedWord += $(this).html();
-            selectedLetters.push($(this).index()); // Store the index of the selected letter
-            console.log(selectedWord);
-        }
+let grid = [];
+let found = new Set();
+let selection = [];
+let isSelecting = false;
+
+const lettersEl = document.getElementById("letters");
+const hintEl = document.getElementById("hint");
+
+function randomLetter() {
+  return String.fromCharCode(65 + Math.floor(Math.random() * 26));
+}
+
+function emptyGrid() {
+  grid = Array.from({ length: SIZE }, () =>
+    Array.from({ length: SIZE }, () => ({ letter: "", word: null }))
+  );
+}
+
+function canPlace(word, row, col, direction) {
+  for (let i = 0; i < word.length; i += 1) {
+    const r = row + direction.row * i;
+    const c = col + direction.col * i;
+    if (r < 0 || r >= SIZE || c < 0 || c >= SIZE) return false;
+    const existing = grid[r][c].letter;
+    if (existing && existing !== word[i]) return false;
+  }
+  return true;
+}
+
+function placeWord(word) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const direction = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
+    const row = Math.floor(Math.random() * SIZE);
+    const col = Math.floor(Math.random() * SIZE);
+    if (!canPlace(word, row, col, direction)) continue;
+
+    for (let i = 0; i < word.length; i += 1) {
+      const cell = grid[row + direction.row * i][col + direction.col * i];
+      cell.letter = word[i];
+      cell.word = word;
+    }
+    return true;
+  }
+  return false;
+}
+
+function fillGrid() {
+  emptyGrid();
+  WORDS.slice()
+    .sort((a, b) => b.length - a.length)
+    .forEach(placeWord);
+
+  for (const row of grid) {
+    for (const cell of row) {
+      if (!cell.letter) cell.letter = randomLetter();
+    }
+  }
+}
+
+function renderHints() {
+  hintEl.innerHTML = "";
+  for (const word of WORDS) {
+    const item = document.createElement("p");
+    item.textContent = word;
+    item.dataset.word = word;
+    if (found.has(word)) item.classList.add("done");
+    hintEl.appendChild(item);
+  }
+}
+
+function renderGrid() {
+  lettersEl.innerHTML = "";
+  grid.forEach((row, rowIndex) => {
+    row.forEach((cell, colIndex) => {
+      const button = document.createElement("button");
+      button.className = "individual";
+      button.type = "button";
+      button.textContent = cell.letter;
+      button.dataset.row = String(rowIndex);
+      button.dataset.col = String(colIndex);
+      button.setAttribute("aria-label", `Letter ${cell.letter}`);
+      lettersEl.appendChild(button);
     });
+  });
+}
 
-    $(document).keydown(function() {
-        selectedWord = "";
-        selectedLetters = []; // Clear the selected letters array
-        $(".individual").removeClass("colorPurple");
-    }).keyup(function() {
-        if (myWords.indexOf(selectedWord) >= 0 && isStraightLine(selectedLetters)) {
-            // Check if the word is in the list AND letters are in a straight line
-            $(".colorPurple").addClass("correctlySelected");
-            $("#hint p").each(function(key, item) {
-                if (selectedWord == $(item).html()) {
-                    $(this).addClass("done");
-                }
-                if ($(".done").length == myWords.length) {
-                    $("#hint").empty();
-                    $("#hint").append("<p id=message> GOOD JOB! </p>");
-                }
-            });
-        }
-    });
-});
-function arrangeGame()
-{
-    $("#hint").show();
-    $.each(myWords, function(key, item){
-        $("#hint").append("<p>" + item + "</p>");
-    });
-    for (var i = 1; i <= 12; i++)
-    {
-        for (var j = 1; j <= 12; j++)
-        {
-            $("#letters").append("<div class=individual data-row=" + i + " data-column=" + j + "></div>");         
-        }
+function getCellFromEvent(event) {
+  const point = event.touches?.[0] || event.changedTouches?.[0] || event;
+  const target = document.elementFromPoint(point.clientX, point.clientY);
+  return target?.closest?.(".individual") || null;
+}
+
+function cellKey(cell) {
+  return `${cell.dataset.row},${cell.dataset.col}`;
+}
+
+function clearSelection() {
+  selection = [];
+  lettersEl.querySelectorAll(".colorPurple").forEach((cell) => {
+    cell.classList.remove("colorPurple");
+  });
+}
+
+function addCell(cell) {
+  if (!cell || selection.some((item) => item.key === cellKey(cell))) return;
+  cell.classList.add("colorPurple");
+  selection.push({
+    key: cellKey(cell),
+    row: Number(cell.dataset.row),
+    col: Number(cell.dataset.col),
+    letter: cell.textContent,
+    element: cell,
+  });
+}
+
+function isStraightLine(items) {
+  if (items.length < 2) return false;
+  const rowStep = Math.sign(items[1].row - items[0].row);
+  const colStep = Math.sign(items[1].col - items[0].col);
+  if (rowStep === 0 && colStep === 0) return false;
+
+  for (let i = 1; i < items.length; i += 1) {
+    const prev = items[i - 1];
+    const current = items[i];
+    if (current.row - prev.row !== rowStep || current.col - prev.col !== colStep) {
+      return false;
     }
-    placeCorrectLetters(myWords);
-    placeCorrectLetters(tempWords);
-    $.each($(".individual"), function(key, item){
-        if($(item).attr("data-word") == undefined)
-            $(this).html(randomLetter());
-    })
+  }
+  return true;
 }
-function randomLetter()
-{
-    var alphabets = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    return alphabets.charAt(Math.floor(Math.random()*26));
-}
-function checkOccupied(word, starting, orientation)
-{
-    var status = ""; var incrementBy = 0;
-    if(orientation == "row")
-        incrementBy = 1;
-    else if( orientation == "column")
-        incrementBy = 12;
-    else if( orientation == "diagonal")
-        incrementBy = 13;
-    for (var p=starting, q=0; q<word.length;q++)
-    {
-        if($(".individual:eq(" + p + ")").attr("data-word") == undefined)
-            status = "empty";
-        else
-        {
-            status = "occupied";
-            break;
-        }
-        p += incrementBy;
+
+function finishSelection() {
+  const selectedWord = selection.map((item) => item.letter).join("");
+  const reversedWord = selection
+    .map((item) => item.letter)
+    .reverse()
+    .join("");
+  const match = WORDS.find((word) => word === selectedWord || word === reversedWord);
+
+  if (match && isStraightLine(selection)) {
+    found.add(match);
+    selection.forEach((item) => item.element.classList.add("correctlySelected"));
+    renderHints();
+    if (found.size === WORDS.length) {
+      hintEl.innerHTML = '<p id="message">GOOD JOB!</p>';
     }
-    return status;
-}
-function placeCorrectLetters(myArr)
-{
-    var positions = ["row","column","diagonal"];
-    var nextLetter = 0; var newStart = 0;
-    for (var i = 0; i < myArr.length; i ++)
-    {
-        var orientation = positions[Math.floor(Math.random()*positions.length)];
-        // alert(orientation); // Remove or comment out this line
-        var start = Math.floor(Math.random()*$(".individual").length);
-        var myRow = $(".individual:eq(" + start + ")").data("row");
-        var myColumn = $(".individual:eq(" + start + ")").data("column");
-        if (orientation == "row")
-            {
-                nextLetter = 1;
-                if ((myColumn*1) + myArr[i].length <= 12)
-                {
-                    newStart = start;
-                }            
-                else
-                {
-                    var newColumn = 12 - myArr[i].length;
-                    newStart = $(".individual [data-row = " + myRow + " ] [data-column = " + newColumn + "]").index();
-                }
-            }
-        else if (orientation == "column")
-            {
-                nextLetter = 12;
-                if ((myRow*1) + myArr[i].length <= 12)
-                {
-                    newStart = start;
-                }
-                else
-                {
-                    var newRow = 12 - myArr[i].length;
-                    newStart = $(".individual [data-row =" + newRow + " ] [data-column= " + myColumn + "]").index();
-                }    
-            }
-            else if(orientation == "diagonal")
-            {
-                nextLetter = 13;
-                if((myColumn*1) + myArr[i].length <= 12 && (myRow*1) + myArr[i].length <= 12)
-                    newStart = start;
-                if((myColumn*1) + myArr[i].length > 12)
-                {
-                    var newColumn = 12 - myArr[i].length;
-                    newStart = $(".individual[data-row=" + myRow + "][data-column=" + newColumn + "]").index();
-                }
-                if((myRow*1) + myArr[i].length > 12)
-                {
-                    var newRow = 12 - myArr[i].length;
-                    newStart = $(".individual[data-row=" + newRow + "][data-column=" + myColumn + "]").index();
-                }
-                if((myColumn*1) + myArr[i].length > 12 && (myRow*1) + myArr[i].length > 12)
-                {
-                    var newColumn = 12 - myArr[i].length;
-                    var newRow = 12 - myArr[i].length;
-                    newStart = $(".individual[data-row=" + newRow + "][data-column=" + newColumn + "]").index();
-                }
-            }
-            var characters = myArr[i].split("");
-            var nextPosition = 0;
-            var occupied = checkOccupied(myArr[i], newStart, orientation);
-            if (occupied == "empty")
-            {
-                $.each(characters, function(key, item){
-                    $(".individual:eq(" + (newStart + nextPosition) + ")").html(item);
-                    $(".individual:eq(" + (newStart + nextPosition) + ")").attr("data-word", myArr[i]);
-                    nextPosition += nextLetter;
-                })
-            }
-            else 
-            {
-                tempWords.push(myArr[i]);
-            }
-    
-    }
+  }
+  clearSelection();
 }
 
-function isStraightLine(indices) {
-    if (indices.length < 2) {
-        return false; // Need at least two letters to form a line
-    }
-
-    // Calculate differences between consecutive indices
-    var differences = indices.slice(1).map((value, index) => value - indices[index]);
-
-    // Check if all differences are the same (indicates a straight line)
-    return differences.every(value => value === differences[0]);
+function startSelection(event) {
+  event.preventDefault();
+  clearSelection();
+  isSelecting = true;
+  addCell(getCellFromEvent(event));
 }
 
+function moveSelection(event) {
+  if (!isSelecting) return;
+  event.preventDefault();
+  addCell(getCellFromEvent(event));
+}
+
+function endSelection(event) {
+  if (!isSelecting) return;
+  event.preventDefault();
+  isSelecting = false;
+  finishSelection();
+}
+
+function bindEvents() {
+  lettersEl.addEventListener("pointerdown", startSelection);
+  lettersEl.addEventListener("pointermove", moveSelection);
+  window.addEventListener("pointerup", endSelection);
+  lettersEl.addEventListener("touchstart", startSelection, { passive: false });
+  lettersEl.addEventListener("touchmove", moveSelection, { passive: false });
+  window.addEventListener("touchend", endSelection, { passive: false });
+}
+
+function startGame() {
+  fillGrid();
+  renderHints();
+  renderGrid();
+  bindEvents();
+}
+
+startGame();

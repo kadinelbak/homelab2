@@ -1,24 +1,29 @@
 
 
 .container{
-  position: absolute;
-  bottom: 0; top: 0; left: 0; right: 0;
+  position: relative;
   text-align: center;
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
+  background: #f4f7fb;
+  color: #172033;
 }
 
 .crosswordDisplay {
-    top: 5rem;
+    top: 0;
 }
 .line{
   text-align: left;
 }
 .clueBlock{
   position: relative;
-  margin-bottom: 5em;
+  margin: 1em auto 2em;
+  max-width: 760px;
 }
 .clueDirection{
     text-align: left;
-    margin: 1em 0 0.25em 122px;
+    margin: 1em 0 0.25em 0;
     font-size: 1.7em;
     font-weight: bold;
     color: #000;
@@ -34,7 +39,7 @@
   margin: 0 20px 0 0;
 }
 .clue{
-  width: 500px;
+  width: min(500px, 68vw);
   margin: 0 0 4px 0;
   font-size: 18px;
 }
@@ -55,8 +60,11 @@
 }
 
 .crossword{
-  display: block;  
-  background-color: rgb(32,32,32);  
+  display: inline-block;  
+  background-color: rgb(32,32,32);
+  padding: 4px;
+  max-width: 96vw;
+  overflow: auto;
 }
 .square{  
   margin: 0 1px 1px 0;
@@ -111,13 +119,18 @@ border-color: rgba(0,0,0,0);
   visibility: hidden;
 }
 .btn.shuf{
-  font-size: 30px;
+  font-size: 20px;
+  display: inline-block;
+  margin-top: 12px;
 }
 .btn{
-  font-size: 22px;
+  font-size: 18px;
   border-color: rgba(0,0,0,0);
-  margin: 0;
+  margin: 0 6px 8px;
   outline: 0;
+  background: #dce8f8;
+  border-radius: 8px;
+  padding: 8px 12px;
 }
 .btn:hover{
   cursor: pointer;
@@ -125,15 +138,30 @@ border-color: rgba(0,0,0,0);
 }
 
 #btnCheck {
-    position: absolute;
-    right: 2rem;
-    top: 1rem;
     cursor: pointer;
 }
 
 #btnReset {
-    position: absolute;
-    left: 2rem;
-    top: 1rem;
     cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .container {
+    padding: 10px;
+  }
+
+  .square,
+  .char {
+    font-size: 18px;
+  }
+
+  .word {
+    width: 74px;
+    margin-right: 8px;
+  }
+
+  .clue {
+    width: calc(100vw - 120px);
+    font-size: 14px;
+  }
 }

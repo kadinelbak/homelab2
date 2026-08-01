@@ -98,6 +98,7 @@ bash scripts/setup.sh --validate-only
 | `ACTUAL_HTTPS_KEY` | Yes for direct-port Actual HTTPS | Path inside the container to Actual's HTTPS private key. Defaults to `/data/selfhost.key`; generate it with `bash scripts/ensure-actual-https-cert.sh`. |
 | `ACTUAL_HTTPS_CERT` | Yes for direct-port Actual HTTPS | Path inside the container to Actual's HTTPS certificate. Defaults to `/data/selfhost.crt`; generate it with `bash scripts/ensure-actual-https-cert.sh`. |
 | `STIRLING_PDF_ENABLE_LOGIN` | Optional | Enables Stirling PDF native username/password login. Defaults to `true`. |
+| `STIRLING_PDF_LOGIN_METHOD` | Optional | Stirling PDF login method. Defaults to `normal` for username/password login; use `all` only when SSO is configured. |
 | `STIRLING_PDF_INITIAL_USERNAME` | Optional | Initial Stirling PDF admin username, used only before the Stirling database/account exists. |
 | `STIRLING_PDF_INITIAL_PASSWORD` | Yes for Stirling PDF | Initial Stirling PDF admin password. Change it in the app after first login; later env changes do not rotate an existing account. |
 | `MINECRAFT_EULA` | Yes for Minecraft | Must be `TRUE` to accept the Minecraft server EULA. |

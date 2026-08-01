@@ -578,11 +578,49 @@ String.prototype.replaceAll = function (replaceThis, withThis) {
    return this.replace(re, withThis);
 };
 
+function LoadDefaultPuzzle() {
+  var entries = [
+    ["SERVER", "Machine that hosts services (6)"],
+    ["ROUTER", "Device that forwards network traffic (6)"],
+    ["DOCKER", "Container platform used in many homelabs (6)"],
+    ["BACKUP", "Copy kept for recovery (6)"],
+    ["CACHE", "Fast temporary storage (5)"],
+    ["PORT", "Network service number (4)"],
+    ["LINUX", "Common server operating system (5)"],
+    ["PROXY", "Service that forwards requests (5)"],
+    ["RAID", "Disk redundancy acronym (4)"],
+    ["SHELL", "Command-line interface (5)"],
+    ["HTTPS", "Encrypted web protocol (5)"],
+    ["DOMAIN", "Human-friendly internet name (6)"],
+    ["SCRIPT", "Small automation program (6)"],
+    ["FIREWALL", "Network traffic filter (8)"],
+    ["TAILSCALE", "Private mesh VPN used for access (9)"],
+    ["UPTIME", "How long a service has been running (6)"],
+    ["VOLUME", "Persistent container storage (6)"],
+    ["MONITOR", "Watch service health (7)"],
+    ["STATIC", "Served as files without a backend (6)"],
+    ["LOCAL", "Running on this network (5)"]
+  ];
+  var lines = document.getElementsByClassName("line");
+  for (var i = 0; i < lines.length; i++) {
+    var word = lines[i].getElementsByClassName("word")[0];
+    var clue = lines[i].getElementsByClassName("clue")[0];
+    if (entries[i]) {
+      word.value = entries[i][0];
+      clue.value = entries[i][1];
+    } else {
+      word.value = "";
+      clue.value = "";
+    }
+  }
+}
+
 
 //---------------------------------//
 //   INITIAL LOAD                  //
 //---------------------------------//
 
+LoadDefaultPuzzle();
 Create();
 Generate();
 Play();

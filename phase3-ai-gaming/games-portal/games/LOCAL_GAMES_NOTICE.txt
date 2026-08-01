@@ -1,0 +1,5 @@
+Local self-contained games in this directory:
+- block-puzzle.html: original local implementation inspired by public-domain block puzzle mechanics.
+- 2048.html: original local implementation of the well-known 2048 mechanic, hosted as an ad-free local puzzle.
+
+These files were added for the homelab games portal and do not embed third-party assets or remote scripts.
