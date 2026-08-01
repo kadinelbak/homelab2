@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snake</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      .game {
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+      }
+
+      .stats {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .stat {
+        border: 1px solid #456797;
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: #14233a;
+      }
+
+      canvas {
+        width: min(92vw, 560px);
+        aspect-ratio: 1;
+        border: 1px solid #456797;
+        border-radius: 8px;
+        background: #09111f;
+        touch-action: none;
+      }
+
+      .pad {
+        display: grid;
+        grid-template-columns: repeat(3, 58px);
+        gap: 8px;
+      }
+
+      .pad button {
+        min-height: 50px;
+        border-radius: 8px;
+      }
+
+      .pad .wide {
+        grid-column: span 3;
+      }
+
+      .message {
+        color: #ffcc66;
+        min-height: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home-fab" href="../index.html" aria-label="Return to games home">Home</a>
+    <main class="container">
+      <a class="back-link" href="../index.html">Back to games</a>
+      <h1>Snake</h1>
+      <p class="lead">Eat apples, grow longer, and stay off the walls.</p>
+      <div class="toolbar">
+        <button id="newGame" type="button">New Game</button>
+        <button id="pauseGame" type="button">Pause</button>
+      </div>
+      <section class="game">
+        <div class="stats">
+          <div class="stat">Score: <strong id="score">0</strong></div>
+          <div class="stat">Best: <strong id="best">0</strong></div>
+        </div>
+        <canvas id="board" width="560" height="560" aria-label="Snake game board"></canvas>
+        <div class="pad" aria-label="Touch controls">
+          <span></span><button type="button" data-dir="up">Up</button><span></span>
+          <button type="button" data-dir="left">Left</button><button type="button" data-dir="down">Down</button><button type="button" data-dir="right">Right</button>
+        </div>
+        <div id="message" class="message"></div>
+      </section>
+    </main>
+    <script>
+      const canvas = document.getElementById("board");
+      const ctx = canvas.getContext("2d");
+      const scoreEl = document.getElementById("score");
+      const bestEl = document.getElementById("best");
+      const messageEl = document.getElementById("message");
+      const size = 20;
+      const cell = canvas.width / size;
+      let snake, apple, direction, nextDirection, score, timer, paused, gameOver;
+      let best = Number(localStorage.getItem("homelab-snake-best") || 0);
+      let touchStart = null;
+
+      function start() {
+        snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }];
+        direction = { x: 1, y: 0 };
+        nextDirection = direction;
+        score = 0;
+        paused = false;
+        gameOver = false;
+        placeApple();
+        messageEl.textContent = "";
+        clearInterval(timer);
+        timer = setInterval(tick, 115);
+        draw();
+      }
+
+      function placeApple() {
+        do {
+          apple = { x: Math.floor(Math.random() * size), y: Math.floor(Math.random() * size) };
+        } while (snake.some((part) => part.x === apple.x && part.y === apple.y));
+      }
+
+      function setDirection(dir) {
+        const map = {
+          up: { x: 0, y: -1 },
+          down: { x: 0, y: 1 },
+          left: { x: -1, y: 0 },
+          right: { x: 1, y: 0 },
+        };
+        const wanted = map[dir];
+        if (!wanted || wanted.x + direction.x === 0 && wanted.y + direction.y === 0) return;
+        nextDirection = wanted;
+      }
+
+      function tick() {
+        if (paused || gameOver) return;
+        direction = nextDirection;
+        const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+        const hitWall = head.x < 0 || head.x >= size || head.y < 0 || head.y >= size;
+        const hitSelf = snake.some((part) => part.x === head.x && part.y === head.y);
+        if (hitWall || hitSelf) {
+          gameOver = true;
+          clearInterval(timer);
+          messageEl.textContent = "Game over. Start a new game.";
+          draw();
+          return;
+        }
+
+        snake.unshift(head);
+        if (head.x === apple.x && head.y === apple.y) {
+          score += 10;
+          best = Math.max(best, score);
+          localStorage.setItem("homelab-snake-best", String(best));
+          placeApple();
+        } else {
+          snake.pop();
+        }
+        draw();
+      }
+
+      function draw() {
+        scoreEl.textContent = score;
+        bestEl.textContent = best;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#0b1526";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = "#182a44";
+        for (let i = 0; i <= size; i += 1) {
+          ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, canvas.height); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(canvas.width, i * cell); ctx.stroke();
+        }
+        ctx.fillStyle = "#ff7b7b";
+        ctx.beginPath();
+        ctx.arc(apple.x * cell + cell / 2, apple.y * cell + cell / 2, cell * 0.36, 0, Math.PI * 2);
+        ctx.fill();
+        snake.forEach((part, index) => {
+          ctx.fillStyle = index === 0 ? "#ffcc66" : "#59d7a5";
+          ctx.fillRect(part.x * cell + 3, part.y * cell + 3, cell - 6, cell - 6);
+        });
+      }
+
+      window.addEventListener("keydown", (event) => {
+        const map = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+        if (map[event.key]) {
+          event.preventDefault();
+          setDirection(map[event.key]);
+        }
+      });
+      document.querySelectorAll("[data-dir]").forEach((button) => {
+        button.addEventListener("click", () => setDirection(button.dataset.dir));
+      });
+      canvas.addEventListener("touchstart", (event) => {
+        touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+      }, { passive: true });
+      canvas.addEventListener("touchend", (event) => {
+        if (!touchStart) return;
+        const dx = event.changedTouches[0].clientX - touchStart.x;
+        const dy = event.changedTouches[0].clientY - touchStart.y;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+        setDirection(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
+      }, { passive: true });
+      document.getElementById("newGame").addEventListener("click", start);
+      document.getElementById("pauseGame").addEventListener("click", () => {
+        paused = !paused;
+        document.getElementById("pauseGame").textContent = paused ? "Resume" : "Pause";
+        messageEl.textContent = paused ? "Paused." : "";
+      });
+      start();
+    </script>
+  </body>
+</html>
