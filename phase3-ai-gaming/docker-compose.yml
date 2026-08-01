@@ -130,7 +130,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
-    profiles: ["n8n", "automation"]
+    profiles: ["n8n", "automation", "orchestration"]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -227,6 +227,36 @@ services:
       - "homepage.icon=si-openai"
       - "homepage.href=http://${DOMAIN}:8095/health"
       - "homepage.description=Request routing and worker handoff"
+
+  # ---------------------------------------------------------------------------
+  # JARVIS CHAT - Simple homelab request GUI for the AI orchestrator
+  # ---------------------------------------------------------------------------
+  jarvis-chat:
+    build:
+      context: ./jarvis-chat
+    container_name: jarvis_chat
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai"]
+    environment:
+      TZ: ${TZ}
+      AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
+      AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
+      JARVIS_CHAT_PORT: 18100
+    ports:
+      - "18100:18100"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      - ai-orchestrator
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=Jarvis Chat"
+      - "homepage.icon=si-openai"
+      - "homepage.href=http://${DOMAIN}:18100"
+      - "homepage.description=Simple request console for Jarvis"
 
   # ---------------------------------------------------------------------------
   # HOME ASSISTANT – Smart Home Hub

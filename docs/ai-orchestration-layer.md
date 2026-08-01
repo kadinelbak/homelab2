@@ -16,6 +16,14 @@ It does not run Codex, Meshy, Home Assistant, or CAD tools directly yet. It rout
 
 n8n is the recommended first GUI for orchestration. Use it for intake forms, webhook triggers, approvals, notifications, and visible workflow editing. Keep durable policy decisions, action contracts, and worker boundaries in `ai-orchestrator` code so the visual workflow cannot accidentally become an unrestricted super-agent.
 
+For day-to-day use, open Jarvis Chat:
+
+```text
+http://<tailscale-host-or-ip>:18100
+```
+
+Jarvis Chat is a small request console that sends requests to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
+
 Import this workflow into n8n:
 
 ```text
