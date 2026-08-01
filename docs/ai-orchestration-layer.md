@@ -9,7 +9,7 @@ It does not run Codex, Meshy, Home Assistant, or CAD tools directly yet. It rout
 - Container: `ai_orchestrator`
 - Compose profile: `orchestration`
 - Internal URL: `http://ai-orchestrator:8095`
-- Host URL: `http://<host>:8095`
+- Host URL over Tailscale: `http://<tailscale-host-or-ip>:8095`
 - Data: `${DATA_PATH}/phase3-ai-gaming/data/ai-orchestrator`
 
 ## GUI
@@ -20,6 +20,19 @@ Import this workflow into n8n:
 
 ```text
 docs/n8n/ai-orchestrator-workflow.json
+```
+
+Or import it on the server with the one-shot Compose importer:
+
+```bash
+cd phase3-ai-gaming
+docker compose --env-file ../.env --profile orchestration up n8n-import-ai-workflows
+```
+
+Then open n8n over Tailscale:
+
+```text
+http://<tailscale-host-or-ip>:5678
 ```
 
 The workflow exposes three webhooks:

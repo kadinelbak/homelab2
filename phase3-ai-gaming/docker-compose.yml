@@ -167,6 +167,36 @@ services:
       - "homepage.description=Workflow automation"
 
   # ---------------------------------------------------------------------------
+  # N8N AI WORKFLOW IMPORT - One-shot importer for Jarvis/orchestrator workflows
+  # Run with: docker compose --env-file ../.env --profile orchestration up n8n-import-ai-workflows
+  # ---------------------------------------------------------------------------
+  n8n-import-ai-workflows:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n_import_ai_workflows
+    restart: "no"
+    profiles: ["orchestration"]
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: homelab_postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET}
+    volumes:
+      - ../docs/n8n:/import:ro
+    networks:
+      - homelab_internal
+    depends_on:
+      - n8n
+    command: ["n8n", "import:workflow", "--input=/import/ai-orchestrator-workflow.json"]
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # ---------------------------------------------------------------------------
   # AI ORCHESTRATOR - Request intake, routing, approval, and worker handoff
   # Internal target for n8n: ai-orchestrator:8095
   # ---------------------------------------------------------------------------
