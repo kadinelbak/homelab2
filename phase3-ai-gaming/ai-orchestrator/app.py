@@ -47,7 +47,7 @@ LLM_PROFILES = {
     "deep_120b": {
         "profile": "deep_120b",
         "provider": os.environ.get("JARVIS_DEEP_LLM_PROVIDER", "external_openai_compatible"),
-        "model": os.environ.get("JARVIS_DEEP_LLM_MODEL", "nemotron-ultra-120b"),
+        "model": os.environ.get("JARVIS_DEEP_LLM_MODEL", "nemotron-3-super-120b-a12b"),
         "base_url": os.environ.get("JARVIS_DEEP_LLM_BASE_URL", ""),
         "configured": bool(os.environ.get("JARVIS_DEEP_LLM_API_KEY") and os.environ.get("JARVIS_DEEP_LLM_BASE_URL")),
         "use_for": "complex reasoning, architecture, coding plans, multi-step decomposition",
@@ -78,11 +78,11 @@ CAPABILITIES = [
     {
         "capability": "manage_tasks",
         "worker": "tasks_worker",
-        "adapter_type": "local_llm_fallback",
+        "adapter_type": "google_tools_worker",
         "cost_class": "local",
         "requires_approval": False,
-        "execution_requires_approval": True,
-        "tools": ["tasks.local_proposal"],
+        "execution_requires_approval": False,
+        "tools": ["google.tasks"],
         "description": "Create, update, complete, delete, or list personal tasks and to-dos.",
     },
     {
@@ -108,11 +108,11 @@ CAPABILITIES = [
     {
         "capability": "manage_contacts",
         "worker": "contacts_worker",
-        "adapter_type": "local_llm_fallback",
+        "adapter_type": "google_tools_worker",
         "cost_class": "local",
         "requires_approval": False,
-        "execution_requires_approval": True,
-        "tools": ["contacts.local_proposal"],
+        "execution_requires_approval": False,
+        "tools": ["google.contacts"],
         "description": "Find, create, update, or summarize contact information.",
     },
     {
@@ -494,6 +494,8 @@ def google_tools_result(action):
         artifacts = []
         if data.get("event"):
             artifacts.append({"type": "calendar_event", "item": data.get("event")})
+        elif data.get("deleted"):
+            artifacts.append({"type": "calendar_deleted", "item": data.get("deleted")})
         else:
             artifacts.append({"type": "calendar_events", "items": data.get("events", [])})
         return {

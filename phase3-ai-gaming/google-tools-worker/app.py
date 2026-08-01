@@ -50,7 +50,8 @@ def write_json(path, payload):
 
 def urlopen_json(req, timeout=60):
     with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8") or "{}")
+        raw = response.read().decode("utf-8") or ""
+        return json.loads(raw) if raw else {}
 
 
 def exchange_code(code):
@@ -203,6 +204,22 @@ def combined_request_text(payload):
     return "\n".join(parts)
 
 
+def current_request_text(payload):
+    return (payload.get("request") or "").strip()
+
+
+def calendar_delete_intent(text):
+    lowered = text.lower()
+    return any(term in lowered for term in ("delete", "remove", "cancel", "clear"))
+
+
+def vague_calendar_followup(text):
+    lowered = text.lower().strip()
+    return lowered in {"yes", "yeah", "yep", "do it", "please do", "create it", "create one", "create one though"} or (
+        "create one" in lowered or "do that" in lowered
+    )
+
+
 def calendar_write_intent(text):
     lowered = text.lower()
     return any(
@@ -291,6 +308,54 @@ def calendar_create_event(payload):
             f"Start: {(created.get('start') or {}).get('dateTime')}\n"
             f"End: {(created.get('end') or {}).get('dateTime')}"
         ),
+    }
+
+
+def calendar_events_between(start, end):
+    params = urllib.parse.urlencode(
+        {
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "timeMin": (start - timedelta(minutes=1)).isoformat(),
+            "timeMax": (end + timedelta(minutes=1)).isoformat(),
+            "maxResults": 20,
+        }
+    )
+    data = google_request("GET", f"https://www.googleapis.com/calendar/v3/calendars/primary/events?{params}")
+    return data.get("items", [])
+
+
+def event_start_text(event):
+    return (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date") or ""
+
+
+def calendar_delete_event(payload):
+    inferred = parse_event_payload(payload)
+    start = datetime.fromisoformat(inferred["start"]["dateTime"])
+    end = datetime.fromisoformat(inferred["end"]["dateTime"])
+    summary = inferred.get("summary") or "Untitled event"
+    candidates = []
+    for event in calendar_events_between(start, end):
+        event_start = event_start_text(event)
+        same_start = event_start.startswith(start.isoformat()[:16])
+        event_summary = event.get("summary") or "Untitled event"
+        same_summary = event_summary == summary or summary == "Untitled event"
+        if same_start and same_summary:
+            candidates.append(event)
+
+    deleted = []
+    for event in candidates:
+        google_request(
+            "DELETE",
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events/" + event["id"],
+            timeout=60,
+        )
+        deleted.append({"id": event.get("id"), "summary": event.get("summary") or "Untitled event", "start": event.get("start", {})})
+
+    return {
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "text": f"Deleted {len(deleted)} matching calendar event(s)." if deleted else "I did not find a matching calendar event to delete.",
     }
 
 
@@ -466,8 +531,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.OK, {"ok": True, **result, "text": response_text_for_calendar(result)})
                 return
             if path == "/calendar/assist":
-                text = combined_request_text(payload)
-                if calendar_write_intent(text):
+                current = current_request_text(payload)
+                combined = combined_request_text(payload)
+                if calendar_delete_intent(current):
+                    deleted = calendar_delete_event(payload)
+                    self.write_json(HTTPStatus.OK, {"ok": True, "deleted": deleted, "text": deleted["text"]})
+                elif calendar_write_intent(current) or (vague_calendar_followup(current) and calendar_write_intent(combined)):
                     created = calendar_create_event(payload)
                     self.write_json(HTTPStatus.OK, {"ok": True, "event": created, "text": created["text"]})
                 else:
@@ -477,6 +546,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/calendar/create-event":
                 created = calendar_create_event(payload)
                 self.write_json(HTTPStatus.OK, {"ok": True, "event": created, "text": created["text"]})
+                return
+            if path == "/calendar/delete-event":
+                deleted = calendar_delete_event(payload)
+                self.write_json(HTTPStatus.OK, {"ok": True, "deleted": deleted, "text": deleted["text"]})
                 return
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
