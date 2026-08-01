@@ -24,6 +24,30 @@ Jarvis Chat is a small request console that sends requests directly to `ai-orche
 
 Jarvis Chat now behaves like a lightweight chat for assistant and drafting requests. Level-0 assistant requests execute through local Ollama and return text directly. Higher-level actions still show an approval flow, then fall back to a local Ollama action proposal until a dedicated connector is wired.
 
+## Telegram
+
+The `telegram-bridge` service provides a phone-friendly text and voice-note interface. It uses Telegram long polling, so no public inbound webhook or extra exposed port is required.
+
+Set these values in `.env`:
+
+```text
+JARVIS_TELEGRAM_BOT_TOKEN=<token from BotFather>
+JARVIS_TELEGRAM_ALLOWED_CHAT_IDS=<optional comma-separated chat ids>
+```
+
+If `JARVIS_TELEGRAM_ALLOWED_CHAT_IDS` is blank, any chat that can message the bot is accepted. For private use, set it after sending `/health` once and checking the bridge logs for the chat id.
+
+Supported commands:
+
+```text
+/start
+/help
+/health
+/approve act-...
+```
+
+Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text.
+
 ## Model Tiers
 
 The orchestrator uses local Ollama first for routing, then attaches an execution profile to each planned action:
