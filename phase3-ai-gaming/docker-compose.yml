@@ -214,9 +214,8 @@ services:
     volumes:
       - ./ai-orchestrator/state:/data
     ports:
-      - "8095:8095"
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8095:8095"
     networks:
-      - homelab_proxy
       - homelab_internal
     depends_on:
       - n8n
@@ -244,9 +243,8 @@ services:
       JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
       JARVIS_CHAT_PORT: 18100
     ports:
-      - "18100:18100"
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18100:18100"
     networks:
-      - homelab_proxy
       - homelab_internal
     depends_on:
       - ai-orchestrator

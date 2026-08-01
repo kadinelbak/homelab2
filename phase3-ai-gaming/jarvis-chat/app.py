@@ -16,7 +16,7 @@ CHAT_TOKEN = os.environ.get("JARVIS_CHAT_TOKEN", "")
 
 
 def configured_token():
-    token = CHAT_TOKEN or ORCHESTRATOR_TOKEN
+    token = CHAT_TOKEN
     if not token or token.startswith("CHANGE_ME"):
         return ""
     return token

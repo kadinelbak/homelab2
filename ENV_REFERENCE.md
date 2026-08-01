@@ -21,6 +21,7 @@ bash scripts/setup.sh --validate-only
 | `DOCKER_HOST_IP` | Yes | LAN or tailnet IP of the Docker host. Used for callbacks and direct links. |
 | `DATA_PATH` | Yes | Root path for all persistent bind-mounted application data. |
 | `DOMAIN` | Yes | Base DNS name used for dashboard links and reverse proxy hosts. |
+| `TAILSCALE_HOST_IP` | Recommended | Host Tailscale IPv4 used by services that should bind only to the tailnet. |
 
 ## Phase 1: Core Infrastructure
 
@@ -91,7 +92,7 @@ bash scripts/setup.sh --validate-only
 | `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
 | `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
 | `AI_ORCHESTRATOR_TOKEN` | Yes for AI orchestrator | Bearer token required for request intake, approval, and action handoff endpoints. |
-| `JARVIS_CHAT_TOKEN` | Recommended | Optional separate bearer token for the Jarvis Chat web GUI. Falls back to `AI_ORCHESTRATOR_TOKEN` if unset. |
+| `JARVIS_CHAT_TOKEN` | Optional | Optional bearer token for the Jarvis Chat web GUI. Leave blank for no browser token prompt. |
 | `TOOLS_PUBLIC_SCHEME` | Optional | Protocol used by Docker-discovered Tools dashboard links. Use `http` for direct tailnet ports or `https` after TLS/reverse proxy access is ready. |
 | `ACTUAL_PUBLIC_SCHEME` | Optional | Protocol for Actual Budget dashboard links. Defaults to `https` because Actual requires HTTPS for SharedArrayBuffer outside localhost. |
 | `ACTUAL_LOGIN_METHOD` | Optional | Actual Budget login method. Defaults to `password`; keep password enabled unless OpenID has been fully configured in Actual. |
