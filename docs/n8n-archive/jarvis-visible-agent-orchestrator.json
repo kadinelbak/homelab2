@@ -1,0 +1,1231 @@
+{
+  "id": "jarvis-visible-agent-orchestrator",
+  "name": "Jarvis - Visible Agent Orchestrator",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Jarvis Native Agent runtime\n\nJarvis Chat, Telegram, or Open WebUI posts to this workflow. The request now goes directly into the n8n AI Agent. The agent uses local Ollama as the default/fallback model and specialist agent tools for capabilities.",
+        "height": 280,
+        "width": 420
+      },
+      "id": "note-overview",
+      "name": "Jarvis Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -540
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Workflow levels\n\nL0 answer_only: chat answer\nL1 draft_or_plan: drafts, plans, summaries\nL2 state/private data: tasks, calendar, contacts, homelab\nL3 external/spend: sending, publishing, expenses\nL4 danger_zone: destructive/public/payment/delete",
+        "height": 260,
+        "width": 360
+      },
+      "id": "note-levels",
+      "name": "Workflow Level Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -540
+      ]
+    },
+    {
+      "parameters": {
+        "content": "Free/open-source worker targets\n\nTasks: Vikunja, CalDAV VTODO, or local SQLite\nCalendar: Radicale/CalDAV or Google Calendar\nEmail: IMAP/SMTP, Mailrise, or Gmail\nContacts: Radicale/CardDAV\nExpenses: Actual Budget or local sheet\nVoice: local Whisper Worker\nHomelab: Home Assistant + internal APIs",
+        "height": 300,
+        "width": 430
+      },
+      "id": "note-tools",
+      "name": "Worker Tool Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -540
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jarvis/n8n/agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "intake-webhook",
+      "name": "Jarvis Chat / Telegram Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        0
+      ],
+      "webhookId": "jarvis-visible-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst request = String(body.request || body.message || body.text || body.prompt || body.goal || '').trim();\nreturn [{ json: {\n  request,\n  source: body.source || body.chat_source || 'jarvis-chat',\n  capability: body.capability || '',\n  inputs: body.inputs || {},\n  limits: body.limits || { maximum_runtime_seconds: 1800, maximum_cost_usd: 0 },\n  permissions: body.permissions || { may_execute: false, may_publish: false },\n  conversation_id: body.conversation_id || body.chat_id || 'default',\n  received_at: new Date().toISOString()\n}}];"
+      },
+      "id": "normalize-message",
+      "name": "Normalize Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{JSON.stringify($json)}}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond",
+      "name": "Reply to Jarvis Chat / Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "id": "note-native-agent",
+      "name": "Native Agentic Layer",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        -980
+      ],
+      "parameters": {
+        "content": "## Active Jarvis Agent Runtime\nWebhook -> Normalize -> Jarvis Native Agent -> Format Response -> Reply.\n\nRouting belongs to Jarvis Native Agent. Specialist capabilities are exposed as AI Agent Tools, not a Capability Switch.",
+        "width": 760,
+        "height": 360,
+        "color": 5
+      }
+    },
+    {
+      "id": "note-agent-tools",
+      "name": "Specialist MCP Tool Ring",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -980
+      ],
+      "parameters": {
+        "content": "## Specialist Agent Tools\nJarvis has these tools: Drafting, Tasks, Calendar, Email, Contacts, Expenses, Voice/Whisper, Homelab, Code.\n\nEach tool uses local Ollama as model fallback and can call its own MCP/tool cluster as credentials are added.",
+        "width": 760,
+        "height": 360,
+        "color": 4
+      }
+    },
+    {
+      "id": "note-mcp-servers",
+      "name": "Worker MCP Server Zones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        640,
+        -980
+      ],
+      "parameters": {
+        "content": "## Worker MCP servers\nEach box below is where we wire real service tools. Start free/open-source: Vikunja/Radicale/CardDAV/IMAP/Actual Budget/Home Assistant/Whisper. Google/Gmail can be swapped in later.",
+        "width": 860,
+        "height": 360,
+        "color": 3
+      }
+    },
+    {
+      "id": "native-jarvis-agent",
+      "name": "Jarvis Native Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "onError": "continueRegularOutput",
+      "position": [
+        -520,
+        0
+      ],
+      "parameters": {
+        "text": "={{ $json.request }}",
+        "promptType": "define",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {
+          "systemMessage": "=You are Jarvis, Kadin's private homelab personal assistant. You are the supervisor agent and you decide which specialist tool to call. Use local Ollama by default. For email: drafting is safe and should produce a draft; sending/replying/searching email requires explicit approval and a configured email tool. For tasks/calendar/contacts/expenses/homelab/code/voice, call the specialist tool when helpful. If a specialist tool is not configured yet, still answer using your local model and clearly say what connector is needed. Keep responses concise and useful. Do not expose hidden chain-of-thought; provide a short visible plan or result when useful. Current time: {{ $now }}."
+        }
+      }
+    },
+    {
+      "id": "native-simple-memory",
+      "name": "Jarvis Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        -540
+      ],
+      "parameters": {
+        "sessionKey": "={{ $json.conversation_id || $json.chat_id || \"jarvis-default\" }}",
+        "sessionIdType": "customKey"
+      }
+    },
+    {
+      "id": "native-think",
+      "name": "Think",
+      "type": "@n8n/n8n-nodes-langchain.toolThink",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        -540
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "native-task-client",
+      "name": "Tasks MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        -220,
+        -720
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-tasks/sse"
+      }
+    },
+    {
+      "id": "native-calendar-client",
+      "name": "Calendar MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        -40,
+        -660
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-calendar/sse"
+      }
+    },
+    {
+      "id": "native-email-client",
+      "name": "Email MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        -640
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-email/sse"
+      }
+    },
+    {
+      "id": "native-contacts-client",
+      "name": "Contacts MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        360,
+        -660
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-contacts/sse"
+      }
+    },
+    {
+      "id": "native-expense-client",
+      "name": "Expenses MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        520,
+        -720
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-expenses/sse"
+      }
+    },
+    {
+      "id": "native-voice-client",
+      "name": "Voice / Whisper MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        -900
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-voice/sse"
+      }
+    },
+    {
+      "id": "native-homelab-client",
+      "name": "Homelab MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        80,
+        -980
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-homelab/sse"
+      }
+    },
+    {
+      "id": "native-code-client",
+      "name": "Code / Codex MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.1,
+      "position": [
+        380,
+        -900
+      ],
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/jarvis-code/sse"
+      }
+    },
+    {
+      "id": "mcp-tasks",
+      "name": "Task Manager MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        740,
+        -700
+      ],
+      "webhookId": "mcp-tasks",
+      "parameters": {
+        "path": "jarvis-tasks"
+      }
+    },
+    {
+      "id": "mcp-calendar",
+      "name": "Calendar MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -700
+      ],
+      "webhookId": "mcp-calendar",
+      "parameters": {
+        "path": "jarvis-calendar"
+      }
+    },
+    {
+      "id": "mcp-email",
+      "name": "Email MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        -700
+      ],
+      "webhookId": "mcp-email",
+      "parameters": {
+        "path": "jarvis-email"
+      }
+    },
+    {
+      "id": "mcp-contacts",
+      "name": "Contacts MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        740,
+        -420
+      ],
+      "webhookId": "mcp-contacts",
+      "parameters": {
+        "path": "jarvis-contacts"
+      }
+    },
+    {
+      "id": "mcp-expenses",
+      "name": "Expenses MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        -420
+      ],
+      "webhookId": "mcp-expenses",
+      "parameters": {
+        "path": "jarvis-expenses"
+      }
+    },
+    {
+      "id": "mcp-voice",
+      "name": "Voice Whisper MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        -420
+      ],
+      "webhookId": "mcp-voice",
+      "parameters": {
+        "path": "jarvis-voice"
+      }
+    },
+    {
+      "id": "mcp-homelab",
+      "name": "Homelab MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [
+        740,
+        -160
+      ],
+      "webhookId": "mcp-homelab",
+      "parameters": {
+        "path": "jarvis-homelab"
+      }
+    },
+    {
+      "id": "mcp-code",
+      "name": "Code Codex MCP Server",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 1,
+      "position": [
+        1000,
+        -160
+      ],
+      "webhookId": "mcp-code",
+      "parameters": {
+        "path": "jarvis-code"
+      }
+    },
+    {
+      "id": "tool-create-task",
+      "name": "Create Task Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        -540
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Create Task Tool', description: `Create/list/complete/delete tasks. Wire to Vikunja, CalDAV VTODO, or SQLite.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-calendar-event",
+      "name": "Calendar Event Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -540
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Calendar Event Tool', description: `Check availability and create/reschedule/delete events. Wire to CalDAV/Radicale.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-draft-email",
+      "name": "Draft Email Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -540
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Draft Email Tool', description: `Draft email only. Sending must use Email Send Tool after approval.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-send-email",
+      "name": "Email Send/Search Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -540
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Email Send/Search Tool', description: `Send, reply, search, label, archive. Requires approval and credentials.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-contact-search",
+      "name": "Contact Lookup Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Contact Lookup Tool', description: `Search contacts through CardDAV/Radicale or Google Contacts.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-expense",
+      "name": "Expense Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Expense Tool', description: `Create reports and log expenses through Actual Budget/Firefly/sheet.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-whisper",
+      "name": "Whisper Transcription Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        -260
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Whisper Transcription Tool', description: `Use local whisper-worker for audio transcription.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-homeassistant",
+      "name": "Home Assistant Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Home Assistant Tool', description: `Home Assistant and internal homelab actions with approval.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "tool-codex",
+      "name": "Codex CLI Tool",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, tool: 'Codex CLI Tool', description: `Repository edits and coding worker handoff.`, status: 'connector_stub' } }];"
+      }
+    },
+    {
+      "id": "ollama-chat-model",
+      "name": "Local Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        -560
+      ],
+      "parameters": {
+        "model": "llama3.1:latest",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "credentials": {
+        "ollamaApi": {
+          "id": "local-ollama",
+          "name": "Local Ollama"
+        }
+      }
+    },
+    {
+      "id": "drafting-agent-tool",
+      "name": "Drafting Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        -160,
+        -760
+      ],
+      "parameters": {
+        "toolDescription": "Draft emails, messages, plans, summaries, and other safe text artifacts. Never send anything.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "task-agent-tool",
+      "name": "Task Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        40,
+        -760
+      ],
+      "parameters": {
+        "toolDescription": "Create, list, complete, and delete tasks. If no task backend is configured, produce a clear proposed task action.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "calendar-agent-tool",
+      "name": "Calendar Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        -760
+      ],
+      "parameters": {
+        "toolDescription": "Check availability and plan/create/reschedule/delete calendar events. Ask for missing date/time details.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "email-action-agent-tool",
+      "name": "Email Action Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        -760
+      ],
+      "parameters": {
+        "toolDescription": "Send, reply, search, label, archive, or fetch emails. Require explicit approval before sending.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "contacts-agent-tool",
+      "name": "Contacts Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        -160,
+        -940
+      ],
+      "parameters": {
+        "toolDescription": "Look up or update contact details. Use privacy-safe summaries.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "expenses-agent-tool",
+      "name": "Expenses Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        40,
+        -940
+      ],
+      "parameters": {
+        "toolDescription": "Log expenses, summarize spending, and produce reports. Requires approval for destructive changes.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "voice-whisper-agent-tool",
+      "name": "Voice Whisper Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        -940
+      ],
+      "parameters": {
+        "toolDescription": "Handle voice transcription and speech-to-text requests using local Whisper where possible.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "homelab-agent-tool",
+      "name": "Homelab Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        -940
+      ],
+      "parameters": {
+        "toolDescription": "Operate Home Assistant, wake-on-LAN, service checks, and internal homelab actions with approval gates.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "code-agent-tool",
+      "name": "Code Agent Tool",
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        -940
+      ],
+      "parameters": {
+        "toolDescription": "Plan and hand off repository/code changes to Codex. Do not mutate code without approval.",
+        "text": "={{ $json.request || $json.query || $json.input || $json.chatInput }}",
+        "hasOutputParser": false,
+        "needsFallback": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "format-agent-response",
+      "name": "Format Jarvis Agent Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = item.output || item.text || item.response || item.message || JSON.stringify(item);\nconst requestId = `n8n-${Date.now().toString(16)}`;\nreturn [{ json: { ok: true, request: { request_id: requestId, status: 'completed', capability: 'jarvis_native_agent', worker: 'Jarvis Native Agent', summary: text }, actions: [{ action_id: `act-${Date.now().toString(16)}`, request_id: requestId, tool: 'jarvis.native_agent', worker: 'jarvis_native_agent', adapter_type: 'n8n_ai_agent', status: 'completed', requires_approval: false, workflow_level: { level: 0, name: 'agent_response', approval_required: false }, result: { text } }], agent_trace: { router: 'jarvis_native_agent', model: 'local_ollama', selected_tool_lane: item.intermediateSteps ? 'agent_tool_call' : 'direct_answer' } } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Jarvis Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Drafting Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Task Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Calendar Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Email Action Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Contacts Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Expenses Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Voice Whisper Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Homelab Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          },
+          {
+            "node": "Code Agent Tool",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Think": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Drafting Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Task Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Calendar Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Email Action Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Contacts Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Expenses Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Voice Whisper Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Homelab Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          },
+          {
+            "node": "Code Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Task Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Task Manager MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Event Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Email Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Send/Search Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Lookup Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Contacts MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expense Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Expenses MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper Transcription Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Voice Whisper MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Home Assistant Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Homelab MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Codex CLI Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Code Codex MCP Server",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Drafting Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Task Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Calendar Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Email Action Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Contacts Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Expenses Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Voice Whisper Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Homelab Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Code Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drafting Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Action Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contacts Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expenses Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice Whisper Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Homelab Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Agent Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tasks MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Task Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Action Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contacts MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Contacts Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expenses MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Expenses Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voice / Whisper MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Voice Whisper Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Homelab MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Homelab Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code / Codex MCP": {
+      "ai_tool": [
+        [
+          {
+            "node": "Code Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jarvis Chat / Telegram Intake": {
+      "main": [
+        [
+          {
+            "node": "Normalize Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Message": {
+      "main": [
+        [
+          {
+            "node": "Jarvis Native Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jarvis Native Agent": {
+      "main": [
+        [
+          {
+            "node": "Format Jarvis Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Jarvis Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Reply to Jarvis Chat / Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "f3661cc8-57b5-47a9-aa42-4262cf34e87f",
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "jarvis"
+    },
+    {
+      "name": "agent"
+    },
+    {
+      "name": "visible-routing"
+    }
+  ]
+}

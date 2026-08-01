@@ -1,6 +1,6 @@
 # =============================================================================
 # PHASE 3 – AI, GAMING, & UTILITY
-# Always-On: Ollama (+NVIDIA), Open WebUI, Minecraft, n8n, Home Assistant,
+# Always-On: Ollama (+NVIDIA), Open WebUI, Minecraft, Home Assistant,
 #             Spoolman, Actual Budget, Stirling PDF, IT-Tools
 #
 # Prereq: Phase 1 must be running.
@@ -130,7 +130,7 @@ services:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
-    profiles: ["n8n", "automation", "orchestration"]
+    profiles: ["n8n", "automation"]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -150,6 +150,7 @@ services:
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
+      OLLAMA_HOST: http://ollama:11434
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
     volumes:
@@ -169,13 +170,13 @@ services:
 
   # ---------------------------------------------------------------------------
   # N8N AI WORKFLOW IMPORT - One-shot importer for Jarvis/orchestrator workflows
-  # Run with: docker compose --env-file ../.env --profile orchestration up n8n-import-ai-workflows
+  # Run with: docker compose --env-file ../.env --profile n8n up n8n-import-ai-workflows
   # ---------------------------------------------------------------------------
   n8n-import-ai-workflows:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n_import_ai_workflows
     restart: "no"
-    profiles: ["orchestration"]
+    profiles: ["n8n"]
     user: "${PUID}:${PGID}"
     environment:
       TZ: ${TZ}
@@ -193,13 +194,14 @@ services:
       - homelab_internal
     depends_on:
       - n8n
-    command: ["n8n", "import:workflow", "--input=/import/ai-orchestrator-workflow.json"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["for workflow in /import/*.json; do n8n import:workflow --input=$$workflow; done"]
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
 
   # ---------------------------------------------------------------------------
   # AI ORCHESTRATOR - Request intake, routing, approval, and worker handoff
-  # Internal target for n8n: ai-orchestrator:8095
+  # Internal target for Jarvis Chat: ai-orchestrator:8095
   # ---------------------------------------------------------------------------
   ai-orchestrator:
     build:
@@ -232,7 +234,6 @@ services:
     networks:
       - homelab_internal
     depends_on:
-      - n8n
       - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=false"

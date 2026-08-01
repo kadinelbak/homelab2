@@ -1,8 +1,8 @@
 # AI Orchestration Layer
 
-The first orchestration slice is `ai-orchestrator`, a Phase 3 HTTP service for turning natural-language requests into structured, approval-aware action contracts.
+The active orchestration layer is `ai-orchestrator`, a Phase 3 HTTP service for turning natural-language requests into structured, approval-aware action contracts and local Ollama fallback responses.
 
-It does not run Codex, Meshy, Home Assistant, or CAD tools directly yet. It routes requests to a capability, stores the planned action, and exposes approval and execution handoff endpoints for n8n or future worker services.
+It does not require n8n. Jarvis Chat sends requests directly to `ai-orchestrator`, which routes requests to a capability, stores the planned action, and either executes a local Ollama response or prepares an approval-gated action proposal for a future worker service.
 
 ## Service
 
@@ -14,17 +14,15 @@ It does not run Codex, Meshy, Home Assistant, or CAD tools directly yet. It rout
 
 ## GUI
 
-n8n is the recommended first GUI for orchestration. Use it for intake forms, webhook triggers, approvals, notifications, and visible workflow editing. Keep durable policy decisions, action contracts, and worker boundaries in `ai-orchestrator` code so the visual workflow cannot accidentally become an unrestricted super-agent.
-
 For day-to-day use, open Jarvis Chat:
 
 ```text
 http://<tailscale-host-or-ip>:18100
 ```
 
-Jarvis Chat is a small request console that sends requests to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
+Jarvis Chat is a small request console that sends requests directly to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
 
-Jarvis Chat now behaves like a lightweight chat for `general_assistant` requests. Level-0 assistant requests execute through local Ollama and return text directly. Higher-level actions still show an approval/queue flow.
+Jarvis Chat now behaves like a lightweight chat for assistant and drafting requests. Level-0 assistant requests execute through local Ollama and return text directly. Higher-level actions still show an approval flow, then fall back to a local Ollama action proposal until a dedicated connector is wired.
 
 ## Model Tiers
 
@@ -68,41 +66,15 @@ POST http://<tailscale-host-or-ip>:18101/transcribe
 
 For upload requests, send `multipart/form-data` with an `audio` file field. Jarvis Chat includes a **Transcribe Audio** control that calls the worker, inserts the transcript into the message box, and shows the transcript in chat.
 
-Import this workflow into n8n:
+## n8n Archive
+
+n8n is no longer in the active Jarvis request path. Old workflow experiments are archived under:
 
 ```text
-docs/n8n/ai-orchestrator-workflow.json
+docs/n8n-archive/
 ```
 
-Or import it on the server with the one-shot Compose importer:
-
-```bash
-cd phase3-ai-gaming
-docker compose --env-file ../.env --profile orchestration up n8n-import-ai-workflows
-```
-
-Then open n8n over Tailscale:
-
-```text
-http://<tailscale-host-or-ip>:5678
-```
-
-The workflow exposes three webhooks:
-
-```text
-POST /webhook/jarvis/request
-POST /webhook/jarvis/action/approve
-POST /webhook/jarvis/action/execute
-```
-
-Additional imported workflows:
-
-```text
-Jarvis - Agent Workflow Levels
-Jarvis - Voice Transcription
-```
-
-n8n receives `AI_ORCHESTRATOR_URL` and `AI_ORCHESTRATOR_TOKEN` from Compose, then calls the internal orchestrator service.
+The `n8n` Compose profile remains available for separate automation experiments, but the `orchestration` profile starts Jarvis without n8n.
 
 ## Endpoints
 
@@ -150,4 +122,4 @@ curl -s -X POST http://localhost:8095/actions/<action_id>/execute \
   -H "Authorization: Bearer $AI_ORCHESTRATOR_TOKEN"
 ```
 
-Execution currently marks the action `queued_for_worker`. The next step is to add dedicated workers for `coding_worker`, `meshy`, `cad_worker`, `homeassistant`, and `media_adapter`.
+When a dedicated worker is not implemented yet, execution returns a local Ollama fallback draft or action proposal. The next step is to add real connectors for email, calendar, tasks, contacts, expenses, coding, CAD, Home Assistant, and media actions.

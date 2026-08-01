@@ -64,6 +64,66 @@ CAPABILITIES = [
         "description": "Conversational help, brainstorming, writing, drafting, planning, and general questions.",
     },
     {
+        "capability": "draft_email",
+        "worker": "llm_worker",
+        "adapter_type": "local_llm",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["ollama.draft_email"],
+        "description": "Write email drafts, replies, outreach notes, and editable message text without sending.",
+    },
+    {
+        "capability": "manage_tasks",
+        "worker": "tasks_worker",
+        "adapter_type": "local_llm_fallback",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": True,
+        "tools": ["tasks.local_proposal"],
+        "description": "Create, update, complete, delete, or list personal tasks and to-dos.",
+    },
+    {
+        "capability": "manage_calendar",
+        "worker": "calendar_worker",
+        "adapter_type": "local_llm_fallback",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": True,
+        "tools": ["calendar.local_proposal"],
+        "description": "Plan, create, reschedule, cancel, or inspect calendar events and availability.",
+    },
+    {
+        "capability": "manage_email",
+        "worker": "email_worker",
+        "adapter_type": "local_llm_fallback",
+        "cost_class": "local",
+        "requires_approval": True,
+        "execution_requires_approval": True,
+        "tools": ["email.local_proposal"],
+        "description": "Prepare email actions such as send, reply, label, search, summarize, or fetch.",
+    },
+    {
+        "capability": "manage_contacts",
+        "worker": "contacts_worker",
+        "adapter_type": "local_llm_fallback",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": True,
+        "tools": ["contacts.local_proposal"],
+        "description": "Find, create, update, or summarize contact information.",
+    },
+    {
+        "capability": "track_expense",
+        "worker": "finance_worker",
+        "adapter_type": "local_llm_fallback",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": True,
+        "tools": ["expenses.local_proposal"],
+        "description": "Log, categorize, inspect, or summarize personal expenses and budgets.",
+    },
+    {
         "capability": "transcribe_speech",
         "worker": "whisper_worker",
         "adapter_type": "local_application",
@@ -162,12 +222,18 @@ def route_with_keywords(payload):
 
     routes = [
         (("repo", "code", "commit", "pull request", "github", "branch", "test", "lint"), "edit_repository"),
+        (("draft email", "email draft", "draft reply", "write an email", "write email"), "draft_email"),
+        (("send email", "reply to", "gmail", "inbox", "label email", "search email"), "manage_email"),
+        (("calendar", "schedule", "meeting", "appointment", "reschedule", "availability"), "manage_calendar"),
+        (("task", "todo", "to-do", "remind me", "complete task", "delete task"), "manage_tasks"),
+        (("contact", "phone number", "address book"), "manage_contacts"),
+        (("expense", "budget", "receipt", "spending", "spent", "cost me"), "track_expense"),
         (("3d", "meshy", "organic model", "concept model", "glb", "obj"), "generate_3d_concept"),
         (("cad", "step", "stl", "openscad", "cadquery", "parametric", "dimension"), "generate_parametric_part"),
         (("light", "thermostat", "home assistant", "smart home", "scene"), "manage_smart_home"),
         (("movie", "series", "paperless", "document", "radarr", "sonarr", "media"), "organize_media"),
         (("transcribe", "transcription", "audio", "voice", "whisper", "speech"), "transcribe_speech"),
-        (("email", "draft", "write", "brainstorm", "idea", "plan", "summarize", "explain"), "general_assistant"),
+        (("draft", "write", "brainstorm", "idea", "plan", "summarize", "explain"), "general_assistant"),
     ]
     for keywords, capability in routes:
         if any(keyword in text for keyword in keywords):
@@ -310,6 +376,7 @@ def choose_execution_profile(payload, capability):
 
 def choose_workflow_level(payload, capability):
     text = request_text(payload).lower()
+    inputs = payload.get("inputs") or {}
     publish = bool((payload.get("permissions") or {}).get("may_publish"))
     cost = float((payload.get("limits") or {}).get("maximum_cost_usd", 0) or 0)
     if any(term in text for term in ("delete", "wipe", "format", "factory reset", "disable firewall")):
@@ -333,7 +400,14 @@ def choose_workflow_level(payload, capability):
             "approval": "approval_required",
             "rationale": "Request may change homelab or home state.",
         }
-    if capability["capability"] == "general_assistant":
+    if inputs.get("draft_mode"):
+        return {
+            "level": 1,
+            "name": "draft_or_plan",
+            "approval": "none",
+            "rationale": "Draft-only request does not change external state.",
+        }
+    if capability["capability"] in {"general_assistant", "draft_email"}:
         return {
             "level": 0,
             "name": "answer_only",
@@ -348,11 +422,12 @@ def choose_workflow_level(payload, capability):
     }
 
 
-def call_ollama_assistant(prompt_text, model):
+def call_ollama_assistant(prompt_text, model, system_text=None):
     messages = [
         {
             "role": "system",
-            "content": (
+            "content": system_text
+            or (
                 "You are Jarvis, a concise personal homelab assistant. "
                 "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
             ),
@@ -378,30 +453,69 @@ def call_ollama_assistant(prompt_text, model):
     return data.get("message", {}).get("content", "").strip()
 
 
-def execute_action(action):
+def fallback_system_prompt(action):
     if action["worker"] == "llm_worker":
-        prompt_text = action.get("inputs", {}).get("request", "")
-        profile = action.get("execution_profile", {})
-        model = profile.get("model") or OLLAMA_ROUTER_MODEL
-        if profile.get("provider") != "ollama":
-            model = LLM_PROFILES["local"]["model"]
-        answer = call_ollama_assistant(prompt_text, model)
+        return (
+            "You are Jarvis, a concise personal homelab assistant. "
+            "Be practical, friendly, and direct. If the user asks for a draft, produce the draft."
+        )
+    return (
+        "You are Jarvis Core running in local fallback mode. "
+        "A dedicated connector is not wired yet, so do not claim that you changed external systems. "
+        "Return the most useful safe result: a draft, checklist, structured action proposal, or next-step plan. "
+        "If the request would change external state, clearly label it as a proposal awaiting a real connector."
+    )
+
+
+def fallback_prompt(action):
+    inputs = action.get("inputs", {}) or {}
+    prompt_text = inputs.get("request", "")
+    if inputs.get("draft_mode") or action.get("capability") == "draft_email" or action.get("tool") == "ollama.draft_email":
+        return (
+            "Create the requested draft now. Do not ask what to help with. "
+            "If details are missing, make a useful neutral draft with editable bracketed fields.\n\n"
+            f"User request: {prompt_text}"
+        )
+    if action["worker"] == "llm_worker":
+        return prompt_text
+    return json.dumps(
+        {
+            "user_request": prompt_text,
+            "capability": action.get("capability"),
+            "worker": action.get("worker"),
+            "tool": action.get("tool"),
+            "workflow_level": action.get("workflow_level"),
+            "instruction": "Generate a local fallback response or action proposal.",
+        },
+        separators=(",", ":"),
+    )
+
+
+def execute_action(action):
+    if action["worker"] == "whisper_worker":
         return {
             "request_id": action["request_id"],
             "tool": action["tool"],
-            "status": "completed",
-            "summary": "Generated a conversational response.",
-            "text": answer,
+            "status": "queued_for_worker",
+            "summary": "Use Jarvis Chat audio upload to execute Whisper transcription.",
             "artifacts": [],
             "cost": {"estimated_usd": 0},
             "next_actions": [],
         }
 
+    profile = action.get("execution_profile", {})
+    model = profile.get("model") or OLLAMA_ROUTER_MODEL
+    if profile.get("provider") != "ollama":
+        model = LLM_PROFILES["local"]["model"]
+    answer = call_ollama_assistant(fallback_prompt(action), model, fallback_system_prompt(action))
     return {
         "request_id": action["request_id"],
         "tool": action["tool"],
-        "status": "queued_for_worker",
-        "summary": "Action contract is approved and ready for the dedicated worker adapter.",
+        "status": "completed",
+        "summary": "Generated a local Ollama response."
+        if action["worker"] == "llm_worker"
+        else "Generated a local Ollama fallback action proposal.",
+        "text": answer,
         "artifacts": [],
         "cost": {"estimated_usd": 0},
         "next_actions": [],
@@ -414,10 +528,13 @@ def make_action(request_id, payload, capability):
     limits = payload.get("limits") or {}
     requires_approval = capability["execution_requires_approval"]
     may_execute = True if not requires_approval else bool(permissions.get("may_execute", False))
+    action_inputs = dict(payload.get("inputs") or {})
+    action_inputs.setdefault("request", request_text(payload))
 
     return {
         "action_id": action_id,
         "request_id": request_id,
+        "capability": capability["capability"],
         "tool": capability["tools"][0],
         "worker": capability["worker"],
         "adapter_type": capability["adapter_type"],
@@ -425,14 +542,7 @@ def make_action(request_id, payload, capability):
         "requires_approval": requires_approval,
         "created_at": now(),
         "approved_at": now() if may_execute else None,
-        "inputs": payload.get("inputs") or {
-            "request": payload.get("request")
-            or payload.get("instruction")
-            or payload.get("prompt")
-            or payload.get("goal")
-            or payload.get("natural_language")
-            or ""
-        },
+        "inputs": action_inputs,
         "limits": {
             "maximum_cost_usd": limits.get("maximum_cost_usd", 0),
             "maximum_runtime_seconds": limits.get("maximum_runtime_seconds", 1800),
