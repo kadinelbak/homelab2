@@ -107,6 +107,10 @@
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:8095/health
         description: Request routing and worker handoff
+    - Whisper Worker:
+        icon: si-openai
+        href: http://kadin-main-sys.tail00cf0e.ts.net:18101/health
+        description: Speech-to-text worker for Jarvis
     - Open WebUI:
         icon: open-webui
         href: http://kadin-main-sys.tail00cf0e.ts.net:8080

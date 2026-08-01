@@ -24,6 +24,8 @@ http://<tailscale-host-or-ip>:18100
 
 Jarvis Chat is a small request console that sends requests to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
 
+Jarvis Chat now behaves like a lightweight chat for `general_assistant` requests. Level-0 assistant requests execute through local Ollama and return text directly. Higher-level actions still show an approval/queue flow.
+
 ## Model Tiers
 
 The orchestrator uses local Ollama first for routing, then attaches an execution profile to each planned action:
@@ -42,6 +44,29 @@ JARVIS_FAST_LLM_API_KEY
 JARVIS_DEEP_LLM_BASE_URL
 JARVIS_DEEP_LLM_API_KEY
 ```
+
+## Workflow Levels
+
+Every planned action receives a workflow level:
+
+```text
+L0 answer_only            Conversational response, no external state change
+L1 draft_or_plan          Creates a plan or draft action contract
+L2 homelab_state_change   May change homelab/home state, approval required
+L3 external_or_spend      May publish, spend, or use metered external workers
+L4 danger_zone            Destructive/sensitive requests, manual review
+```
+
+## Voice
+
+The `whisper-worker` service exposes speech-to-text:
+
+```text
+GET  http://<tailscale-host-or-ip>:18101/health
+POST http://<tailscale-host-or-ip>:18101/transcribe
+```
+
+For upload requests, send `multipart/form-data` with an `audio` file field. Jarvis Chat includes a **Transcribe Audio** control that calls the worker, inserts the transcript into the message box, and shows the transcript in chat.
 
 Import this workflow into n8n:
 
@@ -68,6 +93,13 @@ The workflow exposes three webhooks:
 POST /webhook/jarvis/request
 POST /webhook/jarvis/action/approve
 POST /webhook/jarvis/action/execute
+```
+
+Additional imported workflows:
+
+```text
+Jarvis - Agent Workflow Levels
+Jarvis - Voice Transcription
 ```
 
 n8n receives `AI_ORCHESTRATOR_URL` and `AI_ORCHESTRATOR_TOKEN` from Compose, then calls the internal orchestrator service.
