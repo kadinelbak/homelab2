@@ -64,6 +64,7 @@ services:
       - ${DATA_PATH}/phase2-media/data/audiobookshelf/config:/config
       - ${DATA_PATH}/phase2-media/data/audiobookshelf/metadata:/metadata
       - ${DATA_PATH}/shared/media/audiobooks:/audiobooks
+      - ${DATA_PATH}/shared/media/books:/books
       - ${DATA_PATH}/shared/media/podcasts:/podcasts
     ports:
       - "13378:80"
@@ -263,6 +264,12 @@ services:
       SHADOWSOCKS: "off"
     ports:
       - "8097:8097"   # qBittorrent Web UI (access via http://host:8097)
+      - "9696:9696"   # Prowlarr Web UI
+      - "6767:6767"   # Bazarr Web UI
+      - "8989:8989"   # Sonarr Web UI
+      - "7878:7878"   # Radarr Web UI
+      - "8686:8686"   # Lidarr Web UI
+      - "8787:8787"   # Readarr Web UI
       - "6881:6881"   # qBittorrent TCP
       - "6881:6881/udp"
     networks:
@@ -318,11 +325,10 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase2-media/data/prowlarr:/config
-    ports:
-      - "9696:9696"
-    networks:
-      - homelab_proxy
-      - homelab_internal
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media Automations"
@@ -349,11 +355,10 @@ services:
     volumes:
       - ${DATA_PATH}/phase2-media/data/bazarr:/config
       - ${DATA_PATH}/shared/media:/media
-    ports:
-      - "6767:6767"
-    networks:
-      - homelab_proxy
-      - homelab_internal
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media Automations"
@@ -378,13 +383,13 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase2-media/data/sonarr:/config
+      - ${DATA_PATH}/shared/media:/media
       - ${DATA_PATH}/shared/media/tv:/tv
       - ${DATA_PATH}/shared/downloads:/downloads
-    ports:
-      - "8989:8989"
-    networks:
-      - homelab_proxy
-      - homelab_internal
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media Automations"
@@ -409,13 +414,13 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase2-media/data/radarr:/config
+      - ${DATA_PATH}/shared/media:/media
       - ${DATA_PATH}/shared/media/movies:/movies
       - ${DATA_PATH}/shared/downloads:/downloads
-    ports:
-      - "7878:7878"
-    networks:
-      - homelab_proxy
-      - homelab_internal
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Media Automations"
@@ -423,3 +428,65 @@ services:
       - "homepage.icon=radarr"
       - "homepage.href=http://${DOMAIN}:7878"
       - "homepage.description=Movie automation"
+
+  # ---------------------------------------------------------------------------
+  # LIDARR - Music Automation
+  # Proxy target: lidarr:8686
+  # Uses Prowlarr for indexers and qBittorrent through Gluetun for downloads.
+  # ---------------------------------------------------------------------------
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    restart: unless-stopped
+    profiles: ["lidarr", "arr"]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/lidarr:/config
+      - ${DATA_PATH}/shared/media:/media
+      - ${DATA_PATH}/shared/media/music:/music
+      - ${DATA_PATH}/shared/downloads:/downloads
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media Automations"
+      - "homepage.name=Lidarr"
+      - "homepage.icon=lidarr"
+      - "homepage.href=http://${DOMAIN}:8686"
+      - "homepage.description=Music automation"
+
+  # ---------------------------------------------------------------------------
+  # READARR - Book Automation
+  # Proxy target: readarr:8787
+  # Uses Prowlarr for indexers and qBittorrent through Gluetun for downloads.
+  # ---------------------------------------------------------------------------
+  readarr:
+    image: lscr.io/linuxserver/readarr:amd64-0.4.18-develop
+    container_name: readarr
+    restart: unless-stopped
+    profiles: ["readarr", "arr"]
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase2-media/data/readarr:/config
+      - ${DATA_PATH}/shared/media:/media
+      - ${DATA_PATH}/shared/media/books:/books
+      - ${DATA_PATH}/shared/downloads:/downloads
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Media Automations"
+      - "homepage.name=Readarr"
+      - "homepage.icon=readarr"
+      - "homepage.href=http://${DOMAIN}:8787"
+      - "homepage.description=Book automation"

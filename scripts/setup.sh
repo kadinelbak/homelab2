@@ -122,6 +122,8 @@ create_directories() {
     "${DATA_PATH}/phase2-media/data/bazarr"
     "${DATA_PATH}/phase2-media/data/sonarr"
     "${DATA_PATH}/phase2-media/data/radarr"
+    "${DATA_PATH}/phase2-media/data/lidarr"
+    "${DATA_PATH}/phase2-media/data/readarr"
     "${DATA_PATH}/phase2-media/data/qbittorrent/config"
     "${DATA_PATH}/phase3-ai-gaming/data/ollama"
     "${DATA_PATH}/phase3-ai-gaming/data/openwebui"

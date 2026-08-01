@@ -85,6 +85,14 @@
         icon: radarr
         href: http://kadin-main-sys.tail00cf0e.ts.net:7878
         description: Movie automation
+    - Lidarr:
+        icon: lidarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8686
+        description: Music automation
+    - Readarr:
+        icon: readarr
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8787
+        description: Book automation
     - qBittorrent:
         icon: qbittorrent
         href: http://kadin-main-sys.tail00cf0e.ts.net:8097

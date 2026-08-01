@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 
 
-BASE_URL = "http://gluetun:8097"
+BASE_URL = "http://localhost:8097"
 
 EXCLUDED_PATTERNS = [
     "*.exe",
