@@ -187,6 +187,24 @@ identified as `legacy_parser_fallback` in the action trace when used for a
 read-only lookup. Invalid mutating contracts return clarification through the
 `nemotron_validation_guard` and never reach that parser.
 
+Capability selection is manager-first: Nemotron receives the latest request,
+recent conversation, and verified tool state, then selects the worker. Keyword
+routing is used only when the manager endpoint is unavailable or returns invalid
+output. Explicit capability selections and approval safety rules remain
+deterministic boundaries outside the model.
+
+Open WebUI exposes four curated model profiles:
+
+- `Jarvis` uses hosted Nemotron with the Jarvis tool bridge for verified actions.
+- `Nemotron Super 120B` provides hosted reasoning without action tools attached.
+- `Hosted Llama 3.1 70B` provides hosted conversation without action tools attached.
+- `Local Llama 3.1 8B - Chat Only` provides private Ollama chat with tools disabled.
+
+Use the `Jarvis` profile whenever a request should call Calendar, Gmail,
+Paperless, Tasks, Contacts, Codex, or homelab workers. Do not attach Jarvis tools
+to the raw `llama3.1:latest` model: this small local model can print plausible
+function JSON as prose instead of issuing a real native tool call.
+
 Phase 3 access URLs:
 - `http://<tailnet-host>:8080` -> Open WebUI
 - `http://<tailnet-host>:5678` -> n8n

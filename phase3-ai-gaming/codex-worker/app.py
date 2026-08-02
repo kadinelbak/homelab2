@@ -61,14 +61,27 @@ def codex_version():
     return {"configured": True, "binary": binary, "path": path, "version": "\n".join(version)}
 
 
+def classify_request(text):
+    lowered = (text or "").lower()
+    if "github issue" in lowered or ("issue" in lowered and "github" in lowered):
+        return "github_issue"
+    if "summarize repo" in lowered or "summarize repository" in lowered or "repo summary" in lowered:
+        return "repo_summary"
+    if any(term in lowered for term in ("fix", "implement", "add feature", "refactor", "test", "debug")):
+        return "coding_task"
+    return "general_code"
+
+
 def build_prompt(payload):
     action = payload.get("action") or payload
     inputs = action.get("inputs") or {}
     request_text = inputs.get("request") or payload.get("request") or ""
+    request_kind = classify_request(request_text)
     return (
         "You are the Codex coding worker for Jarvis running on Kadin's homelab.\n"
         "Work only inside the mounted workspace. Keep changes scoped to the user's request. "
         "Do not publish, push, or expose secrets. If credentials or destructive actions are needed, stop and explain.\n\n"
+        f"Request kind: {request_kind}\n"
         f"User request:\n{request_text}\n"
     )
 
@@ -81,6 +94,8 @@ def run_codex(payload):
     (job_dir / "request.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     version = codex_version()
+    prompt = build_prompt(payload)
+    request_kind = classify_request(prompt)
     if not version["configured"]:
         return {
             "ok": True,
@@ -88,11 +103,13 @@ def run_codex(payload):
             "status": "worker_not_configured",
             "summary": "Codex CLI is not installed in the codex-worker container yet.",
             "text": "Codex worker is wired, but the Codex CLI binary is missing. Install/authenticate Codex, then rerun the approved action.",
-            "artifacts": [{"path": str(job_dir / "request.json"), "kind": "request"}],
+            "artifacts": [
+                {"path": str(job_dir / "request.json"), "kind": "request"},
+                {"kind": "codex_job", "job_id": job_id, "request_kind": request_kind, "status": "worker_not_configured"},
+            ],
             "codex": version,
         }
 
-    prompt = build_prompt(payload)
     timeout = int((payload.get("limits") or {}).get("maximum_runtime_seconds") or DEFAULT_TIMEOUT)
     command = shlex.split(COMMAND_PREFIX) + [prompt]
     started = now()
@@ -124,6 +141,7 @@ def run_codex(payload):
                 {"path": str(job_dir / "request.json"), "kind": "request"},
                 {"path": str(job_dir / "stdout.txt"), "kind": "stdout"},
                 {"path": str(job_dir / "stderr.txt"), "kind": "stderr"},
+                {"kind": "codex_job", "job_id": job_id, "request_kind": request_kind, "status": status},
             ],
             "codex": version,
         }
@@ -144,6 +162,7 @@ def run_codex(payload):
                 {"path": str(job_dir / "request.json"), "kind": "request"},
                 {"path": str(job_dir / "stdout.txt"), "kind": "stdout"},
                 {"path": str(job_dir / "stderr.txt"), "kind": "stderr"},
+                {"kind": "codex_job", "job_id": job_id, "request_kind": request_kind, "status": "timeout"},
             ],
             "codex": version,
         }

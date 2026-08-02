@@ -23,9 +23,8 @@ def api(method, path, payload=None):
         return json.load(response)
 
 
-def submit(message, chat_id, execute=True):
-    planned = api("POST", "/requests", {
-        "capability": "manage_calendar",
+def submit(message, chat_id, execute=True, explicit_capability=True, include_plan=False):
+    payload = {
         "inputs": {
             "request": message,
             "source": "calendar-contract-live-qa",
@@ -33,11 +32,14 @@ def submit(message, chat_id, execute=True):
             "conversation_context": [],
         },
         "permissions": {"may_execute": False, "may_publish": False},
-    })
+    }
+    if explicit_capability:
+        payload["capability"] = "manage_calendar"
+    planned = api("POST", "/requests", payload)
     action = planned["actions"][0]
     if execute and action["permissions"]["may_execute"]:
         action = api("POST", f"/actions/{action['action_id']}/execute")["action"]
-    return action
+    return (planned, action) if include_plan else action
 
 
 def show(label, action):
@@ -66,6 +68,45 @@ def main():
         raise RuntimeError("AI_ORCHESTRATOR_TOKEN is required")
     suffix = uuid.uuid4().hex[:8]
     title = f"Jarvis Contract QA {suffix}"
+
+    if os.environ.get("QA_MANAGER_ROUTING_ONLY") == "1":
+        chat_id = f"qa-manager-{suffix}"
+        create_plan, create_action = submit(
+            f"Create a calendar event tomorrow at 8 PM titled {title} for 30 minutes.",
+            chat_id,
+            explicit_capability=False,
+            include_plan=True,
+        )
+        create, create_result = show("manager_create", create_action)
+        assert create_plan["request"]["capability"] == "manage_calendar"
+        assert create_plan["request"]["route"].get("model") == "nemotron-3-super-120b-a12b"
+        assert create.get("title") == title and create_result.get("status") == "completed"
+
+        move_plan, move_action = submit(
+            "Actually make it one hour later.",
+            chat_id,
+            explicit_capability=False,
+            include_plan=True,
+        )
+        move, move_result = show("manager_contextual_move", move_action)
+        print(json.dumps({"label": "manager_contextual_move_route", "route": move_plan["request"]["route"]}, separators=(",", ":")))
+        assert move_plan["request"]["capability"] == "manage_calendar"
+        assert move_plan["request"]["route"].get("model") == "nemotron-3-super-120b-a12b"
+        assert move.get("operation") == "reschedule" and move_result.get("status") == "completed"
+
+        delete_plan, delete_action = submit(
+            "Remove it.",
+            chat_id,
+            explicit_capability=False,
+            include_plan=True,
+        )
+        delete, delete_result = show("manager_contextual_delete", delete_action)
+        print(json.dumps({"label": "manager_contextual_delete_route", "route": delete_plan["request"]["route"]}, separators=(",", ":")))
+        assert delete_plan["request"]["capability"] == "manage_calendar"
+        assert delete.get("target_event_id") == move.get("target_event_id")
+        assert delete_result.get("status") == "completed"
+        print(json.dumps({"ok": True, "nemotron_manager_routed_all": True}, separators=(",", ":")))
+        return
 
     if os.environ.get("QA_FOLLOWUP_ONLY") == "1":
         chat_id = f"qa-followup-{suffix}"

@@ -33,6 +33,13 @@ for event_id in sorted(set(created) - deleted_ids):
         if exc.code in {404, 410}:
             results.append({"event_id": event_id, "status": "already_missing"})
         else:
-            raise
+            try:
+                detail = json.loads(exc.read().decode("utf-8") or "{}").get("error")
+            except Exception:
+                detail = None
+            if detail and ("404" in detail or "410" in detail):
+                results.append({"event_id": event_id, "status": "already_missing"})
+            else:
+                results.append({"event_id": event_id, "status": f"worker_http_{exc.code}", "error": detail})
 
 print(json.dumps({"synthetic_created": len(created), "already_verified_deleted": len(deleted_ids), "cleanup": results}, separators=(",", ":")))

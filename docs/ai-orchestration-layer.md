@@ -119,7 +119,22 @@ POST /calendar/list
 POST /calendar/assist
 ```
 
-Contacts and Tasks require enabling the People API and Google Tasks API in Google Cloud, then rerunning the Google OAuth flow because the worker requests additional scopes.
+Contacts and Tasks require enabling the People API and Google Tasks API in Google Cloud, then rerunning the Google OAuth flow because the worker requests additional scopes. Contacts now uses the write-capable People API scope so Jarvis can create or update contacts after approval; lookups and recipient resolution stay read-only at execution time.
+
+Google Tasks now runs through validated contracts for list, create, update, complete, and delete. Task mutations execute immediately after routing by design, while the worker verifies each mutation by reading the resulting task state or confirming deletion.
+
+## Daily Briefing
+
+Telegram can send scheduled morning and evening briefings from Calendar, Gmail, and Tasks. Enable with:
+
+```env
+JARVIS_TELEGRAM_BRIEFING_ENABLED=true
+JARVIS_TELEGRAM_BRIEFING_CHAT_IDS=<telegram chat id>
+JARVIS_TELEGRAM_MORNING_BRIEF_TIME=07:30
+JARVIS_TELEGRAM_EVENING_BRIEF_TIME=20:30
+```
+
+Use `/brief`, `/brief morning`, or `/brief evening` for on-demand delivery. Times use the container `TZ`.
 
 ## Codex Worker
 
@@ -138,7 +153,7 @@ GET  http://<tailscale-host-or-ip>:18300/health
 POST http://<tailscale-host-or-ip>:18300/run
 ```
 
-The worker stores per-action artifacts under `${DATA_PATH}/phase3-ai-gaming/data/codex-worker/jobs`. Its Codex home/auth directory is mounted at `${DATA_PATH}/phase3-ai-gaming/data/codex-home`. The workspace mount is intentionally limited to Phase 3 Jarvis service code plus `phase3-ai-gaming/docker-compose.yml`; the root homelab `.env` is not mounted into Codex.
+The worker stores per-action artifacts under `${DATA_PATH}/phase3-ai-gaming/data/codex-worker/jobs`. Its Codex home/auth directory is mounted at `${DATA_PATH}/phase3-ai-gaming/data/codex-home`. The workspace mount is intentionally limited to Phase 3 Jarvis service code plus `phase3-ai-gaming/docker-compose.yml`; the root homelab `.env` is not mounted into Codex. Results include a `codex_job` artifact with the job ID, request kind, status, and output locations.
 
 Required configuration:
 

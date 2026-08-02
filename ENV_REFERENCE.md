@@ -97,6 +97,10 @@ bash scripts/setup.sh --validate-only
 | `AI_ORCHESTRATOR_ROUTER_TIMEOUT` | Optional | Seconds to wait for Ollama routing before using keyword fallback. Defaults to `30`. |
 | `AI_ORCHESTRATOR_LLM_TIMEOUT` | Optional | Seconds to wait for local assistant responses before returning an upstream timeout. |
 | `JARVIS_CHAT_TOKEN` | Optional | Optional bearer token for the Jarvis Chat web GUI. Leave blank for no browser token prompt. |
+| `JARVIS_TELEGRAM_BRIEFING_ENABLED` | Optional | Set to `true` to send scheduled Telegram morning/evening Jarvis briefings. |
+| `JARVIS_TELEGRAM_BRIEFING_CHAT_IDS` | Optional | Comma-separated Telegram chat IDs that receive scheduled briefings. Defaults to allowed chat IDs when blank. |
+| `JARVIS_TELEGRAM_MORNING_BRIEF_TIME` | Optional | Local `HH:MM` time for the morning Calendar/Gmail/Tasks briefing. Default `07:30`. |
+| `JARVIS_TELEGRAM_EVENING_BRIEF_TIME` | Optional | Local `HH:MM` time for the evening recap and tomorrow prep. Default `20:30`. |
 | `JARVIS_FAST_LLM_*` | Optional | External 70B-style model profile for general assistant drafting, summaries, and normal planning. Requires provider base URL and API key. |
 | `JARVIS_DEEP_LLM_*` | Optional | External larger reasoning model profile for architecture, coding plans, decomposition, and complex work. Requires provider base URL and API key. |
 | `WHISPER_*` | Optional | Whisper worker settings for speech-to-text. Defaults to CPU `base` with `int8` compute. |

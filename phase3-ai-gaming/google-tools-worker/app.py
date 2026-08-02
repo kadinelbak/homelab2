@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/contacts",
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/tasks",
 ]
@@ -124,8 +126,12 @@ def google_request(method, url, payload=None, timeout=60):
 
 
 def gmail_get_message(message_id):
-    params = urllib.parse.urlencode({"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]}, doseq=True)
+    params = urllib.parse.urlencode({"format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date"]}, doseq=True)
     data = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?{params}")
+    return compact_gmail_message(data)
+
+
+def compact_gmail_message(data):
     headers = {
         item.get("name", "").lower(): item.get("value", "")
         for item in data.get("payload", {}).get("headers", [])
@@ -134,6 +140,7 @@ def gmail_get_message(message_id):
         "id": data.get("id"),
         "thread_id": data.get("threadId"),
         "from": headers.get("from", ""),
+        "to": headers.get("to", ""),
         "subject": headers.get("subject", ""),
         "date": headers.get("date", ""),
         "snippet": data.get("snippet", ""),
@@ -163,16 +170,20 @@ def infer_gmail_query(request_text):
     return " ".join(terms)
 
 
-def create_gmail_draft(to_addr, subject, body_text):
-    raw = "\r\n".join(
-        [
-            f"To: {to_addr}",
-            f"Subject: {subject}",
-            "Content-Type: text/plain; charset=utf-8",
-            "",
-            body_text,
-        ]
-    ).encode("utf-8")
+def gmail_raw_message(to_addrs, subject, body_text, cc=None, bcc=None):
+    message = EmailMessage()
+    message["To"] = ", ".join(to_addrs if isinstance(to_addrs, list) else [str(to_addrs or "")])
+    if cc:
+        message["Cc"] = ", ".join(cc)
+    if bcc:
+        message["Bcc"] = ", ".join(bcc)
+    message["Subject"] = subject or ""
+    message.set_content(body_text or "")
+    return message.as_bytes()
+
+
+def create_gmail_draft(to_addr, subject, body_text, cc=None, bcc=None):
+    raw = gmail_raw_message(to_addr if isinstance(to_addr, list) else [to_addr], subject, body_text, cc, bcc)
     encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
     return google_request(
         "POST",
@@ -183,7 +194,7 @@ def create_gmail_draft(to_addr, subject, body_text):
 
 
 def gmail_get_draft(draft_id):
-    params = urllib.parse.urlencode({"format": "metadata"})
+    params = urllib.parse.urlencode({"format": "metadata", "metadataHeaders": ["To", "Subject"]}, doseq=True)
     return google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}?{params}", timeout=60)
 
 
@@ -198,9 +209,182 @@ def create_verified_gmail_draft(to_addr, subject, body_text):
         "id": draft_id,
         "message_id": message.get("id"),
         "thread_id": message.get("threadId"),
+        "to": to_addr if isinstance(to_addr, str) else ", ".join(to_addr or []),
+        "subject": subject,
         "verified": bool(verified.get("id") == draft_id),
         "raw": draft,
     }
+
+
+def update_gmail_draft(draft_id, to_addrs, subject, body_text, cc=None, bcc=None):
+    raw = gmail_raw_message(to_addrs, subject, body_text, cc, bcc)
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return google_request(
+        "PUT",
+        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}",
+        {"id": draft_id, "message": {"raw": encoded}},
+        timeout=60,
+    )
+
+
+def send_gmail_draft(draft_id):
+    return google_request(
+        "POST",
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
+        {"id": draft_id},
+        timeout=60,
+    )
+
+
+def send_gmail_message(to_addrs, subject, body_text, cc=None, bcc=None):
+    raw = gmail_raw_message(to_addrs, subject, body_text, cc, bcc)
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return google_request(
+        "POST",
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        {"raw": encoded},
+        timeout=60,
+    )
+
+
+def gmail_modify_labels(message_id, add_labels, remove_labels):
+    return google_request(
+        "POST",
+        f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify",
+        {"addLabelIds": add_labels or [], "removeLabelIds": remove_labels or []},
+        timeout=60,
+    )
+
+
+def validate_executable_gmail_contract(contract):
+    if not isinstance(contract, dict):
+        raise ValueError("gmail_contract_must_be_object")
+    allowed = {
+        "version", "operation", "query", "max_results", "draft_id", "message_ids", "thread_id",
+        "to", "cc", "bcc", "subject", "body", "label_ids", "remove_label_ids",
+        "requires_clarification", "clarification",
+    }
+    if set(contract) - allowed:
+        raise ValueError("gmail_contract_unknown_fields")
+    operation = contract.get("operation")
+    if operation not in {"search_messages", "summarize_messages", "create_draft", "update_draft", "send_draft", "send_message", "label_messages"}:
+        raise ValueError("gmail_contract_operation_invalid")
+    if contract.get("requires_clarification"):
+        raise ValueError("gmail_contract_not_executable")
+    if operation in {"search_messages", "summarize_messages"} and not contract.get("query"):
+        raise ValueError("gmail_query_required")
+    if operation == "create_draft" and not contract.get("body"):
+        raise ValueError("gmail_draft_body_required")
+    if operation == "update_draft" and not contract.get("draft_id"):
+        raise ValueError("gmail_draft_id_required")
+    if operation == "send_draft" and not contract.get("draft_id"):
+        raise ValueError("gmail_send_draft_id_required")
+    if operation == "send_message" and not (contract.get("to") and contract.get("subject") and contract.get("body")):
+        raise ValueError("gmail_send_message_incomplete")
+    if operation == "label_messages":
+        if not contract.get("message_ids"):
+            raise ValueError("gmail_message_ids_required")
+        if not contract.get("label_ids") and not contract.get("remove_label_ids"):
+            raise ValueError("gmail_label_ids_required")
+
+
+def execute_gmail_contract(contract, approved=False):
+    validate_executable_gmail_contract(contract)
+    operation = contract["operation"]
+    if operation in {"search_messages", "summarize_messages"}:
+        messages = gmail_search(contract["query"], int(contract.get("max_results", 10)))
+        text = response_text_for_gmail(messages)
+        if operation == "summarize_messages":
+            text = text.replace("Gmail summary:", "Gmail summary:")
+        return {"status": "completed", "messages": messages, "text": text}
+
+    if operation == "create_draft":
+        draft = create_verified_gmail_draft(
+            contract.get("to") or [],
+            contract.get("subject") or "",
+            contract.get("body") or "",
+        )
+        if not draft.get("verified"):
+            raise RuntimeError("gmail_draft_verification_failed")
+        return {
+            "status": "completed",
+            "draft": draft,
+            "text": f"Verified Gmail draft created.\nDraft ID: {draft.get('id')}\nThread ID: {draft.get('thread_id')}",
+        }
+
+    if operation == "update_draft":
+        update_gmail_draft(
+            contract["draft_id"],
+            contract.get("to") or [],
+            contract.get("subject") or "",
+            contract.get("body") or "",
+            contract.get("cc") or [],
+            contract.get("bcc") or [],
+        )
+        verified = gmail_get_draft(contract["draft_id"])
+        if verified.get("id") != contract["draft_id"]:
+            raise RuntimeError("gmail_draft_update_verification_failed")
+        message = verified.get("message") or {}
+        draft = {
+            "id": verified.get("id"),
+            "message_id": message.get("id"),
+            "thread_id": message.get("threadId"),
+            "to": ", ".join(contract.get("to") or []),
+            "subject": contract.get("subject"),
+            "verified": True,
+        }
+        return {"status": "completed", "draft": draft, "text": f"Verified Gmail draft updated.\nDraft ID: {draft['id']}"}
+
+    if operation == "send_draft":
+        if not approved:
+            raise PermissionError("gmail_send_requires_approval")
+        existing = gmail_get_draft(contract["draft_id"])
+        sent = send_gmail_draft(contract["draft_id"])
+        sent_message = gmail_get_message(sent["id"]) if sent.get("id") else compact_gmail_message(sent)
+        if not sent_message.get("id"):
+            raise RuntimeError("gmail_send_verification_failed")
+        return {
+            "status": "completed",
+            "sent_message": sent_message,
+            "draft": {"id": contract["draft_id"], "verified": existing.get("id") == contract["draft_id"]},
+            "text": f"Verified Gmail draft sent.\nMessage ID: {sent_message.get('id')}\nThread ID: {sent_message.get('thread_id')}",
+        }
+
+    if operation == "send_message":
+        if not approved:
+            raise PermissionError("gmail_send_requires_approval")
+        sent = send_gmail_message(
+            contract.get("to") or [],
+            contract.get("subject") or "",
+            contract.get("body") or "",
+            contract.get("cc") or [],
+            contract.get("bcc") or [],
+        )
+        sent_message = gmail_get_message(sent["id"]) if sent.get("id") else compact_gmail_message(sent)
+        if not sent_message.get("id") or "SENT" not in (sent_message.get("labels") or []):
+            raise RuntimeError("gmail_send_verification_failed")
+        return {
+            "status": "completed",
+            "sent_message": sent_message,
+            "text": f"Verified Gmail message sent.\nMessage ID: {sent_message.get('id')}\nThread ID: {sent_message.get('thread_id')}",
+        }
+
+    if operation == "label_messages":
+        if not approved:
+            raise PermissionError("gmail_label_requires_approval")
+        messages = []
+        add_labels = contract.get("label_ids") or []
+        remove_labels = contract.get("remove_label_ids") or []
+        for message_id in contract.get("message_ids") or []:
+            gmail_modify_labels(message_id, add_labels, remove_labels)
+            verified = gmail_get_message(message_id)
+            labels = set(verified.get("labels") or [])
+            if not set(add_labels).issubset(labels) or set(remove_labels).intersection(labels):
+                raise RuntimeError("gmail_label_verification_failed")
+            messages.append(verified)
+        return {"status": "completed", "messages": messages, "text": f"Verified label update on {len(messages)} Gmail message(s)."}
+
+    raise ValueError("gmail_contract_operation_unsupported")
 
 
 def contacts_search(query, max_results=10):
@@ -209,8 +393,8 @@ def contacts_search(query, max_results=10):
         "https://people.googleapis.com/v1/people/me/connections?"
         + urllib.parse.urlencode(
             {
-                "pageSize": 100,
-                "personFields": "names,emailAddresses,phoneNumbers",
+                "pageSize": min(max(int(max_results or 10), 1), 1000),
+                "personFields": "names,emailAddresses,phoneNumbers,metadata",
             }
         ),
         timeout=60,
@@ -218,15 +402,156 @@ def contacts_search(query, max_results=10):
     needle = (query or "").lower().strip()
     contacts = []
     for person in data.get("connections", []):
-        names = [item.get("displayName", "") for item in person.get("names", [])]
-        emails = [item.get("value", "") for item in person.get("emailAddresses", [])]
-        phones = [item.get("value", "") for item in person.get("phoneNumbers", [])]
+        contact = compact_contact(person)
+        names = contact["names"]
+        emails = contact["emails"]
+        phones = contact["phones"]
         haystack = " ".join(names + emails + phones).lower()
         if not needle or needle in haystack:
-            contacts.append({"names": names, "emails": emails, "phones": phones})
+            contacts.append(contact)
         if len(contacts) >= max_results:
             break
     return contacts
+
+
+def compact_contact(person):
+    return {
+        "resource_name": person.get("resourceName"),
+        "etag": person.get("etag"),
+        "names": [item.get("displayName", "") for item in person.get("names", []) if item.get("displayName")],
+        "emails": [item.get("value", "") for item in person.get("emailAddresses", []) if item.get("value")],
+        "phones": [item.get("value", "") for item in person.get("phoneNumbers", []) if item.get("value")],
+    }
+
+
+def contact_get(resource_name):
+    return google_request(
+        "GET",
+        "https://people.googleapis.com/v1/"
+        + urllib.parse.quote(resource_name, safe="/")
+        + "?personFields=names,emailAddresses,phoneNumbers,metadata",
+        timeout=60,
+    )
+
+
+def contact_body(contract, existing=None):
+    body = {}
+    if existing and existing.get("etag"):
+        body["etag"] = existing["etag"]
+    if contract.get("name"):
+        body["names"] = [{"unstructuredName": contract["name"]}]
+    if contract.get("email"):
+        body["emailAddresses"] = [{"value": contract["email"]}]
+    if contract.get("phone"):
+        body["phoneNumbers"] = [{"value": contract["phone"]}]
+    return body
+
+
+def validate_executable_contacts_contract(contract):
+    if not isinstance(contract, dict):
+        raise ValueError("contacts_contract_must_be_object")
+    allowed = {
+        "version", "operation", "query", "name", "email", "phone", "resource_name",
+        "requires_clarification", "clarification", "max_results",
+    }
+    if set(contract) - allowed:
+        raise ValueError("contacts_contract_unknown_fields")
+    operation = contract.get("operation")
+    if operation not in {"search", "resolve_recipient", "create", "update", "clarify"}:
+        raise ValueError("contacts_contract_operation_invalid")
+    if contract.get("requires_clarification") or operation == "clarify":
+        return
+    if operation in {"search", "resolve_recipient"} and not contract.get("query"):
+        raise ValueError("contacts_contract_query_required")
+    if operation == "create" and not (contract.get("name") and (contract.get("email") or contract.get("phone"))):
+        raise ValueError("contacts_create_contract_incomplete")
+    if operation == "update" and not contract.get("resource_name"):
+        raise ValueError("contacts_update_resource_required")
+
+
+def resolve_contact(query, max_results=10):
+    contacts = contacts_search(query, max_results)
+    needle = (query or "").casefold().strip()
+    exact = []
+    for contact in contacts:
+        names = [name.casefold() for name in contact.get("names") or []]
+        emails = [email.casefold() for email in contact.get("emails") or []]
+        if needle in names or needle in emails:
+            exact.append(contact)
+    matches = exact or contacts
+    if len(matches) == 1 and matches[0].get("emails"):
+        contact = matches[0]
+        return {
+            "status": "completed",
+            "contact": contact,
+            "resolved_recipient": {
+                "name": (contact.get("names") or [query])[0],
+                "email": contact["emails"][0],
+                "resource_name": contact.get("resource_name"),
+            },
+            "contacts": matches,
+            "text": f"Resolved contact: {(contact.get('names') or [query])[0]} <{contact['emails'][0]}>",
+        }
+    if not matches:
+        return {"status": "clarification_required", "contacts": [], "text": f"I did not find a contact matching {query!r}."}
+    return {
+        "status": "clarification_required",
+        "contacts": matches,
+        "text": f"I found {len(matches)} possible contacts. Please choose the exact recipient.",
+    }
+
+
+def execute_contacts_contract(contract, approved=False):
+    validate_executable_contacts_contract(contract)
+    operation = contract["operation"]
+    if contract.get("requires_clarification") or operation == "clarify":
+        return {"status": "clarification_required", "text": contract.get("clarification") or "Which contact should I use?"}
+    if operation == "search":
+        contacts = contacts_search(contract.get("query"), int(contract.get("max_results") or 10))
+        return {"status": "completed", "contacts": contacts, "text": response_text_for_contacts(contacts)}
+    if operation == "resolve_recipient":
+        return resolve_contact(contract.get("query"), int(contract.get("max_results") or 10))
+    if operation == "create":
+        if not approved:
+            raise PermissionError("contacts_write_requires_approval")
+        created = google_request(
+            "POST",
+            "https://people.googleapis.com/v1/people:createContact",
+            contact_body(contract),
+            timeout=60,
+        )
+        contact = compact_contact(contact_get(created["resourceName"]))
+        if contract.get("email") and contract["email"] not in contact.get("emails", []):
+            raise RuntimeError("contacts_create_verification_failed")
+        return {"status": "completed", "contact": contact, "text": f"Verified contact created: {', '.join(contact.get('names') or ['(no name)'])}"}
+    if operation == "update":
+        if not approved:
+            raise PermissionError("contacts_write_requires_approval")
+        existing = contact_get(contract["resource_name"])
+        patch = contact_body(contract, existing)
+        fields = []
+        if patch.get("names"):
+            fields.append("names")
+        if patch.get("emailAddresses"):
+            fields.append("emailAddresses")
+        if patch.get("phoneNumbers"):
+            fields.append("phoneNumbers")
+        if not fields:
+            raise ValueError("contacts_update_fields_required")
+        google_request(
+            "PATCH",
+            "https://people.googleapis.com/v1/"
+            + urllib.parse.quote(contract["resource_name"], safe="/")
+            + ":updateContact?"
+            + urllib.parse.urlencode({"updatePersonFields": ",".join(fields)}),
+            patch,
+            timeout=60,
+        )
+        contact = compact_contact(contact_get(contract["resource_name"]))
+        if contract.get("email") and contract["email"] not in contact.get("emails", []):
+            raise RuntimeError("contacts_update_verification_failed")
+        return {"status": "completed", "contact": contact, "text": f"Verified contact updated: {', '.join(contact.get('names') or ['(no name)'])}"}
+    raise ValueError("contacts_contract_operation_unsupported")
 
 
 def infer_contact_query(request_text):
@@ -261,15 +586,38 @@ def default_tasklist_id():
     return lists[0]["id"]
 
 
-def tasks_list():
+def tasks_list(show_completed=False, max_results=20):
     list_id = default_tasklist_id()
     data = google_request(
         "GET",
         f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks?"
-        + urllib.parse.urlencode({"showCompleted": "false", "maxResults": 20}),
+        + urllib.parse.urlencode({"showCompleted": "true" if show_completed else "false", "showDeleted": "false", "maxResults": max_results}),
         timeout=60,
     )
-    return data.get("items", [])
+    return [compact_task(item, list_id) for item in data.get("items", [])]
+
+
+def compact_task(task, tasklist_id=None):
+    return {
+        "id": task.get("id"),
+        "tasklist_id": tasklist_id,
+        "title": task.get("title") or "",
+        "notes": task.get("notes") or "",
+        "status": task.get("status") or "",
+        "due": task.get("due"),
+        "completed": task.get("completed"),
+        "updated": task.get("updated"),
+    }
+
+
+def task_get(task_id, tasklist_id=None):
+    list_id = tasklist_id or default_tasklist_id()
+    task = google_request(
+        "GET",
+        f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks/{urllib.parse.quote(task_id, safe='')}",
+        timeout=60,
+    )
+    return compact_task(task, list_id)
 
 
 def task_title_from_request(request_text):
@@ -281,15 +629,109 @@ def task_title_from_request(request_text):
     return text.strip(" :.-")
 
 
-def task_create(request_text):
-    list_id = default_tasklist_id()
-    title = task_title_from_request(request_text) or "Untitled task"
-    return google_request(
+def task_create_from_contract(contract):
+    list_id = contract.get("tasklist_id") or default_tasklist_id()
+    payload = {"title": contract.get("title") or "Untitled task"}
+    if contract.get("notes"):
+        payload["notes"] = contract["notes"]
+    if contract.get("due"):
+        payload["due"] = contract["due"]
+    created = google_request(
         "POST",
         f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks",
-        {"title": title},
+        payload,
         timeout=60,
     )
+    verified = task_get(created["id"], list_id)
+    if verified.get("title") != payload["title"]:
+        raise RuntimeError("tasks_create_verification_failed")
+    return verified
+
+
+def task_create(request_text):
+    task = task_create_from_contract({"title": task_title_from_request(request_text) or "Untitled task"})
+    return task
+
+
+def validate_executable_tasks_contract(contract):
+    if not isinstance(contract, dict):
+        raise ValueError("tasks_contract_must_be_object")
+    allowed = {
+        "version", "operation", "query", "task_id", "tasklist_id", "title",
+        "notes", "due", "requires_clarification", "clarification", "max_results",
+    }
+    if set(contract) - allowed:
+        raise ValueError("tasks_contract_unknown_fields")
+    operation = contract.get("operation")
+    if operation not in {"list", "create", "complete", "update", "delete", "clarify"}:
+        raise ValueError("tasks_contract_operation_invalid")
+    if contract.get("requires_clarification") or operation == "clarify":
+        return
+    if operation == "create" and not contract.get("title"):
+        raise ValueError("tasks_create_title_required")
+    if operation in {"complete", "update", "delete"} and not contract.get("task_id"):
+        raise ValueError("tasks_contract_task_id_required")
+
+
+def execute_tasks_contract(contract, approved=False):
+    validate_executable_tasks_contract(contract)
+    operation = contract["operation"]
+    if contract.get("requires_clarification") or operation == "clarify":
+        return {"status": "clarification_required", "text": contract.get("clarification") or "Which task should I use?"}
+    list_id = contract.get("tasklist_id") or default_tasklist_id()
+    if operation == "list":
+        tasks = tasks_list(False, int(contract.get("max_results") or 20))
+        query = (contract.get("query") or "").casefold().strip()
+        if query:
+            tasks = [task for task in tasks if query in " ".join([task.get("title", ""), task.get("notes", "")]).casefold()]
+        return {"status": "completed", "tasks": tasks, "text": response_text_for_tasks(tasks)}
+    if operation == "create":
+        task = task_create_from_contract({**contract, "tasklist_id": list_id})
+        return {"status": "completed", "task": task, "text": f"Verified Google Task created: {task.get('title')}\nTask ID: {task.get('id')}"}
+    if operation == "complete":
+        google_request(
+            "PATCH",
+            f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks/{urllib.parse.quote(contract['task_id'], safe='')}",
+            {"status": "completed"},
+            timeout=60,
+        )
+        task = task_get(contract["task_id"], list_id)
+        if task.get("status") != "completed":
+            raise RuntimeError("tasks_complete_verification_failed")
+        return {"status": "completed", "task": task, "text": f"Verified Google Task completed: {task.get('title')}"}
+    if operation == "update":
+        patch = {}
+        for key in ("title", "notes", "due"):
+            if contract.get(key) is not None:
+                patch[key] = contract.get(key)
+        if not patch:
+            raise ValueError("tasks_update_fields_required")
+        google_request(
+            "PATCH",
+            f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks/{urllib.parse.quote(contract['task_id'], safe='')}",
+            patch,
+            timeout=60,
+        )
+        task = task_get(contract["task_id"], list_id)
+        for key, value in patch.items():
+            if task.get(key) != value:
+                raise RuntimeError("tasks_update_verification_failed")
+        return {"status": "completed", "task": task, "text": f"Verified Google Task updated: {task.get('title')}"}
+    if operation == "delete":
+        existing = task_get(contract["task_id"], list_id)
+        google_request(
+            "DELETE",
+            f"https://tasks.googleapis.com/tasks/v1/lists/{urllib.parse.quote(list_id, safe='')}/tasks/{urllib.parse.quote(contract['task_id'], safe='')}",
+            timeout=60,
+        )
+        try:
+            task_get(contract["task_id"], list_id)
+            raise RuntimeError("tasks_delete_verification_failed")
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {404, 410}:
+                raise
+        return {"status": "completed", "task": existing, "text": f"Verified Google Task deleted: {existing.get('title')}"}
+    raise ValueError("tasks_contract_operation_unsupported")
 
 
 def task_create_intent(request_text):
@@ -304,6 +746,27 @@ def response_text_for_tasks(tasks):
     for index, task in enumerate(tasks, 1):
         lines.append(f"{index}. {task.get('title') or '(untitled task)'}")
     return "\n".join(lines)
+
+
+def build_briefing(kind="morning"):
+    kind = "evening" if str(kind).lower() == "evening" else "morning"
+    calendar_request = "tomorrow" if kind == "evening" else "today"
+    calendar = calendar_list(calendar_request)
+    gmail_query = "in:inbox (is:important OR is:unread) newer_than:3d"
+    messages = gmail_search(gmail_query, 8)
+    tasks = tasks_list(False, 20)
+    title = "Evening recap" if kind == "evening" else "Morning briefing"
+    lines = [title, ""]
+    lines.append(response_text_for_calendar(calendar))
+    lines.extend(["", response_text_for_gmail(messages), "", response_text_for_tasks(tasks)])
+    return {
+        "status": "completed",
+        "kind": kind,
+        "calendar": calendar,
+        "messages": messages,
+        "tasks": tasks,
+        "text": "\n".join(lines),
+    }
 
 
 def calendar_bounds(day):
@@ -787,9 +1250,23 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if path == "/gmail/execute-contract":
+                contract = payload.get("contract")
+                if not isinstance(contract, dict):
+                    raise ValueError("gmail_contract_required")
+                result = execute_gmail_contract(contract, approved=payload.get("approved") is True)
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
             if path == "/contacts/assist":
                 contacts = contacts_search(infer_contact_query(payload.get("request", "")), int(payload.get("max_results", 10)))
                 self.write_json(HTTPStatus.OK, {"ok": True, "contacts": contacts, "text": response_text_for_contacts(contacts)})
+                return
+            if path == "/contacts/execute-contract":
+                contract = payload.get("contract")
+                if not isinstance(contract, dict):
+                    raise ValueError("contacts_contract_required")
+                result = execute_contacts_contract(contract, approved=payload.get("approved") is True)
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
                 return
             if path == "/tasks/assist":
                 request_text = payload.get("request", "")
@@ -806,6 +1283,17 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     tasks = tasks_list()
                     self.write_json(HTTPStatus.OK, {"ok": True, "tasks": tasks, "text": response_text_for_tasks(tasks)})
+                return
+            if path == "/tasks/execute-contract":
+                contract = payload.get("contract")
+                if not isinstance(contract, dict):
+                    raise ValueError("tasks_contract_required")
+                result = execute_tasks_contract(contract, approved=payload.get("approved") is True)
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
+            if path == "/briefing/build":
+                result = build_briefing(payload.get("kind") or "morning")
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
                 return
             if path == "/calendar/list":
                 result = calendar_list(payload.get("request", "today"))

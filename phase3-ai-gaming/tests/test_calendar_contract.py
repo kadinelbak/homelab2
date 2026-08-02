@@ -15,6 +15,7 @@ def load(name, path):
 
 core = load("jarvis_core", ROOT / "ai-orchestrator" / "app.py")
 worker = load("google_worker", ROOT / "google-tools-worker" / "app.py")
+telegram = load("telegram_bridge", ROOT / "telegram-bridge" / "app.py")
 
 
 class ContractValidationTests(unittest.TestCase):
@@ -147,6 +148,194 @@ class ContractApprovalTests(unittest.TestCase):
             action = core.make_action("req-test", payload, core.capability_by_name("manage_calendar"))
         self.assertTrue(action["requires_approval"])
         self.assertEqual(action["status"], "awaiting_approval")
+
+
+class GmailContractValidationTests(unittest.TestCase):
+    def test_gmail_create_draft_contract(self):
+        contract = core.validate_gmail_contract({
+            "operation": "create_draft",
+            "to": ["person@example.com"],
+            "subject": "Hello",
+            "body": "Hi there",
+        })
+        self.assertEqual(contract["operation"], "create_draft")
+        self.assertEqual(contract["to"], ["person@example.com"])
+
+    def test_gmail_unknown_fields_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unknown_fields"):
+            core.validate_gmail_contract({"operation": "search_messages", "query": "in:inbox", "extra": True})
+
+    def test_gmail_send_requires_verified_draft_artifact(self):
+        payload = {"request": "send that draft", "inputs": {}}
+        contract = core.validate_gmail_contract({"operation": "send_draft", "draft_id": "draft123"})
+        with self.assertRaisesRegex(ValueError, "verified_draft"):
+            core.validate_gmail_contract_semantics(payload, contract, [])
+
+    def test_explicit_send_inputs_cannot_reuse_old_draft(self):
+        payload = {
+            "request": "Send email",
+            "inputs": {"to": ["person@example.com"], "subject": "Cool", "body": "Hello"},
+        }
+        contract = core.validate_gmail_contract({"operation": "send_draft", "draft_id": "draft123"})
+        with self.assertRaisesRegex(ValueError, "explicit_message_must_use_send_message"):
+            core.validate_gmail_contract_semantics(payload, contract, [{"draft_id": "draft123", "status": "draft_verified"}])
+
+    def test_explicit_send_inputs_accept_send_message(self):
+        payload = {
+            "request": "Send email",
+            "inputs": {"to": ["person@example.com"], "subject": "Cool", "body": "Hello"},
+        }
+        contract = core.validate_gmail_contract({
+            "operation": "send_message",
+            "to": ["person@example.com"],
+            "subject": "Cool",
+            "body": "Hello",
+        })
+        self.assertEqual(core.validate_gmail_contract_semantics(payload, contract, []), contract)
+
+    def test_gmail_named_recipient_without_email_needs_retry_or_clarification(self):
+        payload = {"request": "Draft an email to Sarah about tomorrow", "inputs": {}}
+        contract = core.validate_gmail_contract({"operation": "create_draft", "subject": "Tomorrow", "body": "Hello"})
+        with self.assertRaisesRegex(ValueError, "named_recipient_unresolved"):
+            core.validate_gmail_contract_semantics(payload, contract, [])
+
+    def test_gmail_draft_with_do_not_send_is_still_a_draft(self):
+        payload = {"request": "Create a Gmail draft to person@example.com and do not send it", "inputs": {}}
+        contract = core.validate_gmail_contract({
+            "operation": "create_draft",
+            "to": ["person@example.com"],
+            "subject": "Hello",
+            "body": "Hi there",
+        })
+        self.assertEqual(core.validate_gmail_contract_semantics(payload, contract, []), contract)
+
+    def test_gmail_bad_contract_is_retried(self):
+        payload = {"request": "Draft an email to person@example.com saying hi", "inputs": {}}
+        bad = '{"operation":"create_draft","to":["person@example.com"],"subject":"Hi"}'
+        good = '{"operation":"create_draft","to":["person@example.com"],"subject":"Hi","body":"Hi there."}'
+        core.GMAIL_CONTRACT_CACHE.clear()
+        with mock.patch.object(core, "verified_gmail_artifacts", return_value=[]), mock.patch.object(core, "call_profile_assistant", side_effect=[bad, good]) as call:
+            contract, source = core.build_gmail_contract(payload)
+        self.assertEqual(contract["body"], "Hi there.")
+        self.assertEqual(source, "nemotron_retry")
+        self.assertEqual(call.call_count, 2)
+
+    def test_gmail_named_recipient_resolves_through_contacts(self):
+        payload = {"request": "Draft an email to Sarah saying hi", "inputs": {}}
+        contract = core.validate_gmail_contract({"operation": "create_draft", "subject": "Hi", "body": "Hi there."})
+        with mock.patch.object(core, "call_google_tools", return_value={"status": "completed", "resolved_recipient": {"name": "Sarah", "email": "sarah@example.com"}}):
+            resolved = core.resolve_gmail_named_recipient(payload, contract)
+        self.assertEqual(resolved["to"], ["sarah@example.com"])
+
+
+class GmailContractWorkerTests(unittest.TestCase):
+    def test_gmail_create_draft_verifies(self):
+        contract = {
+            "operation": "create_draft",
+            "to": ["person@example.com"],
+            "subject": "Hello",
+            "body": "Hi there",
+        }
+        created = {"id": "draft123", "message": {"id": "msg123", "threadId": "thread123"}}
+        verified = {"id": "draft123", "message": {"id": "msg123", "threadId": "thread123"}}
+        with mock.patch.object(worker, "google_request", side_effect=[created, verified]):
+            result = worker.execute_gmail_contract(contract)
+        self.assertEqual(result["draft"]["id"], "draft123")
+        self.assertTrue(result["draft"]["verified"])
+
+    def test_gmail_send_requires_approval(self):
+        with self.assertRaises(PermissionError):
+            worker.execute_gmail_contract({"operation": "send_draft", "draft_id": "draft123"}, approved=False)
+
+    def test_gmail_send_message_requires_approval(self):
+        with self.assertRaises(PermissionError):
+            worker.execute_gmail_contract({
+                "operation": "send_message",
+                "to": ["person@example.com"],
+                "subject": "Cool",
+                "body": "Hello",
+            }, approved=False)
+
+    def test_gmail_label_verifies(self):
+        contract = {"operation": "label_messages", "message_ids": ["msg123"], "label_ids": ["IMPORTANT"]}
+        modified = {"id": "msg123"}
+        verified = {"id": "msg123", "threadId": "thread123", "labelIds": ["INBOX", "IMPORTANT"], "payload": {"headers": []}}
+        with mock.patch.object(worker, "google_request", side_effect=[modified, verified]):
+            result = worker.execute_gmail_contract(contract, approved=True)
+        self.assertEqual(result["messages"][0]["id"], "msg123")
+
+
+class GmailContractApprovalTests(unittest.TestCase):
+    def test_send_contract_requires_approval(self):
+        payload = {"request": "Send that draft", "inputs": {}, "permissions": {"may_execute": False}}
+        contract = {"operation": "send_draft", "draft_id": "draft123", "requires_clarification": False}
+        with mock.patch.object(core, "build_gmail_contract", return_value=(contract, "nemotron")):
+            action = core.make_action("req-gmail", payload, core.capability_by_name("manage_email"))
+        self.assertTrue(action["requires_approval"])
+        self.assertEqual(action["status"], "awaiting_approval")
+
+    def test_send_message_contract_requires_approval(self):
+        payload = {"request": "Send email", "inputs": {"to": ["person@example.com"], "subject": "Cool", "body": "Hello"}, "permissions": {"may_execute": False}}
+        contract = {"operation": "send_message", "to": ["person@example.com"], "subject": "Cool", "body": "Hello", "requires_clarification": False}
+        with mock.patch.object(core, "build_gmail_contract", return_value=(contract, "nemotron")):
+            action = core.make_action("req-gmail", payload, core.capability_by_name("manage_email"))
+        self.assertTrue(action["requires_approval"])
+        self.assertEqual(action["status"], "awaiting_approval")
+
+    def test_draft_contract_executes_without_approval(self):
+        payload = {"request": "Draft an email", "inputs": {}, "permissions": {"may_execute": False}}
+        contract = {"operation": "create_draft", "body": "Hello", "requires_clarification": False}
+        with mock.patch.object(core, "build_gmail_contract", return_value=(contract, "nemotron")):
+            action = core.make_action("req-gmail", payload, core.capability_by_name("manage_email"))
+        self.assertFalse(action["requires_approval"])
+        self.assertEqual(action["status"], "approved")
+
+
+class ContactsContractTests(unittest.TestCase):
+    def test_contacts_create_requires_approval(self):
+        payload = {"request": "Create a contact for Sarah sarah@example.com", "inputs": {}, "permissions": {"may_execute": False}}
+        contract = {"operation": "create", "name": "Sarah", "email": "sarah@example.com", "requires_clarification": False}
+        with mock.patch.object(core, "build_contacts_contract", return_value=(contract, "nemotron")):
+            action = core.make_action("req-contact", payload, core.capability_by_name("manage_contacts"))
+        self.assertTrue(action["requires_approval"])
+        self.assertEqual(action["status"], "awaiting_approval")
+
+    def test_worker_contact_resolve_ambiguous(self):
+        with mock.patch.object(worker, "contacts_search", return_value=[
+            {"names": ["Sarah A"], "emails": ["a@example.com"]},
+            {"names": ["Sarah B"], "emails": ["b@example.com"]},
+        ]):
+            result = worker.execute_contacts_contract({"operation": "resolve_recipient", "query": "Sarah"})
+        self.assertEqual(result["status"], "clarification_required")
+
+
+class TasksContractTests(unittest.TestCase):
+    def test_tasks_create_executes_without_approval(self):
+        payload = {"request": "Add task buy milk", "inputs": {}, "permissions": {"may_execute": False}}
+        contract = {"operation": "create", "title": "buy milk", "requires_clarification": False}
+        with mock.patch.object(core, "build_tasks_contract", return_value=(contract, "nemotron")):
+            action = core.make_action("req-task", payload, core.capability_by_name("manage_tasks"))
+        self.assertFalse(action["requires_approval"])
+        self.assertEqual(action["status"], "approved")
+
+    def test_worker_task_complete_verifies(self):
+        contract = {"operation": "complete", "task_id": "task123"}
+        with mock.patch.object(worker, "default_tasklist_id", return_value="list123"), mock.patch.object(worker, "google_request", return_value={}), mock.patch.object(worker, "task_get", return_value={"id": "task123", "title": "buy milk", "status": "completed"}):
+            result = worker.execute_tasks_contract(contract)
+        self.assertEqual(result["task"]["status"], "completed")
+
+
+class BriefingTests(unittest.TestCase):
+    def test_briefing_combines_calendar_email_and_tasks(self):
+        with mock.patch.object(worker, "calendar_list", return_value={"events": []}), mock.patch.object(worker, "gmail_search", return_value=[]), mock.patch.object(worker, "tasks_list", return_value=[]):
+            result = worker.build_briefing("evening")
+        self.assertEqual(result["kind"], "evening")
+        self.assertIn("Evening recap", result["text"])
+
+
+class PaperlessVerificationTests(unittest.TestCase):
+    def test_paperless_document_url(self):
+        self.assertTrue(telegram.paperless_document_url({"id": 123}).endswith("/documents/123/details"))
 
 
 class ManagerRoutingTests(unittest.TestCase):

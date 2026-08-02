@@ -642,7 +642,7 @@ services:
     volumes:
       - ${DATA_PATH}:/data:ro
       - ..:/repo:ro
-      - ${DATA_PATH}/phase1-core/data/backup:/backup
+      - /mnt/backups/homelab-backup:/backup
       - ${DATA_PATH}/phase1-core/data/node-exporter/textfile_collector:/metrics
     networks:
       - homelab_internal

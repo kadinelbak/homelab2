@@ -11,7 +11,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 BOT_TOKEN = os.environ.get("JARVIS_TELEGRAM_BOT_TOKEN", "")
 ALLOWED_CHAT_IDS = {
@@ -47,6 +49,18 @@ PAPERLESS_API_TOKEN = os.environ.get("PAPERLESS_API_TOKEN", "")
 PAPERLESS_USERNAME = os.environ.get("PAPERLESS_USERNAME", "admin")
 PAPERLESS_PASSWORD = os.environ.get("PAPERLESS_PASSWORD", "")
 PAPERLESS_IMPORT_WAIT_SECONDS = int(os.environ.get("PAPERLESS_IMPORT_WAIT_SECONDS", "180"))
+BRIEFING_ENABLED = os.environ.get("JARVIS_TELEGRAM_BRIEFING_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+BRIEFING_CHAT_IDS = {
+    item.strip()
+    for item in os.environ.get("JARVIS_TELEGRAM_BRIEFING_CHAT_IDS", "").split(",")
+    if item.strip()
+}
+BRIEFING_MORNING_TIME = os.environ.get("JARVIS_TELEGRAM_MORNING_BRIEF_TIME", "07:30")
+BRIEFING_EVENING_TIME = os.environ.get("JARVIS_TELEGRAM_EVENING_BRIEF_TIME", "20:30")
+try:
+    LOCAL_TZ = ZoneInfo(os.environ.get("TZ", "America/New_York"))
+except ZoneInfoNotFoundError:
+    LOCAL_TZ = timezone.utc
 
 
 def telegram_api(method, payload=None):
@@ -147,8 +161,8 @@ def openwebui_messages(chat_id, text):
             "role": "system",
             "content": (
                 "You are Jarvis. Use the configured Jarvis tools for verified Gmail, Calendar, "
-                "Paperless, Tasks, Contacts, Codex, and homelab actions. Never claim an external "
-                "action completed unless the tool result says completed or verified. Explain approval "
+                "Paperless, Google Tasks, Google Contacts, Daily Briefing, Codex, and homelab actions. Never claim an external "
+                "action completed unless the tool result says completed or verified. Resolve named email recipients through Contacts instead of guessing. Explain approval "
                 "requirements and include an action ID when one is returned."
             ),
         }
@@ -359,11 +373,16 @@ def wait_for_paperless_document(original_name, queued_name, upload_started_at):
                 results = data.get("results") or []
             for doc in results:
                 if document_matches_upload(doc, original_name, queued_name, upload_started_at):
-                    return {"status": "completed", "document": doc}
+                    if not doc.get("id"):
+                        return {"status": "failed", "error": "paperless_document_missing_id", "document": doc}
+                    has_archive = bool(doc.get("archive_filename") or doc.get("archived_file_name"))
+                    has_ocr = bool(doc.get("content") or doc.get("checksum") or doc.get("archive_serial_number") or has_archive)
+                    status = "completed" if has_ocr else "processing"
+                    return {"status": status, "document": doc, "ocr_verified": has_ocr, "archive_verified": has_archive}
         except Exception as exc:
             last_error = str(exc)[:200]
         time.sleep(5)
-    return {"status": "pending", "error": last_error}
+    return {"status": "processing", "error": last_error}
 
 
 def paperless_document_url(doc):
@@ -436,6 +455,7 @@ def ingest_document(chat_id, document):
                 break
             time.sleep(1)
     lines = [
+        "Paperless status: queued" if queued else "Paperless status: failed",
         (
             "Verified Paperless picked up document for OCR/import."
             if picked_up
@@ -454,18 +474,23 @@ def ingest_document(chat_id, document):
             lines.extend(
                 [
                     "",
+                    "Paperless status: completed",
                     "Verified Paperless import completed.",
                     f"Document ID: {doc.get('id')}",
                     f"Title: {title}",
+                    f"OCR verified: {bool(result.get('ocr_verified'))}",
+                    f"Archive verified: {bool(result.get('archive_verified'))}",
                 ]
             )
             url = paperless_document_url(doc)
             if url:
                 lines.append(f"Link: {url}")
         elif result.get("status") == "api_not_configured":
-            lines.extend(["", "Paperless API verification is not configured."])
+            lines.extend(["", "Paperless status: api_not_configured", "Paperless API verification is not configured."])
+        elif result.get("status") == "failed":
+            lines.extend(["", "Paperless status: failed", f"Paperless verification failed: {result.get('error') or 'unknown error'}"])
         else:
-            lines.extend(["", "Paperless import is still processing. I verified the handoff, but OCR/import has not appeared in the API yet."])
+            lines.extend(["", "Paperless status: processing", "Paperless import is still processing. I verified the handoff, but OCR/import has not appeared in the API yet."])
     return "\n".join(lines)
 
 
@@ -519,6 +544,69 @@ def execute_action(action_id):
 def approve_and_execute(action_id):
     post_json(ORCHESTRATOR_URL + f"/actions/{action_id}/approve", {})
     return execute_action(action_id)
+
+
+def build_briefing(chat_id, kind="morning"):
+    kind = "evening" if str(kind).lower().startswith("even") else "morning"
+    payload = {
+        "request": "Build evening recap and tomorrow prep" if kind == "evening" else "Build morning daily briefing",
+        "source": "telegram",
+        "capability": "daily_briefing",
+        "inputs": {
+            "telegram_chat_id": str(chat_id),
+            "conversation_context": conversation_context(chat_id),
+        },
+        "limits": {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
+        "permissions": {"may_execute": False, "may_publish": False},
+    }
+    planned = post_json(ORCHESTRATOR_URL + "/requests", payload)
+    action = (planned.get("actions") or [{}])[0]
+    if not action.get("permissions", {}).get("may_execute"):
+        return summarize_plan(planned)
+    executed = execute_action(action["action_id"])
+    result = (executed.get("action") or {}).get("result") or {}
+    text = result.get("text") or result.get("summary") or "Briefing built."
+    remember(chat_id, "assistant", text)
+    return text
+
+
+def parse_brief_time(value):
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or "").strip())
+    if not match:
+        return 7, 30
+    hour = min(max(int(match.group(1)), 0), 23)
+    minute = min(max(int(match.group(2)), 0), 59)
+    return hour, minute
+
+
+def briefing_targets():
+    targets = BRIEFING_CHAT_IDS or ALLOWED_CHAT_IDS
+    return sorted(targets)
+
+
+def briefing_scheduler():
+    sent = set()
+    while True:
+        try:
+            if BRIEFING_ENABLED:
+                now_local = datetime.now(LOCAL_TZ)
+                schedule = {
+                    "morning": parse_brief_time(BRIEFING_MORNING_TIME),
+                    "evening": parse_brief_time(BRIEFING_EVENING_TIME),
+                }
+                for kind, (hour, minute) in schedule.items():
+                    key = (kind, now_local.date().isoformat(), hour, minute)
+                    if now_local.hour == hour and now_local.minute == minute and key not in sent:
+                        for chat_id in briefing_targets():
+                            if allowed(chat_id):
+                                send_message(chat_id, build_briefing(chat_id, kind))
+                        sent.add(key)
+                if len(sent) > 20:
+                    today = now_local.date().isoformat()
+                    sent = {item for item in sent if item[1] == today}
+        except Exception as exc:
+            print(f"telegram briefing scheduler error: {exc}", flush=True)
+        time.sleep(30)
 
 
 def summarize_plan(planned):
@@ -612,6 +700,7 @@ def handle_command(chat_id, text):
             "Send text, including Telegram voice typing.\n"
             "For audio files, use Open WebUI transcription first.\n"
             "For approval-gated actions, I will give you an /approve command.\n"
+            "Use /brief, /brief morning, or /brief evening for Calendar/Gmail/Tasks briefing.\n"
             "Use /forget to clear this chat's memory."
         )
     if command == "/health":
@@ -624,6 +713,9 @@ def handle_command(chat_id, text):
         executed = approve_and_execute(action_id)
         result = (executed.get("action") or {}).get("result") or {}
         return result.get("text") or result.get("summary") or "Approved and executed."
+    if command == "/brief":
+        kind = "evening" if rest.strip().lower().startswith("even") else "morning"
+        return build_briefing(chat_id, kind)
     if command == "/forget":
         forget(chat_id)
         return "Forgot this Telegram chat's recent Jarvis context."
@@ -673,6 +765,7 @@ def main():
     offset = None
     print("Jarvis Telegram bridge polling.", flush=True)
     threading.Thread(target=queue_worker, daemon=True).start()
+    threading.Thread(target=briefing_scheduler, daemon=True).start()
     while True:
         try:
             payload = {"timeout": POLL_TIMEOUT}
