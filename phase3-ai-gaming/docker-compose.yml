@@ -249,6 +249,30 @@ services:
       - "homepage.description=Request routing and worker handoff"
 
   # ---------------------------------------------------------------------------
+  # JARVIS OPEN WEBUI TOOLS - Internal OpenAPI tool bridge for Open WebUI
+  # Internal target for Open WebUI Global Tool Server: jarvis-openwebui-tools:18400
+  # ---------------------------------------------------------------------------
+  jarvis-openwebui-tools:
+    build:
+      context: ./jarvis-openwebui-tools
+    container_name: jarvis_openwebui_tools
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai", "open-webui"]
+    environment:
+      TZ: ${TZ}
+      JARVIS_OPENWEBUI_TOOLS_PORT: 18400
+      JARVIS_OPENWEBUI_DEFAULT_RUNTIME_SECONDS: ${JARVIS_OPENWEBUI_DEFAULT_RUNTIME_SECONDS:-1800}
+      JARVIS_OPENWEBUI_DEFAULT_COST_USD: ${JARVIS_OPENWEBUI_DEFAULT_COST_USD:-0}
+      AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
+      AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+    networks:
+      - homelab_internal
+    depends_on:
+      - ai-orchestrator
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # ---------------------------------------------------------------------------
   # CODEX WORKER - Approval-gated coding worker for Jarvis
   # ---------------------------------------------------------------------------
   codex-worker:

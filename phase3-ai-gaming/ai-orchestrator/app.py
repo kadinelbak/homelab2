@@ -332,6 +332,12 @@ def route_request(payload):
             }
 
     text = request_text(payload).lower()
+    if gmail_send_or_publish_intent(text):
+        return capability_by_name("manage_email"), {
+            "router": "intent_override",
+            "rationale": "User asked to send, reply, forward, or publish an email.",
+        }
+
     if gmail_draft_create_intent(text):
         return capability_by_name("manage_email"), {
             "router": "intent_override",
@@ -340,7 +346,14 @@ def route_request(payload):
 
     if OLLAMA_ROUTER_ENABLED and request_text(payload):
         try:
-            return route_with_ollama(payload)
+            capability, metadata = route_with_ollama(payload)
+            if capability["capability"] == "draft_email" and gmail_send_or_publish_intent(text):
+                return capability_by_name("manage_email"), {
+                    **metadata,
+                    "router": "intent_override",
+                    "rationale": "Safety override: explicit email send/reply/forward requests require the Gmail approval path.",
+                }
+            return capability, metadata
         except Exception as exc:
             capability, metadata = route_with_keywords(payload)
             metadata["fallback_from"] = "ollama"
@@ -552,8 +565,25 @@ def call_codex_worker(action):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def gmail_send_or_publish_intent(text):
+    text = (text or "").lower()
+    send_terms = (
+        "send",
+        "send it",
+        "send this",
+        "send email",
+        "email them",
+        "forward",
+        "reply to",
+        "respond to",
+    )
+    return any(term in text for term in send_terms)
+
+
 def gmail_draft_create_intent(text):
     text = (text or "").lower()
+    if gmail_send_or_publish_intent(text):
+        return False
     if "gmail" in text and any(term in text for term in ("draft", "compose", "write")):
         return True
     return any(term in text for term in ("create draft", "make a draft", "save draft"))

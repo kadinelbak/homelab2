@@ -14,7 +14,35 @@ It does not require n8n. Jarvis Chat sends requests directly to `ai-orchestrator
 
 ## GUI
 
-For day-to-day use, open Jarvis Chat:
+For day-to-day use, Open WebUI is the preferred long-context Jarvis frontend:
+
+```text
+http://<tailscale-host-or-ip>:8080
+```
+
+Register Jarvis Core in Open WebUI as a Global Tool Server from Admin Settings:
+
+```text
+http://jarvis-openwebui-tools:18400/openapi.json
+```
+
+The tool bridge is Docker-internal only. It keeps `AI_ORCHESTRATOR_TOKEN` server-side and exposes these OpenAPI tools to Open WebUI:
+
+```text
+jarvis_request
+jarvis_get_request
+jarvis_approve_action
+jarvis_capabilities
+jarvis_health
+```
+
+Recommended Open WebUI model/system prompt for a model named `Jarvis`:
+
+```text
+You are Jarvis, Kadin's personal homelab assistant. Use normal chat and Open WebUI memory for conversation, planning, and questions that do not need external action. Use Jarvis tools for Gmail, Calendar, Paperless, Tasks, Contacts, Codex, homelab, document, or verified worker actions. Never claim that an external action is done unless the Jarvis tool result says it is completed or verified. If Jarvis returns approval required, show the action ID and ask for explicit approval before using jarvis_approve_action. Telegram remains available for mobile voice and document uploads. Jarvis Chat remains available as the debugging/admin console.
+```
+
+Jarvis Chat remains available as a debugging/admin console:
 
 ```text
 http://<tailscale-host-or-ip>:18100
