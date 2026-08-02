@@ -8,26 +8,38 @@ showStats: true
 statusStyle: dot
 layout:
   Core:
+    tab: Homelab
     style: row
     columns: 4
   Monitoring:
+    tab: Homelab
     style: row
     columns: 4
   Media:
+    tab: Homelab
     style: row
     columns: 4
   Media Automations:
+    tab: Homelab
     style: row
     columns: 4
   AI Automations:
+    tab: Homelab
     style: row
     columns: 4
   Tools:
+    tab: Homelab
     style: row
     columns: 4
   Gaming:
+    tab: Homelab
     style: row
     columns: 4
   On-Demand:
+    tab: Homelab
     style: row
     columns: 4
+  Weather:
+    tab: Weather
+    style: row
+    columns: 3

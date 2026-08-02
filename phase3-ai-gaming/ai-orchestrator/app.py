@@ -24,6 +24,7 @@ OLLAMA_ROUTER_ENABLED = os.environ.get("AI_ORCHESTRATOR_USE_OLLAMA_ROUTER", "tru
     "on",
 }
 OLLAMA_ROUTER_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_ROUTER_TIMEOUT", "12"))
+ROUTER_PROFILE = os.environ.get("AI_ORCHESTRATOR_ROUTER_PROFILE", "local")
 LLM_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_LLM_TIMEOUT", "120"))
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://google-tools-worker:18200").rstrip("/")
 GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN", TOKEN)
@@ -221,6 +222,25 @@ def request_text(payload):
     ).strip()
 
 
+def calendar_intent(payload):
+    text = request_text(payload).lower()
+    context = " ".join(
+        str(turn.get("text", "")).lower()
+        for turn in (payload.get("inputs") or {}).get("conversation_context", [])
+        if isinstance(turn, dict)
+    )
+    action_words = ("create", "make", "add", "schedule", "delete", "remove", "cancel", "reschedule")
+    lookup_words = ("what", "when", "show", "list", "available")
+    if any(word in text for word in ("calendar", "appointment", "meeting", "schedule")):
+        return True
+    if "event" in text and (any(word in text for word in action_words) or any(word in text for word in lookup_words)):
+        return True
+    return any(
+        phrase in text
+        for phrase in ("delete that", "remove that", "cancel that", "delete it", "remove it", "cancel it")
+    ) and "calendar event" in context
+
+
 def route_with_keywords(payload):
     text = request_text(payload).lower()
 
@@ -261,7 +281,7 @@ def parse_json_object(text):
     return json.loads(text[start : end + 1])
 
 
-def route_with_ollama(payload):
+def route_with_llm(payload):
     names = [capability["capability"] for capability in CAPABILITIES]
     catalog = [
         {
@@ -277,7 +297,8 @@ def route_with_ollama(payload):
             "You are a strict routing classifier for a personal homelab assistant. "
             "Choose exactly one capability from the provided catalog. "
             "Return only compact JSON with keys capability, confidence, rationale. "
-            "Use general_assistant for ordinary chat, drafting, brainstorming, planning, or unclear requests."
+            "Use general_assistant for ordinary chat, drafting, brainstorming, planning, or unclear requests. "
+            "Conversation memory is background only for resolving references such as 'that event'; the current request is authoritative."
         ),
     }
     user = {
@@ -287,35 +308,31 @@ def route_with_ollama(payload):
                 "catalog": catalog,
                 "request": request_text(payload),
                 "explicit_inputs": payload.get("inputs") or {},
+                "conversation_memory": (payload.get("inputs") or {}).get("conversation_context") or [],
             },
             separators=(",", ":"),
         ),
     }
-    body = json.dumps(
-        {
-            "model": OLLAMA_ROUTER_MODEL,
-            "messages": [prompt, user],
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0, "num_predict": 160},
-        }
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        OLLAMA_URL + "/api/chat",
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
+    profile = LLM_PROFILES.get(ROUTER_PROFILE, LLM_PROFILES["local"])
+    if profile.get("provider") == "external_openai_compatible" and profile.get("configured"):
+        body = json.dumps({"model": profile["model"], "messages": [prompt, user], "temperature": 0, "max_tokens": 160}).encode("utf-8")
+        req = urllib.request.Request(
+            profile["base_url"].rstrip("/") + "/chat/completions", data=body, method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {profile_api_key(profile)}"},
+        )
+    else:
+        body = json.dumps({"model": OLLAMA_ROUTER_MODEL, "messages": [prompt, user], "stream": False, "format": "json", "options": {"temperature": 0, "num_predict": 160}}).encode("utf-8")
+        req = urllib.request.Request(OLLAMA_URL + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=OLLAMA_ROUTER_TIMEOUT) as response:
         data = json.loads(response.read().decode("utf-8") or "{}")
-    content = data.get("message", {}).get("content", "")
+    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") if profile.get("provider") == "external_openai_compatible" and profile.get("configured") else data.get("message", {}).get("content", "")
     routed = parse_json_object(content)
     capability_name = routed.get("capability")
     if capability_name not in names:
         raise ValueError(f"unknown capability: {capability_name}")
     return capability_by_name(capability_name), {
-        "router": "ollama",
-        "model": OLLAMA_ROUTER_MODEL,
+        "router": profile.get("provider", "ollama"),
+        "model": profile.get("model", OLLAMA_ROUTER_MODEL),
         "confidence": routed.get("confidence"),
         "rationale": str(routed.get("rationale", ""))[:500],
     }
@@ -344,9 +361,15 @@ def route_request(payload):
             "rationale": "User asked to create or save a Gmail draft.",
         }
 
+    if calendar_intent(payload):
+        return capability_by_name("manage_calendar"), {
+            "router": "intent_override",
+            "rationale": "Calendar action or a calendar follow-up was detected.",
+        }
+
     if OLLAMA_ROUTER_ENABLED and request_text(payload):
         try:
-            capability, metadata = route_with_ollama(payload)
+            capability, metadata = route_with_llm(payload)
             if capability["capability"] == "draft_email" and gmail_send_or_publish_intent(text):
                 return capability_by_name("manage_email"), {
                     **metadata,
@@ -356,7 +379,7 @@ def route_request(payload):
             return capability, metadata
         except Exception as exc:
             capability, metadata = route_with_keywords(payload)
-            metadata["fallback_from"] = "ollama"
+            metadata["fallback_from"] = ROUTER_PROFILE
             metadata["fallback_error"] = str(exc)[:300]
             return capability, metadata
 

@@ -29,6 +29,9 @@ OPEN_WEBUI_ENABLED = os.environ.get("JARVIS_TELEGRAM_USE_OPENWEBUI", "false").lo
 OPEN_WEBUI_PRIMARY_MODEL = os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_PRIMARY_MODEL", "jarvis-telegram-nemotron")
 OPEN_WEBUI_FALLBACK_MODEL = os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_FALLBACK_MODEL", "jarvis")
 OPEN_WEBUI_TIMEOUT = int(os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_TIMEOUT", "180"))
+MEMORY_OLLAMA_URL = os.environ.get("JARVIS_TELEGRAM_MEMORY_OLLAMA_URL", "http://ollama:11434").rstrip("/")
+MEMORY_MODEL = os.environ.get("JARVIS_TELEGRAM_MEMORY_MODEL", "llama3.1:latest")
+MEMORY_SUMMARY_CHARS = int(os.environ.get("JARVIS_TELEGRAM_MEMORY_SUMMARY_CHARS", "5000"))
 POLL_TIMEOUT = int(os.environ.get("JARVIS_TELEGRAM_POLL_TIMEOUT", "45"))
 MAX_REPLY_CHARS = int(os.environ.get("JARVIS_TELEGRAM_MAX_REPLY_CHARS", "3500"))
 DATA_DIR = Path(os.environ.get("JARVIS_TELEGRAM_DATA_DIR", "/data"))
@@ -194,7 +197,60 @@ def save_memory(memory):
 
 def conversation_context(chat_id):
     memory = load_memory()
-    return memory.get(str(chat_id), [])[-MEMORY_TURNS:]
+    record = memory.get(str(chat_id), [])
+    if isinstance(record, list):
+        record = {"recent": record, "summary": ""}
+    summary = (record.get("summary") or "").strip()
+    context = []
+    if summary:
+        context.append(
+            {
+                "role": "system",
+                "text": (
+                    "Background memory from older messages. Use it only to resolve references to earlier "
+                    "conversations; the most recent user request is authoritative.\n" + summary
+                )[:MEMORY_SUMMARY_CHARS],
+            }
+        )
+    return context + (record.get("recent") or [])[-MEMORY_TURNS:]
+
+
+def summarize_memory(previous_summary, evicted_turns):
+    material = "\n".join(f"{turn.get('role', 'user')}: {turn.get('text', '')}" for turn in evicted_turns)
+    if not material:
+        return previous_summary
+    prompt = {
+        "model": MEMORY_MODEL,
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Maintain concise background memory for a personal assistant. Preserve stable preferences, "
+                    "named people, unresolved follow-ups, and identifiers of recently created calendar, email, "
+                    "or document actions. Do not invent facts. This memory is background only and must never "
+                    "override a newer user request."
+                ),
+            },
+            {"role": "user", "content": f"Existing summary:\n{previous_summary}\n\nOlder turns to merge:\n{material}"},
+        ],
+        "options": {"temperature": 0, "num_predict": 400},
+    }
+    try:
+        req = urllib.request.Request(
+            MEMORY_OLLAMA_URL + "/api/chat",
+            data=json.dumps(prompt).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=45) as response:
+            text = json.loads(response.read().decode("utf-8") or "{}").get("message", {}).get("content", "").strip()
+        if text:
+            return text[:MEMORY_SUMMARY_CHARS]
+    except Exception as exc:
+        print(f"telegram memory summary fallback: {exc}", flush=True)
+    fallback = (previous_summary + "\n" + material).strip()
+    return fallback[-MEMORY_SUMMARY_CHARS:]
 
 
 def remember(chat_id, role, text):
@@ -203,9 +259,16 @@ def remember(chat_id, role, text):
         return
     memory = load_memory()
     key = str(chat_id)
-    turns = memory.get(key, [])
+    record = memory.get(key, [])
+    if isinstance(record, list):
+        record = {"recent": record, "summary": ""}
+    turns = record.get("recent") or []
     turns.append({"role": role, "text": text[:2000], "ts": int(time.time())})
-    memory[key] = turns[-MEMORY_TURNS:]
+    evicted = turns[:-MEMORY_TURNS]
+    if evicted:
+        record["summary"] = summarize_memory(record.get("summary", ""), evicted)
+    record["recent"] = turns[-MEMORY_TURNS:]
+    memory[key] = record
     save_memory(memory)
 
 

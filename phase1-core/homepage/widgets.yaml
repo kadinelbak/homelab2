@@ -4,6 +4,15 @@
     disk: /
     uptime: true
 
+- datetime:
+    text_size: xl
+    locale: en-US
+    format:
+      dateStyle: full
+      timeStyle: medium
+      timeZone: America/New_York
+      hour12: true
+
 - search:
     provider: duckduckgo
     target: _blank

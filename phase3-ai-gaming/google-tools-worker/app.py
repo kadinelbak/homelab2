@@ -395,7 +395,7 @@ def parse_event_payload(payload):
     summary = "Untitled event"
     title_match = re.search(r"(?:title|called|named)\s+['\"]?([^'\"\n]+)", text, re.IGNORECASE)
     if title_match and "no title" not in lowered:
-        summary = title_match.group(1).strip()[:120]
+        summary = re.split(r"\s+(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", title_match.group(1), maxsplit=1, flags=re.IGNORECASE)[0].strip()[:120]
     elif "dentist" in lowered:
         summary = "Dentist appointment"
     elif "meeting" in lowered:

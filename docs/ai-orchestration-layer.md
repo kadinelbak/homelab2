@@ -76,7 +76,7 @@ Supported commands:
 /forget
 ```
 
-Text messages go directly to Jarvis Core. Voice notes are downloaded from Telegram, transcribed through `whisper-worker`, then sent to Jarvis Core as text. Document uploads are saved into Paperless' consume folder so Paperless can OCR/import them; Jarvis verifies the file was queued, waits briefly to see whether Paperless picked it up, then polls the Paperless API until the imported document appears or the import wait expires. The bridge keeps a short per-chat memory in `${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge`; use `/forget` to clear it for the current chat.
+Text messages, including phone/Telegram voice typing, go directly to Jarvis Core. Telegram voice-note and audio attachments are not transcribed; use Open WebUI for uploaded-audio transcription through `whisper-worker`. Document uploads are saved into Paperless' consume folder so Paperless can OCR/import them; Jarvis verifies the file was queued, waits briefly to see whether Paperless picked it up, then polls the Paperless API until the imported document appears or the import wait expires. The bridge keeps durable per-chat memory in `${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge`: recent turns are authoritative, while older turns are summarized only to resolve references such as "that event." Use `/forget` to start fresh context for the current chat.
 
 ## Google Tools
 
