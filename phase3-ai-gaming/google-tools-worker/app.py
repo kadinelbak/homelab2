@@ -365,6 +365,7 @@ def calendar_write_intent(text):
 
 def parse_event_payload(payload):
     text = combined_request_text(payload)
+    current_text = current_request_text(payload)
     lowered = text.lower()
     target = datetime.now().astimezone()
     if "tomorrow" in lowered:
@@ -393,9 +394,9 @@ def parse_event_payload(payload):
     end = start + duration
 
     summary = "Untitled event"
-    title_match = re.search(r"(?:title|called|named)\s+['\"]?([^'\"\n]+)", text, re.IGNORECASE)
+    title_match = re.search(r"(?:titled|title\s+it|title|called|named)\s*:?\s*['\"]?([^'\"\n]+)", current_text, re.IGNORECASE)
     if title_match and "no title" not in lowered:
-        summary = re.split(r"\s+(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", title_match.group(1), maxsplit=1, flags=re.IGNORECASE)[0].strip()[:120]
+        summary = re.split(r"\s+(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", title_match.group(1), maxsplit=1, flags=re.IGNORECASE)[0].strip(" .,!?")[:120]
     elif "dentist" in lowered:
         summary = "Dentist appointment"
     elif "meeting" in lowered:
@@ -510,6 +511,132 @@ def calendar_list(request_text):
             }
         )
     return {"time_min": start, "time_max": end, "events": events}
+
+
+def calendar_get_event(event_id):
+    return google_request("GET", f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}")
+
+
+def compact_calendar_event(item):
+    return {
+        "id": item.get("id"), "summary": item.get("summary") or "Untitled event",
+        "start": item.get("start") or {}, "end": item.get("end") or {},
+        "location": item.get("location") or "", "htmlLink": item.get("htmlLink"),
+    }
+
+
+def calendar_contract_events(window):
+    start = datetime.fromisoformat(window["start"].replace("Z", "+00:00"))
+    end = datetime.fromisoformat(window["end"].replace("Z", "+00:00"))
+    if end <= start or end - start > timedelta(days=31):
+        raise ValueError("calendar_search_window_invalid")
+    params = urllib.parse.urlencode({
+        "singleEvents": "true", "orderBy": "startTime", "timeMin": start.isoformat(),
+        "timeMax": end.isoformat(), "maxResults": 100,
+    })
+    data = google_request("GET", f"https://www.googleapis.com/calendar/v3/calendars/primary/events?{params}")
+    return [compact_calendar_event(item) for item in data.get("items", [])]
+
+
+def calendar_contract_datetime_equal(actual, expected):
+    if not actual or not expected:
+        return False
+    actual_dt = datetime.fromisoformat(str(actual).replace("Z", "+00:00"))
+    expected_dt = datetime.fromisoformat(str(expected).replace("Z", "+00:00"))
+    return actual_dt == expected_dt
+
+
+def validate_executable_calendar_contract(contract):
+    if not isinstance(contract, dict):
+        raise ValueError("calendar_contract_must_be_object")
+    allowed = {
+        "version", "operation", "title", "start", "end", "target_event_id",
+        "search_window", "allow_search_fallback", "requires_clarification",
+        "clarification", "attendees",
+    }
+    if set(contract) - allowed:
+        raise ValueError("calendar_contract_unknown_fields")
+    operation = contract.get("operation")
+    if operation not in {"create", "delete", "list", "reschedule"}:
+        raise ValueError("calendar_contract_operation_invalid")
+    if contract.get("requires_clarification"):
+        raise ValueError("calendar_contract_not_executable")
+    if operation == "create" and not all(contract.get(key) for key in ("title", "start", "end")):
+        raise ValueError("calendar_create_contract_incomplete")
+    if operation == "reschedule" and not all(contract.get(key) for key in ("target_event_id", "start", "end")):
+        raise ValueError("calendar_reschedule_contract_incomplete")
+    if operation == "delete" and not contract.get("target_event_id"):
+        if not (contract.get("allow_search_fallback") and contract.get("title") and contract.get("search_window")):
+            raise ValueError("calendar_delete_contract_incomplete")
+    if operation == "list" and not contract.get("search_window"):
+        raise ValueError("calendar_list_contract_incomplete")
+
+
+def execute_calendar_contract(contract, approved=False):
+    validate_executable_calendar_contract(contract)
+    operation = contract["operation"]
+    if operation == "create":
+        payload = {
+            "summary": contract["title"],
+            "start": {"dateTime": contract["start"], "timeZone": DEFAULT_TIMEZONE},
+            "end": {"dateTime": contract["end"], "timeZone": DEFAULT_TIMEZONE},
+        }
+        attendees = contract.get("attendees") or []
+        if attendees and not approved:
+            raise PermissionError("calendar_attendees_require_approval")
+        if attendees:
+            payload["attendees"] = [{"email": str(email)} for email in attendees]
+        create_url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+        if attendees:
+            create_url += "?sendUpdates=all"
+        created = google_request("POST", create_url, payload)
+        verified = calendar_get_event(created["id"])
+        if verified.get("summary") != contract["title"] or not calendar_contract_datetime_equal(event_start_text(verified), contract["start"]):
+            raise RuntimeError("calendar_create_verification_failed")
+        event = compact_calendar_event(verified)
+        return {"status": "completed", "event": event, "text": f"Verified calendar event created: {event['summary']}\nEvent ID: {event['id']}\nStart: {event_start_text(event)}\nEnd: {(event['end'] or {}).get('dateTime')}"}
+
+    if operation == "list":
+        events = calendar_contract_events(contract["search_window"])
+        result = {"events": events}
+        return {"status": "completed", **result, "text": response_text_for_calendar(result)}
+
+    target_id = contract.get("target_event_id")
+    if not target_id and operation == "delete" and contract.get("allow_search_fallback"):
+        title = (contract.get("title") or "").casefold()
+        matches = [event for event in calendar_contract_events(contract["search_window"]) if event["summary"].casefold() == title]
+        if len(matches) != 1:
+            return {"status": "clarification_required", "text": f"I found {len(matches)} matching events. Please identify the exact event before deletion.", "events": matches}
+        target_id = matches[0]["id"]
+
+    if operation == "delete":
+        existing = compact_calendar_event(calendar_get_event(target_id))
+        google_request("DELETE", f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{target_id}")
+        try:
+            remaining = calendar_get_event(target_id)
+            if remaining.get("status") != "cancelled":
+                raise RuntimeError("calendar_delete_verification_failed")
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {404, 410}:
+                raise
+        return {"status": "completed", "deleted": [existing], "text": "Verified deleted 1 matching calendar event."}
+
+    if operation == "reschedule":
+        existing = calendar_get_event(target_id)
+        patch = {
+            "start": {"dateTime": contract["start"], "timeZone": DEFAULT_TIMEZONE},
+            "end": {"dateTime": contract["end"], "timeZone": DEFAULT_TIMEZONE},
+        }
+        if contract.get("title"):
+            patch["summary"] = contract["title"]
+        google_request("PATCH", f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{target_id}", patch)
+        verified = calendar_get_event(target_id)
+        if not calendar_contract_datetime_equal(event_start_text(verified), contract["start"]):
+            raise RuntimeError("calendar_reschedule_verification_failed")
+        event = compact_calendar_event(verified)
+        return {"status": "completed", "event": event, "text": f"Verified calendar event rescheduled: {event['summary']}\nEvent ID: {event['id']}\nStart: {event_start_text(event)}"}
+
+    raise ValueError("calendar_contract_operation_unsupported")
 
 
 def response_text_for_gmail(messages):
@@ -683,6 +810,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/calendar/list":
                 result = calendar_list(payload.get("request", "today"))
                 self.write_json(HTTPStatus.OK, {"ok": True, **result, "text": response_text_for_calendar(result)})
+                return
+            if path == "/calendar/execute-contract":
+                contract = payload.get("contract")
+                if not isinstance(contract, dict):
+                    raise ValueError("calendar_contract_required")
+                result = execute_calendar_contract(contract, approved=payload.get("approved") is True)
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
                 return
             if path == "/calendar/assist":
                 current = current_request_text(payload)

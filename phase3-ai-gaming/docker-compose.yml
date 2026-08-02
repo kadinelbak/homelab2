@@ -71,7 +71,7 @@ services:
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
     ports:
-      - "8080:8080"
+      - "18080:8080"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -84,6 +84,23 @@ services:
       - "homepage.icon=open-webui"
       - "homepage.href=http://${DOMAIN}:8080"
       - "homepage.description=Chat interface for Ollama"
+
+  openwebui-tailscale-router:
+    image: nginx:1.27-alpine
+    container_name: openwebui_tailscale_router
+    restart: unless-stopped
+    profiles: ["open-webui", "ai"]
+    volumes:
+      - ./openwebui-tailscale-router.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    depends_on:
+      - open-webui
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
 
   # ---------------------------------------------------------------------------
   # MINECRAFT – Game Server (itzg/minecraft-server)
@@ -228,6 +245,7 @@ services:
       AI_ORCHESTRATOR_ROUTER_PROFILE: ${AI_ORCHESTRATOR_ROUTER_PROFILE:-deep_120b}
       AI_ORCHESTRATOR_ROUTER_TIMEOUT: ${AI_ORCHESTRATOR_ROUTER_TIMEOUT:-30}
       AI_ORCHESTRATOR_LLM_TIMEOUT: ${AI_ORCHESTRATOR_LLM_TIMEOUT:-120}
+      CALENDAR_CONTRACT_CACHE_TTL: ${CALENDAR_CONTRACT_CACHE_TTL:-120}
       OLLAMA_HOST: http://ollama:11434
       GOOGLE_TOOLS_URL: http://google-tools-worker:18200
       GOOGLE_TOOLS_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
@@ -395,7 +413,6 @@ services:
       - homelab_internal
     depends_on:
       - ai-orchestrator
-      - open-webui
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"

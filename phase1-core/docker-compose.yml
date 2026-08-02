@@ -34,8 +34,24 @@ volumes:
   grafana_data:
   loki_data:
   alertmanager_data:
+  weather_proxy_data:
 
 services:
+  weather-proxy:
+    build:
+      context: ./weather-proxy
+    container_name: weather_proxy
+    restart: unless-stopped
+    environment:
+      WEATHER_DATA_DIR: /data
+      WEATHER_EXTRA_LOCATIONS_JSON: ${WEATHER_EXTRA_LOCATIONS_JSON:-[]}
+    volumes:
+      - weather_proxy_data:/data
+    networks:
+      - homelab_internal
+    ports:
+      - "18103:8098"
+
   postgres:
     image: postgres:16-alpine
     container_name: homelab_postgres

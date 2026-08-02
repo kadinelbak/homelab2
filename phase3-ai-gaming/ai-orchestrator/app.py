@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import json
+import hashlib
 import os
+import re
+import threading
 import time
 import uuid
 import urllib.error
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -26,6 +30,9 @@ OLLAMA_ROUTER_ENABLED = os.environ.get("AI_ORCHESTRATOR_USE_OLLAMA_ROUTER", "tru
 OLLAMA_ROUTER_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_ROUTER_TIMEOUT", "12"))
 ROUTER_PROFILE = os.environ.get("AI_ORCHESTRATOR_ROUTER_PROFILE", "local")
 LLM_TIMEOUT = float(os.environ.get("AI_ORCHESTRATOR_LLM_TIMEOUT", "120"))
+CALENDAR_CONTRACT_CACHE_TTL = int(os.environ.get("CALENDAR_CONTRACT_CACHE_TTL", "120"))
+CALENDAR_CONTRACT_CACHE = {}
+CALENDAR_CONTRACT_CACHE_LOCK = threading.Lock()
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://google-tools-worker:18200").rstrip("/")
 GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN", TOKEN)
 CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
@@ -216,8 +223,15 @@ def capability_by_name(name):
 
 
 def request_text(payload):
-    return " ".join(
+    direct = " ".join(
         str(payload.get(key, ""))
+        for key in ("request", "instruction", "prompt", "goal", "natural_language")
+    ).strip()
+    if direct:
+        return direct
+    inputs = payload.get("inputs") or {}
+    return " ".join(
+        str(inputs.get(key, ""))
         for key in ("request", "instruction", "prompt", "goal", "natural_language")
     ).strip()
 
@@ -229,7 +243,10 @@ def calendar_intent(payload):
         for turn in (payload.get("inputs") or {}).get("conversation_context", [])
         if isinstance(turn, dict)
     )
-    action_words = ("create", "make", "add", "schedule", "delete", "remove", "cancel", "reschedule")
+    action_words = (
+        "create", "make", "add", "schedule", "delete", "remove", "cancel",
+        "reschedule", "move", "shift", "push", "change", "update",
+    )
     lookup_words = ("what", "when", "show", "list", "available")
     if any(word in text for word in ("calendar", "appointment", "meeting", "schedule")):
         return True
@@ -237,8 +254,22 @@ def calendar_intent(payload):
         return True
     return any(
         phrase in text
-        for phrase in ("delete that", "remove that", "cancel that", "delete it", "remove it", "cancel it")
+        for phrase in (
+            "delete that", "remove that", "cancel that", "delete it", "remove it", "cancel it",
+            "move that", "shift that", "push that", "move it", "shift it", "push it",
+        )
     ) and "calendar event" in context
+
+
+def calendar_mutation_intent(payload):
+    text = request_text(payload).lower()
+    mutation_terms = (
+        "create", "make", "add", "schedule", "delete", "remove", "cancel",
+        "reschedule", "move", "change", "update", "invite",
+    )
+    if any(term in text for term in mutation_terms):
+        return True
+    return not any(term in text for term in ("show", "list", "what", "when", "check", "find", "available"))
 
 
 def route_with_keywords(payload):
@@ -281,6 +312,228 @@ def parse_json_object(text):
     return json.loads(text[start : end + 1])
 
 
+def verified_calendar_artifacts(payload):
+    chat_id = str((payload.get("inputs") or {}).get("telegram_chat_id") or "")
+    artifacts = []
+    if not chat_id:
+        return artifacts
+    state = load_state()
+    requests = state.get("requests", {})
+    actions = sorted(state.get("actions", {}).values(), key=lambda item: item.get("created_at", ""), reverse=True)
+    for action in actions:
+        request = requests.get(action.get("request_id"), {})
+        original_inputs = (request.get("original") or {}).get("inputs") or {}
+        if str(original_inputs.get("telegram_chat_id") or "") != chat_id:
+            continue
+        if action.get("capability") != "manage_calendar" or action.get("status") != "completed":
+            continue
+        for artifact in (action.get("result") or {}).get("artifacts") or []:
+            if artifact.get("type") == "calendar_event" and isinstance(artifact.get("item"), dict):
+                item = artifact["item"]
+                operation = ((action.get("inputs") or {}).get("calendar_contract") or {}).get("operation")
+                artifacts.append({
+                    "event_id": item.get("id"), "title": item.get("summary"),
+                    "start": calendar_artifact_time(item.get("start")),
+                    "end": calendar_artifact_time(item.get("end")),
+                    "status": "rescheduled_verified" if operation == "reschedule" else "created_verified",
+                })
+            elif artifact.get("type") == "calendar_deleted":
+                deleted = artifact.get("item") or []
+                if isinstance(deleted, dict):
+                    deleted = deleted.get("deleted") or []
+                for item in deleted:
+                    if not isinstance(item, dict):
+                        continue
+                    artifacts.append({
+                        "event_id": item.get("id"), "title": item.get("summary"),
+                        "start": calendar_artifact_time(item.get("start")), "status": "deleted_verified",
+                    })
+        if len(artifacts) >= 10:
+            break
+    return artifacts[:10]
+
+
+def calendar_artifact_time(value):
+    if isinstance(value, dict):
+        return value.get("dateTime") or value.get("date")
+    return value
+
+
+def _parse_contract_time(value, field, required=False):
+    if not value:
+        if required:
+            raise ValueError(f"{field}_required")
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field}_timezone_required")
+    return parsed
+
+
+def validate_calendar_contract(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("calendar_contract_must_be_object")
+    allowed_fields = {
+        "operation", "title", "start", "end", "target_event_id", "search_window",
+        "allow_search_fallback", "requires_clarification", "clarification", "attendees",
+    }
+    unknown_fields = sorted(set(raw) - allowed_fields)
+    if unknown_fields:
+        raise ValueError("calendar_contract_unknown_fields:" + ",".join(unknown_fields))
+    operation = str(raw.get("operation") or "").lower()
+    requires_clarification = raw.get("requires_clarification") is True
+    if requires_clarification and operation not in {"create", "delete", "list", "reschedule"}:
+        operation = "clarify"
+    if operation not in {"create", "delete", "list", "reschedule", "clarify"}:
+        raise ValueError("calendar_contract_operation_invalid")
+    contract = {
+        "version": 1,
+        "operation": operation,
+        "title": str(raw.get("title") or "").strip()[:200] or None,
+        "start": raw.get("start") or None,
+        "end": raw.get("end") or None,
+        "target_event_id": str(raw.get("target_event_id") or "").strip() or None,
+        "search_window": raw.get("search_window") if isinstance(raw.get("search_window"), dict) else None,
+        "allow_search_fallback": raw.get("allow_search_fallback") is True,
+        "requires_clarification": requires_clarification,
+        "clarification": str(raw.get("clarification") or "").strip()[:500] or None,
+        "attendees": raw.get("attendees") if isinstance(raw.get("attendees"), list) else [],
+    }
+    if contract["target_event_id"] and not re.fullmatch(r"[A-Za-z0-9_-]{5,256}", contract["target_event_id"]):
+        raise ValueError("calendar_contract_event_id_invalid")
+    if contract["requires_clarification"]:
+        if not contract["clarification"]:
+            raise ValueError("calendar_contract_clarification_required")
+        return contract
+    if operation in {"create", "reschedule"}:
+        start = _parse_contract_time(contract["start"], "start", True)
+        end = _parse_contract_time(contract["end"], "end", True)
+        duration = end - start
+        if duration < timedelta(minutes=1) or duration > timedelta(days=7):
+            raise ValueError("calendar_contract_duration_invalid")
+        if operation == "create" and not contract["title"]:
+            raise ValueError("calendar_contract_title_required")
+        if operation == "reschedule" and not contract["target_event_id"]:
+            raise ValueError("calendar_contract_event_id_required")
+    if operation == "delete" and not contract["target_event_id"]:
+        window = contract["search_window"] or {}
+        if not contract["allow_search_fallback"] or not contract["title"]:
+            raise ValueError("calendar_contract_delete_target_ambiguous")
+        window_start = _parse_contract_time(window.get("start"), "search_window_start", True)
+        window_end = _parse_contract_time(window.get("end"), "search_window_end", True)
+        if window_end <= window_start or window_end - window_start > timedelta(days=7):
+            raise ValueError("calendar_contract_delete_search_window_invalid")
+    for attendee in contract["attendees"]:
+        if not isinstance(attendee, str) or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", attendee):
+            raise ValueError("calendar_contract_attendee_invalid")
+    if operation == "list":
+        window = contract["search_window"] or {}
+        window_start = _parse_contract_time(window.get("start"), "search_window_start", True)
+        window_end = _parse_contract_time(window.get("end"), "search_window_end", True)
+        if window_end <= window_start or window_end - window_start > timedelta(days=31):
+            raise ValueError("calendar_contract_search_window_invalid")
+    return contract
+
+
+def calendar_contract_prompt(payload, artifacts):
+    current_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+    return json.dumps({
+        "current_time": current_time.isoformat(),
+        "timezone": str(current_time.tzinfo),
+        "request": request_text(payload),
+        "recent_conversation": ((payload.get("inputs") or {}).get("conversation_context") or [])[-12:],
+        "verified_calendar_artifacts": artifacts,
+        "contract": {
+            "operation": "create|delete|list|reschedule|clarify", "title": "string|null",
+            "start": "ISO-8601 with offset|null", "end": "ISO-8601 with offset|null",
+            "target_event_id": "verified event id|null",
+            "search_window": {"start": "ISO-8601 with offset", "end": "ISO-8601 with offset"},
+            "allow_search_fallback": False, "requires_clarification": False, "clarification": None,
+            "attendees": [],
+        },
+    }, separators=(",", ":"))
+
+
+def validate_calendar_contract_semantics(payload, contract, artifacts):
+    request = request_text(payload)
+    title = contract.get("title") or ""
+    if contract.get("operation") == "create" and re.search(r"\b(?:titled|called|named)\b", request, re.IGNORECASE):
+        if re.search(r"\bfor\s+\d+(?:\.\d+)?\s*(?:minutes?|hours?)\b", title, re.IGNORECASE):
+            raise ValueError("calendar_contract_title_contains_duration_clause")
+
+    if contract.get("operation") != "reschedule" or not contract.get("target_event_id"):
+        return contract
+    relative = re.search(
+        r"\b(?:by\s+)?(\d+(?:\.\d+)?)\s*(minutes?|hours?)\s+(later|earlier)\b",
+        request,
+        re.IGNORECASE,
+    )
+    if not relative:
+        return contract
+    artifact = next(
+        (
+            item for item in artifacts
+            if item.get("event_id") == contract["target_event_id"] and item.get("status") != "deleted_verified"
+        ),
+        None,
+    )
+    if not artifact or not artifact.get("start") or not artifact.get("end"):
+        raise ValueError("calendar_contract_relative_move_missing_verified_artifact")
+    amount = float(relative.group(1))
+    delta = timedelta(hours=amount) if relative.group(2).lower().startswith("hour") else timedelta(minutes=amount)
+    if relative.group(3).lower() == "earlier":
+        delta = -delta
+    expected_start = _parse_contract_time(artifact["start"], "artifact_start", True) + delta
+    expected_end = _parse_contract_time(artifact["end"], "artifact_end", True) + delta
+    actual_start = _parse_contract_time(contract.get("start"), "start", True)
+    actual_end = _parse_contract_time(contract.get("end"), "end", True)
+    if actual_start != expected_start or actual_end != expected_end:
+        raise ValueError("calendar_contract_relative_move_incorrect")
+    return contract
+
+
+def build_calendar_contract(payload):
+    artifacts = verified_calendar_artifacts(payload)
+    prompt_text = calendar_contract_prompt(payload, artifacts)
+    cache_key = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+    with CALENDAR_CONTRACT_CACHE_LOCK:
+        cached = CALENDAR_CONTRACT_CACHE.get(cache_key)
+        if cached and time.time() - cached[0] < CALENDAR_CONTRACT_CACHE_TTL:
+            return dict(cached[1]), "nemotron_cache"
+    profile = LLM_PROFILES["deep_120b"]
+    system = (
+        "You translate natural-language Calendar requests into exactly one strict JSON action contract. "
+        "Use only verified_calendar_artifacts for target_event_id. Resolve references like 'it' to the most recent non-deleted verified event. "
+        "Never invent an event ID. For ambiguous requests set requires_clarification=true and ask one concise question. "
+        "Use operation='clarify' when requires_clarification=true. "
+        "A title introduced by titled/called/named ends before unquoted scheduling clauses such as 'for 30 minutes', 'at 8 PM', or 'on Monday'; those clauses are not part of the title. "
+        "For relative reschedules such as 'move it 1 hour later', select the latest matching verified event, shift both start and end by exactly that amount, and preserve its duration and title. "
+        "For delete without a verified ID, allow_search_fallback may be true only when title and a narrow explicit search window are known. "
+        "Return JSON only and preserve the user's title exactly."
+    )
+    validation_error = None
+    contract = None
+    for attempt in range(2):
+        attempt_prompt = prompt_text
+        if validation_error:
+            attempt_prompt += "\nThe previous contract was rejected with: " + validation_error + ". Return a corrected full contract."
+        try:
+            output = call_profile_assistant(attempt_prompt, profile, system)
+            contract = validate_calendar_contract(parse_json_object(output))
+            validate_calendar_contract_semantics(payload, contract, artifacts)
+            break
+        except Exception as exc:
+            validation_error = str(exc)[:300]
+            if attempt == 1:
+                raise
+    with CALENDAR_CONTRACT_CACHE_LOCK:
+        CALENDAR_CONTRACT_CACHE[cache_key] = (time.time(), dict(contract))
+        if len(CALENDAR_CONTRACT_CACHE) > 256:
+            oldest = min(CALENDAR_CONTRACT_CACHE, key=lambda key: CALENDAR_CONTRACT_CACHE[key][0])
+            CALENDAR_CONTRACT_CACHE.pop(oldest, None)
+    return contract, "nemotron_retry" if validation_error else "nemotron"
+
+
 def route_with_llm(payload):
     names = [capability["capability"] for capability in CAPABILITIES]
     catalog = [
@@ -294,11 +547,13 @@ def route_with_llm(payload):
     prompt = {
         "role": "system",
         "content": (
-            "You are a strict routing classifier for a personal homelab assistant. "
+            "You are the semantic manager agent for a personal homelab assistant. "
             "Choose exactly one capability from the provided catalog. "
             "Return only compact JSON with keys capability, confidence, rationale. "
             "Use general_assistant for ordinary chat, drafting, brainstorming, planning, or unclear requests. "
-            "Conversation memory is background only for resolving references such as 'that event'; the current request is authoritative."
+            "Infer tool follow-ups from recent conversation and verified artifacts, including indirect requests such as "
+            "'move it later', 'delete that', or 'reply to them'. The latest request is authoritative. "
+            "Verified artifacts are trusted state; conversational claims are context only."
         ),
     }
     user = {
@@ -309,6 +564,7 @@ def route_with_llm(payload):
                 "request": request_text(payload),
                 "explicit_inputs": payload.get("inputs") or {},
                 "conversation_memory": (payload.get("inputs") or {}).get("conversation_context") or [],
+                "verified_calendar_artifacts": verified_calendar_artifacts(payload),
             },
             separators=(",", ":"),
         ),
@@ -349,32 +605,14 @@ def route_request(payload):
             }
 
     text = request_text(payload).lower()
-    if gmail_send_or_publish_intent(text):
-        return capability_by_name("manage_email"), {
-            "router": "intent_override",
-            "rationale": "User asked to send, reply, forward, or publish an email.",
-        }
-
-    if gmail_draft_create_intent(text):
-        return capability_by_name("manage_email"), {
-            "router": "intent_override",
-            "rationale": "User asked to create or save a Gmail draft.",
-        }
-
-    if calendar_intent(payload):
-        return capability_by_name("manage_calendar"), {
-            "router": "intent_override",
-            "rationale": "Calendar action or a calendar follow-up was detected.",
-        }
-
     if OLLAMA_ROUTER_ENABLED and request_text(payload):
         try:
             capability, metadata = route_with_llm(payload)
-            if capability["capability"] == "draft_email" and gmail_send_or_publish_intent(text):
+            if capability["capability"] != "manage_email" and gmail_send_or_publish_intent(text):
                 return capability_by_name("manage_email"), {
                     **metadata,
-                    "router": "intent_override",
-                    "rationale": "Safety override: explicit email send/reply/forward requests require the Gmail approval path.",
+                    "router": "safety_override",
+                    "rationale": "Safety override: explicit email send/reply/forward requests must use the approval-gated Gmail path.",
                 }
             return capability, metadata
         except Exception as exc:
@@ -692,7 +930,21 @@ def google_tools_result(action):
             "next_actions": [],
         }
     if action.get("capability") == "manage_calendar":
-        data = call_google_tools("/calendar/assist", google_payload)
+        contract = inputs.get("calendar_contract")
+        if contract:
+            if contract.get("requires_clarification"):
+                return {
+                    "request_id": action["request_id"], "tool": action["tool"], "status": "clarification_required",
+                    "summary": "Calendar request needs clarification.", "text": contract["clarification"],
+                    "artifacts": [{"type": "calendar_action_contract", "item": contract}],
+                    "cost": {"estimated_usd": 0}, "next_actions": [],
+                }
+            data = call_google_tools(
+                "/calendar/execute-contract",
+                {"contract": contract, "approved": bool(action.get("requires_approval") and action.get("permissions", {}).get("may_execute"))},
+            )
+        else:
+            data = call_google_tools("/calendar/assist", google_payload)
         artifacts = []
         if data.get("event"):
             artifacts.append({"type": "calendar_event", "item": data.get("event")})
@@ -703,10 +955,10 @@ def google_tools_result(action):
         return {
             "request_id": action["request_id"],
             "tool": action["tool"],
-            "status": "completed",
+            "status": data.get("status") or "completed",
             "summary": "Fetched Calendar results from Google Tools.",
             "text": data.get("text") or "Fetched Calendar results.",
-            "artifacts": artifacts,
+            "artifacts": [{"type": "calendar_action_contract", "item": contract}] + artifacts if contract else artifacts,
             "cost": {"estimated_usd": 0},
             "next_actions": [],
         }
@@ -867,6 +1119,27 @@ def make_action(request_id, payload, capability):
     may_execute = True if not requires_approval else bool(permissions.get("may_execute", False))
     action_inputs = dict(payload.get("inputs") or {})
     action_inputs.setdefault("request", request_text(payload))
+    if capability["capability"] == "manage_calendar":
+        try:
+            contract, source = build_calendar_contract(payload)
+            action_inputs["calendar_contract"] = contract
+            action_inputs["calendar_contract_source"] = source
+            if contract.get("attendees"):
+                requires_approval = True
+                may_execute = bool(permissions.get("may_execute", False))
+        except Exception as exc:
+            action_inputs["calendar_contract_error"] = str(exc)[:500]
+            if calendar_mutation_intent(payload):
+                action_inputs["calendar_contract_source"] = "nemotron_validation_guard"
+                action_inputs["calendar_contract"] = {
+                    "version": 1, "operation": "clarify", "title": None, "start": None,
+                    "end": None, "target_event_id": None, "search_window": None,
+                    "allow_search_fallback": False, "requires_clarification": True,
+                    "clarification": "I could not validate the requested calendar change. Please restate the event, date, time, and action.",
+                    "attendees": [],
+                }
+            else:
+                action_inputs["calendar_contract_source"] = "legacy_parser_fallback"
 
     return {
         "action_id": action_id,
@@ -947,7 +1220,16 @@ class Handler(BaseHTTPRequestHandler):
                         "ollama_enabled": OLLAMA_ROUTER_ENABLED,
                         "ollama_url": OLLAMA_URL,
                         "model": OLLAMA_ROUTER_MODEL,
+                        "profile": ROUTER_PROFILE,
+                        "active_provider": LLM_PROFILES.get(ROUTER_PROFILE, LLM_PROFILES["local"])["provider"],
+                        "active_model": LLM_PROFILES.get(ROUTER_PROFILE, LLM_PROFILES["local"])["model"],
                         "timeout_seconds": OLLAMA_ROUTER_TIMEOUT,
+                    },
+                    "calendar_contract_planner": {
+                        "profile": "deep_120b",
+                        "provider": LLM_PROFILES["deep_120b"]["provider"],
+                        "model": LLM_PROFILES["deep_120b"]["model"],
+                        "configured": LLM_PROFILES["deep_120b"]["configured"],
                     },
                 },
             )
