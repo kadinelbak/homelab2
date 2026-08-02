@@ -357,7 +357,6 @@ def calendar_write_intent(text):
             "schedule",
             "put",
             "book",
-            "event",
             "appointment",
             "create one",
         )

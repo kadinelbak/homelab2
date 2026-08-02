@@ -77,7 +77,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
-        if path != "/transcribe":
+        openai_compatible = path == "/v1/audio/transcriptions"
+        if path != "/transcribe" and not openai_compatible:
             self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
         if not authorized(self):
@@ -100,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
             headers=self.headers,
             environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type},
         )
-        file_item = form["audio"] if "audio" in form else None
+        file_item = form["file"] if "file" in form else form["audio"] if "audio" in form else None
         if file_item is None or not getattr(file_item, "file", None):
             self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "missing audio field"})
             return
@@ -120,17 +121,20 @@ class Handler(BaseHTTPRequestHandler):
                 for segment in segments
             ]
             text = " ".join(segment["text"] for segment in segment_list).strip()
-            self.write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "text": text,
-                    "language": info.language,
-                    "language_probability": info.language_probability,
-                    "seconds": round(time.time() - started, 2),
-                    "segments": segment_list,
-                },
-            )
+            if openai_compatible:
+                self.write_json(HTTPStatus.OK, {"text": text})
+            else:
+                self.write_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "text": text,
+                        "language": info.language,
+                        "language_probability": info.language_probability,
+                        "seconds": round(time.time() - started, 2),
+                        "segments": segment_list,
+                    },
+                )
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
         finally:

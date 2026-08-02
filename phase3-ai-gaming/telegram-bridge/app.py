@@ -3,11 +3,14 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 BOT_TOKEN = os.environ.get("JARVIS_TELEGRAM_BOT_TOKEN", "")
@@ -20,10 +23,17 @@ ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
+OPEN_WEBUI_URL = os.environ.get("OPEN_WEBUI_URL", "http://open-webui:8080").rstrip("/")
+OPEN_WEBUI_API_KEY = os.environ.get("OPEN_WEBUI_TELEGRAM_API_KEY", "")
+OPEN_WEBUI_ENABLED = os.environ.get("JARVIS_TELEGRAM_USE_OPENWEBUI", "false").lower() == "true"
+OPEN_WEBUI_PRIMARY_MODEL = os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_PRIMARY_MODEL", "jarvis-telegram-nemotron")
+OPEN_WEBUI_FALLBACK_MODEL = os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_FALLBACK_MODEL", "jarvis")
+OPEN_WEBUI_TIMEOUT = int(os.environ.get("JARVIS_TELEGRAM_OPENWEBUI_TIMEOUT", "180"))
 POLL_TIMEOUT = int(os.environ.get("JARVIS_TELEGRAM_POLL_TIMEOUT", "45"))
 MAX_REPLY_CHARS = int(os.environ.get("JARVIS_TELEGRAM_MAX_REPLY_CHARS", "3500"))
 DATA_DIR = Path(os.environ.get("JARVIS_TELEGRAM_DATA_DIR", "/data"))
 MEMORY_PATH = DATA_DIR / "memory.json"
+QUEUE_PATH = DATA_DIR / "telegram-jobs.sqlite3"
 MEMORY_TURNS = int(os.environ.get("JARVIS_TELEGRAM_MEMORY_TURNS", "12"))
 PAPERLESS_CONSUME_DIR = Path(os.environ.get("PAPERLESS_CONSUME_DIR", "/paperless-consume"))
 MAX_DOCUMENT_BYTES = int(os.environ.get("JARVIS_TELEGRAM_MAX_DOCUMENT_BYTES", str(50 * 1024 * 1024)))
@@ -70,6 +80,100 @@ def send_message(chat_id, text):
 
 def allowed(chat_id):
     return not ALLOWED_CHAT_IDS or str(chat_id) in ALLOWED_CHAT_IDS
+
+
+def openwebui_configured():
+    return OPEN_WEBUI_ENABLED and bool(OPEN_WEBUI_API_KEY and not OPEN_WEBUI_API_KEY.startswith("CHANGE_ME"))
+
+
+def queue_connection():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(QUEUE_PATH, timeout=30)
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            update_id INTEGER UNIQUE,
+            chat_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_error TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.commit()
+    return connection
+
+
+def enqueue_job(update_id, chat_id, text):
+    now = int(time.time())
+    job_id = f"tg-{update_id or uuid.uuid4().hex}"
+    with queue_connection() as connection:
+        try:
+            connection.execute(
+                "INSERT INTO jobs (id, update_id, chat_id, text, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+                (job_id, update_id, str(chat_id), text, now, now),
+            )
+        except sqlite3.IntegrityError:
+            return None
+    return job_id
+
+
+def post_openwebui(path, payload, timeout=OPEN_WEBUI_TIMEOUT):
+    if not openwebui_configured():
+        raise RuntimeError("Open WebUI Telegram integration is not configured")
+    req = urllib.request.Request(
+        OPEN_WEBUI_URL + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {OPEN_WEBUI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def openwebui_messages(chat_id, text):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Jarvis. Use the configured Jarvis tools for verified Gmail, Calendar, "
+                "Paperless, Tasks, Contacts, Codex, and homelab actions. Never claim an external "
+                "action completed unless the tool result says completed or verified. Explain approval "
+                "requirements and include an action ID when one is returned."
+            ),
+        }
+    ]
+    for turn in conversation_context(chat_id):
+        role = turn.get("role")
+        if role in {"user", "assistant"} and turn.get("text"):
+            messages.append({"role": role, "content": turn["text"]})
+    messages.append({"role": "user", "content": text})
+    return messages
+
+
+def openwebui_response(chat_id, text):
+    payload = {
+        "model": OPEN_WEBUI_PRIMARY_MODEL,
+        "messages": openwebui_messages(chat_id, text),
+        "tool_ids": ["server:jarvis"],
+        "stream": False,
+    }
+    try:
+        result = post_openwebui("/api/chat/completions", payload)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        # The local profile is intentionally used only when the hosted path is unavailable.
+        payload["model"] = OPEN_WEBUI_FALLBACK_MODEL
+        result = post_openwebui("/api/chat/completions", payload)
+    choice = ((result.get("choices") or [{}])[0]).get("message") or {}
+    content = choice.get("content") or "Jarvis completed the request, but Open WebUI returned no text."
+    return content.strip()
 
 
 def load_memory():
@@ -379,6 +483,10 @@ def summarize_plan(planned):
 
 def handle_request(chat_id, text):
     remember(chat_id, "user", text)
+    if openwebui_configured():
+        response = openwebui_response(chat_id, text)
+        remember(chat_id, "assistant", response)
+        return response
     planned = plan_request(chat_id, text)
     action = (planned.get("actions") or [{}])[0]
     if action.get("permissions", {}).get("may_execute"):
@@ -392,12 +500,54 @@ def handle_request(chat_id, text):
     return response
 
 
+def process_due_jobs():
+    now = int(time.time())
+    with queue_connection() as connection:
+        rows = connection.execute(
+            "SELECT id, chat_id, text, attempts FROM jobs WHERE status='queued' AND next_attempt_at <= ? ORDER BY created_at LIMIT 1",
+            (now,),
+        ).fetchall()
+        if not rows:
+            return
+        job_id, chat_id, text, attempts = rows[0]
+        connection.execute("UPDATE jobs SET status='running' WHERE id=?", (job_id,))
+
+    try:
+        response = handle_request(chat_id, text)
+        send_message(chat_id, response)
+        with queue_connection() as connection:
+            connection.execute("UPDATE jobs SET status='completed' WHERE id=?", (job_id,))
+    except Exception as exc:
+        attempts += 1
+        retry_delay = min(600, 30 * (2 ** min(attempts - 1, 5)))
+        if attempts >= 12:
+            send_message(chat_id, "Jarvis could not complete the queued request after repeated retries. Please try again later.")
+            status = "failed"
+        else:
+            status = "queued"
+        with queue_connection() as connection:
+            connection.execute(
+                "UPDATE jobs SET status=?, attempts=?, next_attempt_at=?, last_error=? WHERE id=?",
+                (status, attempts, int(time.time()) + retry_delay, str(exc)[:500], job_id),
+            )
+
+
+def queue_worker():
+    while True:
+        try:
+            process_due_jobs()
+        except Exception as exc:
+            print(f"telegram queue error: {exc}", flush=True)
+        time.sleep(2)
+
+
 def handle_command(chat_id, text):
     command, _, rest = text.partition(" ")
     if command in {"/start", "/help"}:
         return (
             "Jarvis Telegram is online.\n\n"
-            "Send text or a voice note.\n"
+            "Send text, including Telegram voice typing.\n"
+            "For audio files, use Open WebUI transcription first.\n"
             "For approval-gated actions, I will give you an /approve command.\n"
             "Use /forget to clear this chat's memory."
         )
@@ -418,6 +568,7 @@ def handle_command(chat_id, text):
 
 
 def handle_update(update):
+    update_id = update.get("update_id")
     message = update.get("message") or update.get("edited_message")
     if not message:
         return
@@ -430,12 +581,9 @@ def handle_update(update):
         return
 
     text = (message.get("text") or "").strip()
-    if not text and message.get("voice"):
-        send_message(chat_id, "Transcribing voice note...")
-        text = transcribe_telegram_file(message["voice"]["file_id"])
-    elif not text and message.get("audio"):
-        send_message(chat_id, "Transcribing audio...")
-        text = transcribe_telegram_file(message["audio"]["file_id"])
+    if not text and (message.get("voice") or message.get("audio")):
+        send_message(chat_id, "Please use Telegram/phone voice typing so it sends text. Audio transcription is available in Open WebUI.")
+        return
     elif not text and message.get("document"):
         send_message(chat_id, "Sending document to Paperless...")
         send_message(chat_id, ingest_document(chat_id, message["document"]))
@@ -445,11 +593,11 @@ def handle_update(update):
         send_message(chat_id, "Send me text or a voice note.")
         return
 
-    if message.get("voice") or message.get("audio"):
-        send_message(chat_id, f"Transcript:\n{text}")
-
-    response = handle_command(chat_id, text) if text.startswith("/") else handle_request(chat_id, text)
-    send_message(chat_id, response)
+    if text.startswith("/"):
+        send_message(chat_id, handle_command(chat_id, text))
+        return
+    if enqueue_job(update_id, chat_id, text):
+        send_message(chat_id, "Working on it...")
 
 
 def main():
@@ -461,6 +609,7 @@ def main():
 
     offset = None
     print("Jarvis Telegram bridge polling.", flush=True)
+    threading.Thread(target=queue_worker, daemon=True).start()
     while True:
         try:
             payload = {"timeout": POLL_TIMEOUT}

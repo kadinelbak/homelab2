@@ -59,6 +59,12 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       WEBUI_SECRET_KEY: ${N8N_ENCRYPTION_KEY}   # Reuse a strong secret for session signing
+      ENABLE_API_KEYS: "true"
+      ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: "true"
+      API_KEYS_ALLOWED_ENDPOINTS: /api/chat/completions,/api/v1/chats
+      AUDIO_STT_ENGINE: openai
+      AUDIO_STT_OPENAI_API_BASE_URL: http://whisper-worker:8099/v1
+      AUDIO_STT_OPENAI_API_KEY: ${WHISPER_WORKER_TOKEN:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
     ports:
@@ -372,8 +378,12 @@ services:
       PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
-      WHISPER_WORKER_URL: http://whisper-worker:8099
-      WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
+      JARVIS_TELEGRAM_USE_OPENWEBUI: ${JARVIS_TELEGRAM_USE_OPENWEBUI:-true}
+      OPEN_WEBUI_URL: http://open-webui:8080
+      OPEN_WEBUI_TELEGRAM_API_KEY: ${OPEN_WEBUI_TELEGRAM_API_KEY:-}
+      JARVIS_TELEGRAM_OPENWEBUI_PRIMARY_MODEL: ${JARVIS_TELEGRAM_OPENWEBUI_PRIMARY_MODEL:-jarvis-telegram-nemotron}
+      JARVIS_TELEGRAM_OPENWEBUI_FALLBACK_MODEL: ${JARVIS_TELEGRAM_OPENWEBUI_FALLBACK_MODEL:-jarvis}
+      JARVIS_TELEGRAM_OPENWEBUI_TIMEOUT: ${JARVIS_TELEGRAM_OPENWEBUI_TIMEOUT:-180}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge:/data
       - ${DATA_PATH}/phase2-media/data/paperless/consume:/paperless-consume
@@ -381,7 +391,7 @@ services:
       - homelab_internal
     depends_on:
       - ai-orchestrator
-      - whisper-worker
+      - open-webui
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
