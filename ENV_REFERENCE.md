@@ -104,8 +104,11 @@ bash scripts/setup.sh --validate-only
 | `JARVIS_TELEGRAM_EVENING_BRIEF_TIME` | Optional | Local `HH:MM` time for the evening recap and tomorrow prep. Default `20:30`. |
 | `JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED` | Optional | Set to `true` to send Telegram briefing voice notes after the text brief. Defaults to `false`. |
 | `JARVIS_TTS_TOKEN` | Optional | Bearer token for the internal TTS worker. Leave blank on the private Docker network or set to protect `/tts/synthesize`. |
-| `JARVIS_TTS_VOICE` | Optional | Local TTS voice name for briefing audio. Defaults to `default`, mapped to `en-us` by the TTS worker. |
+| `JARVIS_TTS_ENGINE` | Optional | Local TTS engine. Defaults to `kokoro`; set to `piper` for the smaller neural fallback or `espeak` only as a low-quality fallback. |
+| `JARVIS_TTS_VOICE` | Optional | Local TTS voice/model name for briefing audio. Defaults to Kokoro `af_heart`; usable Kokoro voices include `af_bella`, `af_nicole`, `am_michael`, and `am_puck`. |
 | `JARVIS_TTS_MAX_CHARS` | Optional | Maximum characters sent to local TTS for a briefing voice note. Defaults to `12000`. |
+| `JARVIS_TTS_ALLOW_FALLBACK` | Optional | Allows falling back to `espeak-ng` if Piper fails. Defaults to `true`. |
+| `JARVIS_KOKORO_SPEED` | Optional | Kokoro speech speed multiplier. Defaults to `1.0`. |
 | `WEATHER_PROXY_URL` | Optional | Internal weather summary URL used by Jarvis morning briefing. Defaults to `http://weather-proxy:8098`. |
 | `NEWS_RSS_URLS` | Optional | Comma-separated RSS feed URLs for morning major-news headlines. Defaults to Google News US top stories RSS. |
 | `GITHUB_APP_ID` | Optional for GitHub briefings | GitHub App ID used by the GitHub tools worker. Required for GitHub App auth unless `GITHUB_TOKEN` is supplied temporarily. |

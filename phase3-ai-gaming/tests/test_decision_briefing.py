@@ -84,6 +84,40 @@ class WeatherAndComposerTests(unittest.TestCase):
         self.assertIn("Gainesville", text)
         self.assertIn("owner/repo", text)
 
+    def test_morning_brief_uses_speakable_calendar_and_sender_text(self):
+        text = worker.compose_morning_brief(
+            {
+                "events": [
+                    {
+                        "summary": "Dentist reminder",
+                        "start": {"dateTime": "2026-08-03T21:00:00-04:00"},
+                        "end": {"dateTime": "2026-08-03T21:30:00-04:00"},
+                    }
+                ]
+            },
+            {
+                "review": [
+                    {
+                        "from": "Google <no-reply@accounts.google.com>",
+                        "subject": "Security alert",
+                        "snippet": "Review account access",
+                        "labels": ["IMPORTANT", "UNREAD"],
+                    }
+                ],
+                "fyi": [],
+            },
+            [],
+            {"text": "- Gainesville: Rain likely"},
+            {"text": "- Headline - AP News (AP News)"},
+            {"items": []},
+            {"active_projects": [], "important_senders": [], "ignored_topics": []},
+        )
+        self.assertIn("9pm to 9:30pm: Dentist reminder", text)
+        self.assertIn("Google Accounts: Security alert", text)
+        self.assertNotIn("no-reply@accounts.google.com", text)
+        self.assertIn("Headline - AP News", text)
+        self.assertNotIn("(AP News)", text)
+
 
 class TelegramBriefingCommandTests(unittest.TestCase):
     def test_city_commands_update_profile(self):

@@ -1113,7 +1113,26 @@ def call_github_digest(profile):
 
 def event_time_text(event):
     start = event.get("start") or {}
-    return start.get("dateTime") or start.get("date") or "time not set"
+    end = event.get("end") or {}
+    start_value = start.get("dateTime")
+    end_value = end.get("dateTime")
+    if not start_value:
+        return "all day" if start.get("date") else "time not set"
+    try:
+        start_dt = datetime.fromisoformat(str(start_value).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(end_value).replace("Z", "+00:00")) if end_value else None
+    except Exception:
+        return str(start_value)
+
+    def clock(dt):
+        minute = f":{dt.minute:02d}" if dt.minute else ""
+        suffix = "am" if dt.hour < 12 else "pm"
+        hour = dt.hour % 12 or 12
+        return f"{hour}{minute}{suffix}"
+
+    if end_dt and end_dt > start_dt:
+        return f"{clock(start_dt)} to {clock(end_dt)}"
+    return clock(start_dt)
 
 
 def task_due_rank(task):
@@ -1159,6 +1178,46 @@ def brief_line(value, fallback):
     return value[:180] if value else fallback
 
 
+def sender_display(value):
+    value = brief_line(value, "Unknown sender")
+    match = re.match(r"(?P<name>.*?)\s*<(?P<email>[^>]+)>", value)
+    name = (match.group("name") if match else "").strip().strip('"')
+    email = (match.group("email") if match else value).strip().lower()
+    local, _, domain = email.partition("@")
+    domain_name = domain.split(".")[0] if domain else local
+    friendly_domains = {
+        "accounts.google.com": "Google Accounts",
+        "google.com": "Google",
+        "github.com": "GitHub",
+    }
+    if domain in friendly_domains:
+        return friendly_domains[domain]
+    if name and not re.search(r"no[-_]?reply|noreply|notification|postman", name, re.I):
+        return name
+    if domain.endswith("google.com"):
+        return "Google"
+    cleaned = re.sub(r"[-_.]+", " ", domain_name or local).strip()
+    return cleaned.title() if cleaned else "Unknown sender"
+
+
+def message_line(message):
+    sender = sender_display(message.get("from"))
+    subject = brief_line(message.get("subject") or message.get("snippet"), "Needs review")
+    return f"- {sender}: {subject}"
+
+
+def news_lines(news):
+    raw = news.get("text") if news else ""
+    items = [line.strip()[2:] if line.strip().startswith("- ") else line.strip() for line in str(raw).splitlines()]
+    cleaned = []
+    for item in items:
+        item = re.sub(r"\s+-\s+([^-()]+)\s+\(\1\)$", r" - \1", item)
+        item = re.sub(r"\s+\(([^()]*)\)\s*$", "", item)
+        if item:
+            cleaned.append(f"- {item}")
+    return cleaned[:5] or ["- Major news unavailable."]
+
+
 def top_messages(email, profile, limit=4):
     messages = (email.get("review") or []) + (email.get("fyi") or [])
     ranked = sorted(
@@ -1202,7 +1261,7 @@ def compose_morning_brief(calendar, email, tasks, weather, news, github, profile
     messages = top_messages(email, profile, 4)
     lines = [f"MORNING BRIEF - {datetime.now().astimezone().strftime('%A, %B %-d' if os.name != 'nt' else '%A, %B %#d')}"]
     lines.extend(["", "TODAY"])
-    lines.extend([f"- {event_time_text(event)} - {event.get('summary') or '(no title)'}" for event in events[:8]] or ["- No calendar events found for today."])
+    lines.extend([f"- {event_time_text(event)}: {event.get('summary') or 'Untitled event'}" for event in events[:8]] or ["- No calendar events found for today."])
     lines.extend(["", "TOP 3"])
     if picked_tasks:
         for index, task in enumerate(picked_tasks, 1):
@@ -1223,10 +1282,7 @@ def compose_morning_brief(calendar, email, tasks, weather, news, github, profile
     if email.get("status") == "unavailable":
         lines.append(f"- Gmail unavailable: {brief_line(email.get('error'), 'source error')}")
     else:
-        lines.extend([
-            f"- {brief_line(message.get('from'), 'Unknown sender')}: {brief_line(message.get('subject') or message.get('snippet'), 'Needs review')}"
-            for message in messages
-        ] or ["- No important messages surfaced by the current rules."])
+        lines.extend([message_line(message) for message in messages] or ["- No important messages surfaced by the current rules."])
     lines.extend(["", "PROJECTS"])
     lines.extend(active_project_lines(profile, github))
     lines.extend(["", "GITHUB"])
@@ -1234,7 +1290,7 @@ def compose_morning_brief(calendar, email, tasks, weather, news, github, profile
     lines.extend(["", "WEATHER"])
     lines.append(weather.get("text") if weather else "- Weather unavailable.")
     lines.extend(["", "NEWS"])
-    lines.append(news.get("text") if news else "- Major news unavailable.")
+    lines.extend(news_lines(news))
     lines.extend(["", "SUGGESTED PLAN"])
     if events:
         lines.append("- Work around the calendar commitments above; protect the largest open gap for Top 3 item 1.")
@@ -1256,14 +1312,11 @@ def compose_evening_brief(calendar, email, tasks, github, profile):
     if email.get("status") == "unavailable":
         lines.append(f"- Gmail unavailable: {brief_line(email.get('error'), 'source error')}")
     else:
-        lines.extend([
-            f"- Review: {brief_line(message.get('from'), 'Unknown sender')} - {brief_line(message.get('subject') or message.get('snippet'), 'Needs review')}"
-            for message in messages
-        ] or ["- No people-waiting items surfaced by the current rules."])
+        lines.extend([f"- Review: {message_line(message)[2:]}" for message in messages] or ["- No people-waiting items surfaced by the current rules."])
     lines.extend(["", "PROJECT CHANGES"])
     lines.extend(active_project_lines(profile, github))
     lines.extend(["", "TOMORROW"])
-    lines.extend([f"- {event_time_text(event)} - {event.get('summary') or '(no title)'}" for event in events[:8]] or ["- No calendar events found for tomorrow."])
+    lines.extend([f"- {event_time_text(event)}: {event.get('summary') or 'Untitled event'}" for event in events[:8]] or ["- No calendar events found for tomorrow."])
     lines.extend(["", "SHUTDOWN", "- Pick tomorrow's first task.", "- Review calendar.", "- Reschedule or delete anything that should not silently roll forward."])
     return "\n".join(lines)
 
