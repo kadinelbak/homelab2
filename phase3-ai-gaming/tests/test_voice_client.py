@@ -42,10 +42,18 @@ class FakeClient:
 class FakeSpeaker:
     def __init__(self):
         self.local = []
+        self.user = []
+        self.status = []
         self.audio = []
 
-    def say_local(self, text):
+    def print_jarvis(self, text):
         self.local.append(text)
+
+    def print_user(self, text):
+        self.user.append(text)
+
+    def print_status(self, text):
+        self.status.append(text)
 
     def play_audio(self, audio_bytes, content_type):
         self.audio.append((audio_bytes, content_type))
@@ -56,8 +64,8 @@ class VoiceClientStateTests(unittest.TestCase):
         config = voice_client.VoiceConfig()
         self.assertEqual(config.wake_phrase, "hey_jarvis")
         self.assertEqual(config.wake_inference_framework, "onnx")
-        self.assertEqual(config.wake_threshold, 0.95)
-        self.assertEqual(config.wake_consecutive_hits, 3)
+        self.assertEqual(config.wake_threshold, 0.99)
+        self.assertEqual(config.wake_consecutive_hits, 4)
 
     def test_state_machine_completes_voice_turn(self):
         speaker = FakeSpeaker()
@@ -66,8 +74,9 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertEqual(turn.transcript, "what is on my calendar today")
         self.assertEqual(turn.response_text, "You have one dentist reminder.")
         self.assertEqual(turn.states, ["wake", "greet", "transcribe", "request", "speak", "idle"])
-        self.assertEqual(speaker.local, ["Hey Kad, what do you need?"])
-        self.assertEqual(speaker.audio, [(b"ogg", "audio/ogg")])
+        self.assertEqual(speaker.local, ["Hey Kad, what do you need?", "You have one dentist reminder."])
+        self.assertEqual(speaker.user, ["what is on my calendar today"])
+        self.assertEqual(speaker.audio, [(b"ogg", "audio/ogg"), (b"ogg", "audio/ogg")])
 
     def test_state_machine_marks_approval_required(self):
         speaker = FakeSpeaker()
@@ -90,6 +99,7 @@ class VoiceClientStateTests(unittest.TestCase):
         session = voice_client.JarvisVoiceSession(FakeClient(fail_tts=True), speaker)
         turn = session.handle_recording(b"wav")
         self.assertIn(turn.response_text, speaker.local)
+        self.assertTrue(speaker.status)
 
 
 class FakeHTTPResponse:

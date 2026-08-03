@@ -1530,6 +1530,34 @@ def event_start_text(event):
     return (event.get("start") or {}).get("dateTime") or (event.get("start") or {}).get("date") or ""
 
 
+def calendar_display_time(value):
+    if not value:
+        return "time unknown"
+    text = str(value)
+    if "T" not in text:
+        try:
+            parsed = datetime.fromisoformat(text)
+            return f"{parsed.strftime('%B')} {parsed.day}"
+        except ValueError:
+            return text
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    hour = parsed.hour % 12 or 12
+    minute = f":{parsed.minute:02d}" if parsed.minute else ""
+    suffix = "AM" if parsed.hour < 12 else "PM"
+    return f"{hour}{minute} {suffix}"
+
+
+def calendar_display_range(start, end):
+    if not start and not end:
+        return "time unknown"
+    if start and end and "T" not in str(start) and "T" not in str(end):
+        return str(start)
+    return f"{calendar_display_time(start)} to {calendar_display_time(end)}"
+
+
 def calendar_delete_event(payload):
     inferred = parse_event_payload(payload)
     start = datetime.fromisoformat(inferred["start"]["dateTime"])
@@ -1732,11 +1760,12 @@ def response_text_for_calendar(payload):
     events = payload.get("events", [])
     if not events:
         return "I did not find calendar events in that window."
-    lines = ["Calendar:"]
+    lines = ["Calendar events:"]
     for index, event in enumerate(events, 1):
         start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
         end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date")
-        lines.append(f"{index}. {event.get('summary')} | {start} -> {end}")
+        title = event.get("summary") or "Untitled event"
+        lines.append(f"{index}. {title}, {calendar_display_range(start, end)}")
     return "\n".join(lines)
 
 

@@ -34,11 +34,11 @@ class VoiceConfig:
     wake_phrase: str = "hey_jarvis"
     greeting: str = "Hey Kad, what do you need?"
     sample_rate: int = 16000
-    wake_threshold: float = 0.95
-    wake_consecutive_hits: int = 3
+    wake_threshold: float = 0.99
+    wake_consecutive_hits: int = 4
     wake_inference_framework: str = "onnx"
-    wake_cooldown_seconds: float = 15.0
-    post_turn_cooldown_seconds: float = 6.0
+    wake_cooldown_seconds: float = 30.0
+    post_turn_cooldown_seconds: float = 10.0
     record_max_seconds: float = 18.0
     record_start_timeout_seconds: float = 5.0
     record_min_seconds: float = 1.0
@@ -166,49 +166,56 @@ class JarvisVoiceSession:
         self.client = client
         self.speaker = speaker
 
+    def speak(self, text):
+        try:
+            audio, content_type = self.client.synthesize(text)
+            self.speaker.play_audio(audio, content_type)
+            return True
+        except Exception as exc:
+            self.speaker.print_status(f"TTS unavailable: {exc}")
+            return False
+
     def handle_recording(self, wav_bytes, greet=True):
         turn = VoiceTurn(states=["wake", "greet"])
         if greet:
-            self.speaker.say_local(self.client.config.greeting)
+            self.speaker.print_jarvis(self.client.config.greeting)
+            self.speak(self.client.config.greeting)
         if not wav_bytes:
             turn.response_text = "I did not hear anything."
-            self.speaker.say_local(turn.response_text)
+            self.speaker.print_jarvis(turn.response_text)
+            self.speak(turn.response_text)
             turn.states.append("idle")
             return turn
         turn.states.append("transcribe")
         turn.transcript = self.client.transcribe(wav_bytes)
         if not turn.transcript:
             turn.response_text = "I did not catch that."
-            self.speaker.say_local(turn.response_text)
+            self.speaker.print_jarvis(turn.response_text)
+            self.speak(turn.response_text)
             turn.states.append("idle")
             return turn
+        if hasattr(self.speaker, "print_user"):
+            self.speaker.print_user(turn.transcript)
         turn.states.append("request")
         data = self.client.ask(turn.transcript)
         turn.response_text = data.get("text") or "Jarvis returned no response text."
         turn.approval_required = bool(data.get("approval_required"))
         turn.states.append("speak")
-        try:
-            audio, content_type = self.client.synthesize(turn.response_text)
-            self.speaker.play_audio(audio, content_type)
-        except Exception:
-            self.speaker.say_local(turn.response_text)
+        self.speaker.print_jarvis(turn.response_text)
+        self.speak(turn.response_text)
         turn.states.append("idle")
         return turn
 
 
 class ConsoleSpeaker:
-    def say_local(self, text):
+    def print_jarvis(self, text):
         print(f"Jarvis: {text}")
-        if os.name != "nt":
-            return
-        try:
-            import pyttsx3
 
-            engine = pyttsx3.init()
-            engine.say(text)
-            engine.runAndWait()
-        except Exception:
-            pass
+    def print_user(self, text):
+        print(f"You: {text}")
+
+    def print_status(self, text):
+        print(text)
 
     def play_audio(self, audio_bytes, content_type):
         suffix = ".ogg" if "ogg" in (content_type or "") else ".audio"
@@ -315,12 +322,11 @@ def listen_for_wake(config):
 def run_once(config):
     client = JarvisChatClient(config)
     session = JarvisVoiceSession(client, ConsoleSpeaker())
-    session.speaker.say_local(config.greeting)
+    session.speaker.print_jarvis(config.greeting)
+    session.speak(config.greeting)
     print("Listening to your request...")
     wav_bytes = record_until_silence(config)
-    turn = session.handle_recording(wav_bytes, greet=False)
-    print(f"You: {turn.transcript}")
-    print(f"Jarvis: {turn.response_text}")
+    session.handle_recording(wav_bytes, greet=False)
 
 
 def run_listen(config):
@@ -329,12 +335,11 @@ def run_listen(config):
     print(f"Listening for {config.wake_phrase}.")
     for score in listen_for_wake(config):
         print(f"Wake detected: {score:.2f}")
-        session.speaker.say_local(config.greeting)
+        session.speaker.print_jarvis(config.greeting)
+        session.speak(config.greeting)
         print("Listening to your request...")
         wav_bytes = record_until_silence(config)
-        turn = session.handle_recording(wav_bytes, greet=False)
-        print(f"You: {turn.transcript}")
-        print(f"Jarvis: {turn.response_text}")
+        session.handle_recording(wav_bytes, greet=False)
         time.sleep(config.post_turn_cooldown_seconds)
 
 

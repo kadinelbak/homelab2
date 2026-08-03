@@ -94,6 +94,21 @@ class ContractValidationTests(unittest.TestCase):
 
 
 class ContractWorkerTests(unittest.TestCase):
+    def test_calendar_response_uses_human_times(self):
+        text = worker.response_text_for_calendar(
+            {
+                "events": [
+                    {
+                        "summary": "Dentist reminder",
+                        "start": {"dateTime": "2026-08-03T21:00:00-04:00"},
+                        "end": {"dateTime": "2026-08-03T21:30:00-04:00"},
+                    }
+                ]
+            }
+        )
+        self.assertIn("Dentist reminder, 9 PM to 9:30 PM", text)
+        self.assertNotIn("2026-08-03T21:00:00", text)
+
     def test_create_uses_contract_fields_and_verifies(self):
         contract = {
             "operation": "create", "title": "cool kids",
