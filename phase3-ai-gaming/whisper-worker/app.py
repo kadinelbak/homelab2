@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import time
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -136,6 +137,7 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
         except Exception as exc:
+            traceback.print_exc()
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
         finally:
             try:

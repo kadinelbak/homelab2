@@ -30,6 +30,13 @@ opencode.json
 *.log
 logs/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python local environments
+.venv/
+venv/
+env/
 
 # Backups
 *.bak

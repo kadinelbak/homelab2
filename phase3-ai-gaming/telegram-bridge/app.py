@@ -128,8 +128,196 @@ def telegram_api_multipart(method, fields, files):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def sentence_text(value):
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    value = value.strip("-* ")
+    if not value:
+        return ""
+    if value[-1] not in ".?!":
+        value += "."
+    return value
+
+
+SMALL_NUMBER_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+]
+TENS_NUMBER_WORDS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def integer_words(value):
+    number = int(str(value).replace(",", ""))
+    if number < 0:
+        return "negative " + integer_words(abs(number))
+    if number < 20:
+        return SMALL_NUMBER_WORDS[number]
+    if number < 100:
+        tens, ones = divmod(number, 10)
+        return TENS_NUMBER_WORDS[tens] if ones == 0 else f"{TENS_NUMBER_WORDS[tens]}-{SMALL_NUMBER_WORDS[ones]}"
+    if number < 1000:
+        hundreds, rest = divmod(number, 100)
+        return f"{SMALL_NUMBER_WORDS[hundreds]} hundred" + (f" {integer_words(rest)}" if rest else "")
+    for scale, label in ((1_000_000_000, "billion"), (1_000_000, "million"), (1_000, "thousand")):
+        if number >= scale:
+            high, rest = divmod(number, scale)
+            return f"{integer_words(high)} {label}" + (f" {integer_words(rest)}" if rest else "")
+    return str(number)
+
+
+def number_words(value):
+    value = str(value).replace(",", "")
+    if "." not in value:
+        return integer_words(value)
+    whole, decimal = value.split(".", 1)
+    spoken_decimal = " ".join(SMALL_NUMBER_WORDS[int(digit)] for digit in decimal if digit.isdigit())
+    return f"{integer_words(whole)} point {spoken_decimal}".strip()
+
+
+def protect_speech_numbers(pattern, value, placeholders):
+    def replacement(match):
+        key = f"__JARVIS_SPEECH_PROTECT_{len(placeholders)}__"
+        placeholders[key] = match.group(0)
+        return key
+
+    return re.sub(pattern, replacement, value)
+
+
+def restore_speech_numbers(value, placeholders):
+    for key, original in placeholders.items():
+        value = value.replace(key, original)
+    return value
+
+
+def regular_numbers_to_words(text):
+    placeholders = {}
+    text = protect_speech_numbers(r"^\s*\d+[.)]", text, placeholders)
+    text = protect_speech_numbers(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text, placeholders)
+    text = protect_speech_numbers(
+        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b",
+        text,
+        placeholders,
+    )
+    text = protect_speech_numbers(r"\b\d{4}-\d{2}-\d{2}\b", text, placeholders)
+    text = re.sub(r"(?<![\w:./-])-?\d[\d,]*(?:\.\d+)?(?![\w:./-])", lambda match: number_words(match.group(0)), text)
+    return restore_speech_numbers(text, placeholders)
+
+
+def speech_unit_text(text):
+    text = str(text or "")
+
+    def spoken_decimal(value):
+        return str(value).replace(".", " point ")
+
+    def money(match):
+        amount = match.group("amount")
+        suffix = match.group("suffix").upper()
+        scale = {"K": "thousand", "M": "million", "B": "billion", "T": "trillion"}[suffix]
+        return f"{amount} {scale} dollars"
+
+    def temp(match):
+        amount = str(round(float(match.group("amount"))))
+        unit = match.group("unit").upper()
+        return f"{amount} degrees {'fahrenheit' if unit == 'F' else 'celsius'}"
+
+    text = re.sub(r"\$(?P<amount>\d+(?:\.\d+)?)\s*(?P<suffix>[KMBT])\b", money, text, flags=re.I)
+    text = re.sub(r"(?P<amount>-?\d+(?:\.\d+)?)\s*°?\s*(?P<unit>[FC])\b", temp, text)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)%", r"\1 percent", text)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*mph\b", r"\1 miles per hour", text, flags=re.I)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*mi\b", r"\1 miles", text, flags=re.I)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*in\b", r"\1 inches", text, flags=re.I)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*hr\b", r"\1 hours", text, flags=re.I)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*min\b", r"\1 minutes", text, flags=re.I)
+    text = re.sub(r"\bPRs\b", "pull requests", text)
+    text = re.sub(r"\bPR\b", "pull request", text)
+    text = re.sub(r"\bCI\b", "C I", text)
+    text = re.sub(r"\bAPI\b", "A P I", text)
+    text = re.sub(r"\bOAuth\b", "O auth", text)
+    text = re.sub(r"\bGitHub\b", "GitHub", text)
+    text = regular_numbers_to_words(text)
+    return text
+
+
+def speechify_briefing_text(text):
+    spoken = []
+    current_section = ""
+    section_names = {
+        "TOP 3": "Top three.",
+        "TODAY": "Today.",
+        "MESSAGES": "Messages.",
+        "PROJECTS": "Projects.",
+        "GITHUB": "GitHub.",
+        "WEATHER": "Weather.",
+        "NEWS": "News.",
+        "RISKS": "Risks.",
+        "SUGGESTED PLAN": "Suggested plan.",
+        "ONE QUESTION": "One question.",
+        "COMPLETED": "Completed.",
+        "UNRESOLVED": "Unresolved.",
+        "WAITING": "Waiting.",
+        "PROJECT CHANGES": "Project changes.",
+        "TOMORROW": "Tomorrow.",
+        "SHUTDOWN": "Shutdown.",
+    }
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"[*_`]+", "", line)
+        line = re.sub(r"<([^>]+)>", "", line)
+        if line in section_names:
+            current_section = line
+            spoken.append(section_names[line])
+            continue
+        if line.startswith("MORNING BRIEF"):
+            date = line.split("-", 1)[1].strip() if "-" in line else ""
+            spoken.append(sentence_text(f"Morning brief for {date}" if date else "Morning brief"))
+            continue
+        if line.startswith("EVENING BRIEF"):
+            date = line.split("-", 1)[1].strip() if "-" in line else ""
+            spoken.append(sentence_text(f"Evening brief for {date}" if date else "Evening brief"))
+            continue
+        line = speech_unit_text(line)
+        numbered = re.match(r"^(\d+)[.)]\s*(.+)$", line)
+        if numbered:
+            spoken.append(sentence_text(f"Number {numbered.group(1)} is {numbered.group(2)}"))
+            continue
+        if line.startswith("- "):
+            item = line[2:].strip()
+            if current_section == "TOP 3":
+                spoken.append(sentence_text(item))
+            else:
+                spoken.append(sentence_text(item))
+            continue
+        spoken.append(sentence_text(line))
+    result = "\n\n".join(spoken)
+    result = re.sub(r"\b(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}[^\s,]*", r"\1-\2-\3", result)
+    result = speech_unit_text(result)
+    result = re.sub(r"\s+", " ", result)
+    result = re.sub(r"\.\s+([A-Z][A-Z ]{2,})\.", lambda m: f". {m.group(1).title()}.", result)
+    return result.strip()
+
+
 def synthesize_voice(text):
-    payload = json.dumps({"text": text[:TTS_MAX_CHARS], "voice": TTS_VOICE, "format": "ogg"}).encode("utf-8")
+    speech_text = speechify_briefing_text(text)
+    payload = json.dumps({"text": speech_text[:TTS_MAX_CHARS], "voice": TTS_VOICE, "format": "ogg"}).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if TTS_WORKER_TOKEN and not TTS_WORKER_TOKEN.startswith("CHANGE_ME"):
         headers["Authorization"] = f"Bearer {TTS_WORKER_TOKEN}"
@@ -588,6 +776,16 @@ def transcribe_telegram_file(file_id):
             pass
 
 
+def handle_transcribed_voice(chat_id, update_id, media):
+    text = transcribe_telegram_file(media["file_id"])
+    if not text:
+        send_message(chat_id, "I could not make out that voice note.")
+        return
+    send_message(chat_id, f"Heard: {text}")
+    if enqueue_job(update_id, chat_id, text):
+        send_message(chat_id, "Working on it...")
+
+
 def plan_request(chat_id, text):
     payload = {
         "request": text,
@@ -891,7 +1089,8 @@ def handle_update(update):
 
     text = (message.get("text") or "").strip()
     if not text and (message.get("voice") or message.get("audio")):
-        send_message(chat_id, "Please use Telegram/phone voice typing so it sends text. Audio transcription is available in Open WebUI.")
+        send_message(chat_id, "Transcribing voice note...")
+        handle_transcribed_voice(chat_id, update_id, message.get("voice") or message.get("audio"))
         return
     elif not text and message.get("document"):
         send_message(chat_id, "Sending document to Paperless...")

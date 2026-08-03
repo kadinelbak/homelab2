@@ -14,6 +14,9 @@ ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
+TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
+TTS_WORKER_TOKEN = os.environ.get("JARVIS_TTS_TOKEN", "")
+TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
 CHAT_TOKEN = os.environ.get("JARVIS_CHAT_TOKEN", "")
 
 
@@ -26,6 +29,23 @@ def configured_token():
 
 def escape_json(value):
     return html.escape(json.dumps(value), quote=False)
+
+
+def summarize_voice_plan(planned):
+    request = planned.get("request") or {}
+    actions = planned.get("actions") or []
+    if not actions:
+        return request.get("summary") or "Jarvis created a request, but no action was returned."
+    approval = [action for action in actions if action.get("requires_approval") or not action.get("permissions", {}).get("may_execute")]
+    if approval:
+        names = ", ".join(action.get("capability") or action.get("tool") or "action" for action in approval[:3])
+        return f"Approval is required before I can continue with {names}."
+    return request.get("summary") or "Jarvis is ready to handle that."
+
+
+def result_text(data):
+    result = (data.get("action") or {}).get("result") or {}
+    return result.get("text") or result.get("summary") or data.get("summary") or ""
 
 
 def page():
@@ -596,6 +616,113 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with urllib.request.urlopen(req, timeout=300) as response:
                     self.write_json(response.status, json.loads(response.read().decode("utf-8") or "{}"))
+            except urllib.error.HTTPError as exc:
+                try:
+                    data = json.loads(exc.read().decode("utf-8") or "{}")
+                except Exception:
+                    data = {"ok": False, "error": str(exc)}
+                self.write_json(exc.code, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
+            return
+
+        if path == "/api/voice/transcribe":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length else b""
+            headers = {"Content-Type": self.headers.get("Content-Type", "")}
+            if WHISPER_WORKER_TOKEN and not WHISPER_WORKER_TOKEN.startswith("CHANGE_ME"):
+                headers["Authorization"] = f"Bearer {WHISPER_WORKER_TOKEN}"
+            req = urllib.request.Request(
+                WHISPER_WORKER_URL + "/transcribe",
+                data=body,
+                method="POST",
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=300) as response:
+                    self.write_json(response.status, json.loads(response.read().decode("utf-8") or "{}"))
+            except urllib.error.HTTPError as exc:
+                try:
+                    data = json.loads(exc.read().decode("utf-8") or "{}")
+                except Exception:
+                    data = {"ok": False, "error": str(exc)}
+                self.write_json(exc.code, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
+            return
+
+        if path == "/api/voice/request":
+            try:
+                payload = self.read_json()
+            except json.JSONDecodeError:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_json"})
+                return
+            text = str(payload.get("text") or payload.get("request") or "").strip()
+            if not text:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "text_required"})
+                return
+            request_payload = {
+                "request": text,
+                "source": payload.get("source") or "wake-word-client",
+                "inputs": payload.get("inputs") or {"client": "jarvis-voice-client"},
+                "limits": payload.get("limits") or {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
+                "permissions": payload.get("permissions") or {"may_execute": False, "may_publish": False},
+            }
+            status, planned = self.proxy("POST", "/requests", request_payload)
+            if status >= 400:
+                self.write_json(status, planned)
+                return
+            responses = []
+            approval_needed = []
+            for action in planned.get("actions") or []:
+                if action.get("permissions", {}).get("may_execute"):
+                    execute_status, executed = self.proxy("POST", f"/actions/{action.get('action_id')}/execute", {})
+                    text_result = result_text(executed)
+                    responses.append(text_result or f"Action {action.get('capability') or action.get('action_id')} returned status {execute_status}.")
+                else:
+                    approval_needed.append(action)
+            if approval_needed:
+                responses.append(summarize_voice_plan({**planned, "actions": approval_needed}))
+            response_text = "\n\n".join(item for item in responses if item).strip() or summarize_voice_plan(planned)
+            self.write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "text": response_text,
+                    "planned": planned,
+                    "approval_required": bool(approval_needed),
+                    "approval_actions": approval_needed,
+                },
+            )
+            return
+
+        if path == "/api/voice/synthesize":
+            try:
+                payload = self.read_json()
+            except json.JSONDecodeError:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_json"})
+                return
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "text_required"})
+                return
+            headers = {"Content-Type": "application/json"}
+            if TTS_WORKER_TOKEN and not TTS_WORKER_TOKEN.startswith("CHANGE_ME"):
+                headers["Authorization"] = f"Bearer {TTS_WORKER_TOKEN}"
+            req = urllib.request.Request(
+                TTS_WORKER_URL + "/tts/synthesize",
+                data=json.dumps({"text": text, "voice": payload.get("voice") or TTS_VOICE}).encode("utf-8"),
+                method="POST",
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=240) as response:
+                    audio = response.read()
+                    self.send_response(response.status)
+                    self.send_header("Content-Type", response.headers.get("Content-Type", "audio/ogg"))
+                    self.send_header("Content-Length", str(len(audio)))
+                    self.end_headers()
+                    self.wfile.write(audio)
             except urllib.error.HTTPError as exc:
                 try:
                     data = json.loads(exc.read().decode("utf-8") or "{}")

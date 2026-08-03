@@ -1,0 +1,5 @@
+openwakeword==0.6.0
+sounddevice==0.4.7
+numpy==1.26.4
+pygame==2.6.1
+python-dotenv==1.0.1

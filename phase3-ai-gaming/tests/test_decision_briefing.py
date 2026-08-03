@@ -138,6 +138,68 @@ class TelegramBriefingCommandTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         send.assert_called()
 
+    def test_speechify_briefing_turns_lists_into_sentences(self):
+        spoken = telegram.speechify_briefing_text(
+            """MORNING BRIEF - Monday, August 3
+
+TOP 3
+1. MCAT Studying
+2. buy milk
+3. check the mail
+
+MESSAGES
+- Google Accounts: Security alert
+"""
+        )
+        self.assertIn("Morning brief for Monday, August 3.", spoken)
+        self.assertIn("Top three. Number one is MCAT Studying. Number two is buy milk. Number three is check the mail.", spoken)
+        self.assertIn("Messages. Google Accounts: Security alert.", spoken)
+
+    def test_speechify_briefing_expands_units_and_money(self):
+        spoken = telegram.speechify_briefing_text(
+            """WEATHER
+- Gainesville: 78.7 F, Raining, 80% next-hour rain
+
+NEWS
+- Acting AG reaches deal on $1.8B fund
+"""
+        )
+        self.assertIn("seventy-nine degrees fahrenheit", spoken)
+        self.assertIn("eighty percent", spoken)
+        self.assertIn("one point eight billion dollars", spoken)
+
+    def test_speechify_briefing_converts_regular_numbers_but_keeps_times_and_dates(self):
+        spoken = telegram.speechify_briefing_text(
+            """MORNING BRIEF - Monday, August 3
+
+TODAY
+- 9pm to 9:30pm: Dentist reminder
+
+NEWS
+- Almost 65,000 people evacuated and 78 buildings damaged
+"""
+        )
+        self.assertIn("Monday, August 3", spoken)
+        self.assertIn("9pm to 9:30pm", spoken)
+        self.assertIn("sixty-five thousand people evacuated", spoken)
+        self.assertIn("seventy-eight buildings damaged", spoken)
+
+    def test_telegram_voice_message_transcribes_and_enqueues(self):
+        update = {
+            "update_id": 123,
+            "message": {
+                "chat": {"id": 456},
+                "voice": {"file_id": "voice-file"},
+            },
+        }
+        with mock.patch.object(telegram, "allowed", return_value=True), mock.patch.object(telegram, "transcribe_telegram_file", return_value="what is on my calendar"), mock.patch.object(telegram, "enqueue_job", return_value="job-1") as enqueue, mock.patch.object(telegram, "send_message") as send:
+            telegram.handle_update(update)
+        enqueue.assert_called_once_with(123, 456, "what is on my calendar")
+        sent_text = "\n".join(str(call.args[1]) for call in send.call_args_list)
+        self.assertIn("Transcribing voice note", sent_text)
+        self.assertIn("Heard: what is on my calendar", sent_text)
+        self.assertIn("Working on it", sent_text)
+
 
 class GitHubDigestTests(unittest.TestCase):
     def test_digest_classifies_assigned_issues_and_open_prs(self):
