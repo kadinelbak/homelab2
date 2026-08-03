@@ -777,13 +777,26 @@ def transcribe_telegram_file(file_id):
 
 
 def handle_transcribed_voice(chat_id, update_id, media):
-    text = transcribe_telegram_file(media["file_id"])
+    try:
+        text = transcribe_telegram_file(media["file_id"])
+    except Exception as exc:
+        print(f"telegram voice transcription error: {exc}", flush=True)
+        send_message(chat_id, f"I could not transcribe that voice note: {exc}")
+        return
     if not text:
         send_message(chat_id, "I could not make out that voice note.")
         return
     send_message(chat_id, f"Heard: {text}")
-    if enqueue_job(update_id, chat_id, text):
+    try:
+        job_id = enqueue_job(update_id, chat_id, text)
+    except Exception as exc:
+        print(f"telegram voice enqueue error: {exc}", flush=True)
+        send_message(chat_id, f"I heard it, but could not queue the Jarvis request: {exc}")
+        return
+    if job_id:
         send_message(chat_id, "Working on it...")
+    else:
+        send_message(chat_id, "I already queued that voice note.")
 
 
 def plan_request(chat_id, text):

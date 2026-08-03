@@ -200,6 +200,20 @@ NEWS
         self.assertIn("Heard: what is on my calendar", sent_text)
         self.assertIn("Working on it", sent_text)
 
+    def test_telegram_voice_message_reports_enqueue_failure(self):
+        update = {
+            "update_id": 123,
+            "message": {
+                "chat": {"id": 456},
+                "voice": {"file_id": "voice-file"},
+            },
+        }
+        with mock.patch.object(telegram, "allowed", return_value=True), mock.patch.object(telegram, "transcribe_telegram_file", return_value="what is on my calendar"), mock.patch.object(telegram, "enqueue_job", side_effect=PermissionError("state not writable")), mock.patch.object(telegram, "send_message") as send:
+            telegram.handle_update(update)
+        sent_text = "\n".join(str(call.args[1]) for call in send.call_args_list)
+        self.assertIn("Heard: what is on my calendar", sent_text)
+        self.assertIn("could not queue the Jarvis request", sent_text)
+
 
 class GitHubDigestTests(unittest.TestCase):
     def test_digest_classifies_assigned_issues_and_open_prs(self):
