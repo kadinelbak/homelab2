@@ -83,7 +83,14 @@ def get_kokoro():
     return _kokoro
 
 
-def synthesize_kokoro(text, voice, tmpdir):
+def audio_bytes(wav_path, ogg_path, output_format):
+    if output_format == "wav":
+        return wav_path.read_bytes(), "audio/wav"
+    encode_ogg(wav_path, ogg_path)
+    return ogg_path.read_bytes(), "audio/ogg"
+
+
+def synthesize_kokoro(text, voice, tmpdir, output_format="ogg"):
     wav_path = Path(tmpdir) / "briefing.wav"
     ogg_path = Path(tmpdir) / "briefing.ogg"
     samples, sample_rate = get_kokoro().create(
@@ -93,11 +100,10 @@ def synthesize_kokoro(text, voice, tmpdir):
         lang=KOKORO_LANG,
     )
     write_float_wav(wav_path, samples, sample_rate)
-    encode_ogg(wav_path, ogg_path)
-    return ogg_path.read_bytes()
+    return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize_piper(text, voice, tmpdir):
+def synthesize_piper(text, voice, tmpdir, output_format="ogg"):
     model_path = piper_model_path(voice)
     if not model_path.exists():
         raise FileNotFoundError(f"piper_model_not_found: {model_path}")
@@ -112,11 +118,10 @@ def synthesize_piper(text, voice, tmpdir):
         text=True,
         timeout=240,
     )
-    encode_ogg(wav_path, ogg_path)
-    return ogg_path.read_bytes()
+    return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize_espeak(text, voice, tmpdir):
+def synthesize_espeak(text, voice, tmpdir, output_format="ogg"):
     voice_arg = "en-us" if voice in {"", "default", "piper"} else voice
     wav_path = Path(tmpdir) / "briefing.wav"
     ogg_path = Path(tmpdir) / "briefing.ogg"
@@ -128,32 +133,34 @@ def synthesize_espeak(text, voice, tmpdir):
         text=True,
         timeout=180,
     )
-    encode_ogg(wav_path, ogg_path)
-    return ogg_path.read_bytes()
+    return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize(text, voice):
+def synthesize(text, voice, output_format="ogg"):
     text = str(text or "").strip()[:MAX_CHARS]
     if not text:
         raise ValueError("text_required")
+    output_format = str(output_format or "ogg").lower()
+    if output_format not in {"ogg", "wav"}:
+        raise ValueError("format_must_be_ogg_or_wav")
     with tempfile.TemporaryDirectory() as tmpdir:
         if ENGINE == "espeak":
-            return synthesize_espeak(text, voice, tmpdir)
+            return synthesize_espeak(text, voice, tmpdir, output_format)
         if ENGINE == "piper":
             try:
-                return synthesize_piper(text, voice, tmpdir)
+                return synthesize_piper(text, voice, tmpdir, output_format)
             except Exception:
                 if os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}:
-                    return synthesize_espeak(text, "default", tmpdir)
+                    return synthesize_espeak(text, "default", tmpdir, output_format)
                 raise
         try:
-            return synthesize_kokoro(text, voice, tmpdir)
+            return synthesize_kokoro(text, voice, tmpdir, output_format)
         except Exception:
             if os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}:
                 try:
-                    return synthesize_piper(text, "default", tmpdir)
+                    return synthesize_piper(text, "default", tmpdir, output_format)
                 except Exception:
-                    return synthesize_espeak(text, "default", tmpdir)
+                    return synthesize_espeak(text, "default", tmpdir, output_format)
             raise
 
 
@@ -209,12 +216,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             payload = self.read_json()
-            audio = synthesize(payload.get("text"), payload.get("voice") or DEFAULT_VOICE)
+            audio, content_type = synthesize(
+                payload.get("text"),
+                payload.get("voice") or DEFAULT_VOICE,
+                payload.get("format") or "ogg",
+            )
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
             return
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "audio/ogg")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(audio)))
         self.end_headers()
         self.wfile.write(audio)

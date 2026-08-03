@@ -34,7 +34,7 @@ class VoiceConfig:
     wake_phrase: str = "hey_jarvis"
     greeting: str = "Hey Kad, what do you need?"
     sample_rate: int = 16000
-    wake_threshold: float = 0.99
+    wake_threshold: float = 0.98
     wake_consecutive_hits: int = 4
     wake_inference_framework: str = "onnx"
     wake_cooldown_seconds: float = 30.0
@@ -145,7 +145,7 @@ class JarvisChatClient:
         )
 
     def synthesize(self, text):
-        data = json.dumps({"text": text, "voice": self.config.tts_voice}).encode("utf-8")
+        data = json.dumps({"text": text, "voice": self.config.tts_voice, "format": "wav"}).encode("utf-8")
         req = urllib.request.Request(
             self.config.chat_url + "/api/voice/synthesize",
             data=data,
@@ -218,11 +218,16 @@ class ConsoleSpeaker:
         print(text)
 
     def play_audio(self, audio_bytes, content_type):
-        suffix = ".ogg" if "ogg" in (content_type or "") else ".audio"
+        suffix = ".wav" if "wav" in (content_type or "") else ".ogg" if "ogg" in (content_type or "") else ".audio"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(audio_bytes)
             path = tmp.name
         try:
+            if suffix == ".wav" and os.name == "nt":
+                import winsound
+
+                winsound.PlaySound(path, winsound.SND_FILENAME)
+                return
             import pygame
 
             pygame.mixer.init()

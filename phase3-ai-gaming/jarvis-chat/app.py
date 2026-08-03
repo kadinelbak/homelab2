@@ -711,7 +711,13 @@ class Handler(BaseHTTPRequestHandler):
                 headers["Authorization"] = f"Bearer {TTS_WORKER_TOKEN}"
             req = urllib.request.Request(
                 TTS_WORKER_URL + "/tts/synthesize",
-                data=json.dumps({"text": text, "voice": payload.get("voice") or TTS_VOICE}).encode("utf-8"),
+                data=json.dumps(
+                    {
+                        "text": text,
+                        "voice": payload.get("voice") or TTS_VOICE,
+                        "format": payload.get("format") or "ogg",
+                    }
+                ).encode("utf-8"),
                 method="POST",
                 headers=headers,
             )

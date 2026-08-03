@@ -64,7 +64,7 @@ class VoiceClientStateTests(unittest.TestCase):
         config = voice_client.VoiceConfig()
         self.assertEqual(config.wake_phrase, "hey_jarvis")
         self.assertEqual(config.wake_inference_framework, "onnx")
-        self.assertEqual(config.wake_threshold, 0.99)
+        self.assertEqual(config.wake_threshold, 0.98)
         self.assertEqual(config.wake_consecutive_hits, 4)
 
     def test_state_machine_completes_voice_turn(self):
@@ -192,16 +192,18 @@ class JarvisChatVoiceProxyTests(unittest.TestCase):
         old_token = jarvis_chat.CHAT_TOKEN
         try:
             jarvis_chat.CHAT_TOKEN = ""
-            with mock.patch.object(jarvis_chat.urllib.request, "urlopen", return_value=FakeHTTPResponse(b"ogg-bytes")):
+            with mock.patch.object(jarvis_chat.urllib.request, "urlopen", return_value=FakeHTTPResponse(b"wav-bytes", headers={"Content-Type": "audio/wav"})) as urlopen:
                 status, data, headers = self.post(
                     server,
                     "/api/voice/synthesize",
-                    json.dumps({"text": "hello"}),
+                    json.dumps({"text": "hello", "format": "wav"}),
                     {"Content-Type": "application/json"},
                 )
             self.assertEqual(status, 200)
-            self.assertEqual(data, b"ogg-bytes")
-            self.assertEqual(headers.get("Content-Type"), "audio/ogg")
+            self.assertEqual(data, b"wav-bytes")
+            self.assertEqual(headers.get("Content-Type"), "audio/wav")
+            request = urlopen.call_args.args[0]
+            self.assertEqual(json.loads(request.data.decode("utf-8")).get("format"), "wav")
         finally:
             jarvis_chat.CHAT_TOKEN = old_token
             server.shutdown()
