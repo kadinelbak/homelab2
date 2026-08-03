@@ -13,6 +13,8 @@ import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+
 
 def load_dotenv(path):
     if not path.exists():
@@ -32,11 +34,14 @@ class VoiceConfig:
     wake_phrase: str = "hey_jarvis"
     greeting: str = "Hey Kad, what do you need?"
     sample_rate: int = 16000
-    wake_threshold: float = 0.55
+    wake_threshold: float = 0.85
+    wake_consecutive_hits: int = 2
     wake_inference_framework: str = "onnx"
-    wake_cooldown_seconds: float = 2.0
-    record_max_seconds: float = 12.0
-    record_silence_seconds: float = 1.2
+    wake_cooldown_seconds: float = 8.0
+    record_max_seconds: float = 18.0
+    record_start_timeout_seconds: float = 5.0
+    record_min_seconds: float = 1.0
+    record_silence_seconds: float = 1.8
     record_rms_threshold: int = 450
     tts_voice: str = "af_heart"
 
@@ -49,9 +54,12 @@ class VoiceConfig:
             greeting=os.environ.get("JARVIS_GREETING", cls.greeting),
             sample_rate=int(os.environ.get("JARVIS_SAMPLE_RATE", cls.sample_rate)),
             wake_threshold=float(os.environ.get("JARVIS_WAKE_THRESHOLD", cls.wake_threshold)),
+            wake_consecutive_hits=int(os.environ.get("JARVIS_WAKE_CONSECUTIVE_HITS", cls.wake_consecutive_hits)),
             wake_inference_framework=os.environ.get("JARVIS_WAKE_INFERENCE_FRAMEWORK", cls.wake_inference_framework),
             wake_cooldown_seconds=float(os.environ.get("JARVIS_WAKE_COOLDOWN_SECONDS", cls.wake_cooldown_seconds)),
             record_max_seconds=float(os.environ.get("JARVIS_RECORD_MAX_SECONDS", cls.record_max_seconds)),
+            record_start_timeout_seconds=float(os.environ.get("JARVIS_RECORD_START_TIMEOUT_SECONDS", cls.record_start_timeout_seconds)),
+            record_min_seconds=float(os.environ.get("JARVIS_RECORD_MIN_SECONDS", cls.record_min_seconds)),
             record_silence_seconds=float(os.environ.get("JARVIS_RECORD_SILENCE_SECONDS", cls.record_silence_seconds)),
             record_rms_threshold=int(os.environ.get("JARVIS_RECORD_RMS_THRESHOLD", cls.record_rms_threshold)),
             tts_voice=os.environ.get("JARVIS_TTS_VOICE", cls.tts_voice),
@@ -160,6 +168,11 @@ class JarvisVoiceSession:
         turn = VoiceTurn(states=["wake", "greet"])
         if greet:
             self.speaker.say_local(self.client.config.greeting)
+        if not wav_bytes:
+            turn.response_text = "I did not hear anything."
+            self.speaker.say_local(turn.response_text)
+            turn.states.append("idle")
+            return turn
         turn.states.append("transcribe")
         turn.transcript = self.client.transcribe(wav_bytes)
         if not turn.transcript:
@@ -184,6 +197,16 @@ class JarvisVoiceSession:
 class ConsoleSpeaker:
     def say_local(self, text):
         print(f"Jarvis: {text}")
+        if os.name != "nt":
+            return
+        try:
+            import pyttsx3
+
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+        except Exception:
+            pass
 
     def play_audio(self, audio_bytes, content_type):
         suffix = ".ogg" if "ogg" in (content_type or "") else ".audio"
@@ -226,21 +249,36 @@ def record_until_silence(config):
     import sounddevice as sd
 
     block_samples = int(config.sample_rate * 0.1)
+    start_blocks = max(1, int(config.record_start_timeout_seconds / 0.1))
+    min_voice_blocks = max(1, int(config.record_min_seconds / 0.1))
     silence_blocks_needed = max(1, int(config.record_silence_seconds / 0.1))
     max_blocks = max(1, int(config.record_max_seconds / 0.1))
     frames = []
+    pre_voice_blocks = 0
     silent_blocks = 0
+    voice_blocks = 0
+    heard_speech = False
     with sd.RawInputStream(samplerate=config.sample_rate, channels=1, dtype="int16", blocksize=block_samples) as stream:
         for _ in range(max_blocks):
             data, _ = stream.read(block_samples)
             chunk = bytes(data)
+            is_silent = audioop.rms(chunk, 2) < config.record_rms_threshold
+            if not heard_speech and is_silent:
+                pre_voice_blocks += 1
+                if pre_voice_blocks >= start_blocks:
+                    break
+                continue
+            heard_speech = True
             frames.append(chunk)
-            if audioop.rms(chunk, 2) < config.record_rms_threshold:
+            if is_silent:
                 silent_blocks += 1
-                if silent_blocks >= silence_blocks_needed and len(frames) > silence_blocks_needed:
+                if voice_blocks >= min_voice_blocks and silent_blocks >= silence_blocks_needed:
                     break
             else:
+                voice_blocks += 1
                 silent_blocks = 0
+    if not frames:
+        return b""
     return wav_bytes_from_pcm(frames, config.sample_rate)
 
 
@@ -254,6 +292,7 @@ def listen_for_wake(config):
     model = Model(wakeword_models=[config.wake_phrase], inference_framework=config.wake_inference_framework)
     block_samples = 1280
     last_wake = 0.0
+    consecutive_hits = 0
     with sd.RawInputStream(samplerate=config.sample_rate, channels=1, dtype="int16", blocksize=block_samples) as stream:
         while True:
             data, _ = stream.read(block_samples)
@@ -261,8 +300,13 @@ def listen_for_wake(config):
             prediction = model.predict(audio)
             score = max(float(value) for value in prediction.values()) if prediction else 0.0
             now = time.time()
-            if score >= config.wake_threshold and now - last_wake > config.wake_cooldown_seconds:
+            if score >= config.wake_threshold:
+                consecutive_hits += 1
+            else:
+                consecutive_hits = 0
+            if consecutive_hits >= config.wake_consecutive_hits and now - last_wake > config.wake_cooldown_seconds:
                 last_wake = now
+                consecutive_hits = 0
                 yield score
 
 
@@ -270,7 +314,7 @@ def run_once(config):
     client = JarvisChatClient(config)
     session = JarvisVoiceSession(client, ConsoleSpeaker())
     session.speaker.say_local(config.greeting)
-    print("Recording one request. Speak now.")
+    print("Listening to your request...")
     wav_bytes = record_until_silence(config)
     turn = session.handle_recording(wav_bytes, greet=False)
     print(f"You: {turn.transcript}")
@@ -284,6 +328,7 @@ def run_listen(config):
     for score in listen_for_wake(config):
         print(f"Wake detected: {score:.2f}")
         session.speaker.say_local(config.greeting)
+        print("Listening to your request...")
         wav_bytes = record_until_silence(config)
         turn = session.handle_recording(wav_bytes, greet=False)
         print(f"You: {turn.transcript}")
@@ -296,6 +341,7 @@ def diagnose(config):
     print(f"Wake phrase/model: {config.wake_phrase}")
     print(f"Wake inference framework: {config.wake_inference_framework}")
     print(f"Wake threshold: {config.wake_threshold}")
+    print(f"Wake consecutive hits: {config.wake_consecutive_hits}")
     print(f"Sample rate: {config.sample_rate}")
     try:
         health = JarvisChatClient(config).health()

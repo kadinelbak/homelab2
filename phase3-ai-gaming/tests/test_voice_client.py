@@ -56,6 +56,8 @@ class VoiceClientStateTests(unittest.TestCase):
         config = voice_client.VoiceConfig()
         self.assertEqual(config.wake_phrase, "hey_jarvis")
         self.assertEqual(config.wake_inference_framework, "onnx")
+        self.assertEqual(config.wake_threshold, 0.85)
+        self.assertEqual(config.wake_consecutive_hits, 2)
 
     def test_state_machine_completes_voice_turn(self):
         speaker = FakeSpeaker()
@@ -72,6 +74,16 @@ class VoiceClientStateTests(unittest.TestCase):
         session = voice_client.JarvisVoiceSession(FakeClient(approval_required=True), speaker)
         turn = session.handle_recording(b"wav")
         self.assertTrue(turn.approval_required)
+
+    def test_state_machine_does_not_transcribe_empty_recording(self):
+        speaker = FakeSpeaker()
+        client = FakeClient()
+        with mock.patch.object(client, "transcribe") as transcribe:
+            session = voice_client.JarvisVoiceSession(client, speaker)
+            turn = session.handle_recording(b"")
+        transcribe.assert_not_called()
+        self.assertEqual(turn.response_text, "I did not hear anything.")
+        self.assertEqual(turn.states, ["wake", "greet", "idle"])
 
     def test_state_machine_falls_back_to_local_speech_when_tts_fails(self):
         speaker = FakeSpeaker()
