@@ -59,6 +59,15 @@ class ContractValidationTests(unittest.TestCase):
         self.assertEqual(source, "nemotron_cache")
         self.assertEqual(call.call_count, 1)
 
+    def test_readonly_calendar_question_uses_deterministic_list_contract(self):
+        payload = {"request": "Can you please tell me everything on my calendar today?", "inputs": {}}
+        with mock.patch.object(core, "call_profile_assistant") as call:
+            contract, source = core.build_calendar_contract(payload)
+        self.assertEqual(source, "deterministic_readonly_list")
+        self.assertEqual(contract["operation"], "list")
+        self.assertIsNotNone(contract["search_window"])
+        call.assert_not_called()
+
     def test_bad_title_contract_is_retried_by_nemotron(self):
         payload = {"request": "Create an event titled Dentist reminder for 30 minutes tomorrow at 8 PM", "inputs": {}}
         bad = '{"operation":"create","title":"Dentist reminder for 30 minutes","start":"2026-08-03T20:00:00-04:00","end":"2026-08-03T20:30:00-04:00"}'

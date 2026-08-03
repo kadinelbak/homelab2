@@ -34,10 +34,11 @@ class VoiceConfig:
     wake_phrase: str = "hey_jarvis"
     greeting: str = "Hey Kad, what do you need?"
     sample_rate: int = 16000
-    wake_threshold: float = 0.85
-    wake_consecutive_hits: int = 2
+    wake_threshold: float = 0.95
+    wake_consecutive_hits: int = 3
     wake_inference_framework: str = "onnx"
-    wake_cooldown_seconds: float = 8.0
+    wake_cooldown_seconds: float = 15.0
+    post_turn_cooldown_seconds: float = 6.0
     record_max_seconds: float = 18.0
     record_start_timeout_seconds: float = 5.0
     record_min_seconds: float = 1.0
@@ -57,6 +58,7 @@ class VoiceConfig:
             wake_consecutive_hits=int(os.environ.get("JARVIS_WAKE_CONSECUTIVE_HITS", cls.wake_consecutive_hits)),
             wake_inference_framework=os.environ.get("JARVIS_WAKE_INFERENCE_FRAMEWORK", cls.wake_inference_framework),
             wake_cooldown_seconds=float(os.environ.get("JARVIS_WAKE_COOLDOWN_SECONDS", cls.wake_cooldown_seconds)),
+            post_turn_cooldown_seconds=float(os.environ.get("JARVIS_POST_TURN_COOLDOWN_SECONDS", cls.post_turn_cooldown_seconds)),
             record_max_seconds=float(os.environ.get("JARVIS_RECORD_MAX_SECONDS", cls.record_max_seconds)),
             record_start_timeout_seconds=float(os.environ.get("JARVIS_RECORD_START_TIMEOUT_SECONDS", cls.record_start_timeout_seconds)),
             record_min_seconds=float(os.environ.get("JARVIS_RECORD_MIN_SECONDS", cls.record_min_seconds)),
@@ -333,6 +335,7 @@ def run_listen(config):
         turn = session.handle_recording(wav_bytes, greet=False)
         print(f"You: {turn.transcript}")
         print(f"Jarvis: {turn.response_text}")
+        time.sleep(config.post_turn_cooldown_seconds)
 
 
 def diagnose(config):
@@ -342,6 +345,7 @@ def diagnose(config):
     print(f"Wake inference framework: {config.wake_inference_framework}")
     print(f"Wake threshold: {config.wake_threshold}")
     print(f"Wake consecutive hits: {config.wake_consecutive_hits}")
+    print(f"Post-turn cooldown seconds: {config.post_turn_cooldown_seconds}")
     print(f"Sample rate: {config.sample_rate}")
     try:
         health = JarvisChatClient(config).health()

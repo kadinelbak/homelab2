@@ -317,7 +317,42 @@ def calendar_mutation_intent(payload):
     )
     if any(term in text for term in mutation_terms):
         return True
-    return not any(term in text for term in ("show", "list", "what", "when", "check", "find", "available"))
+    readonly_terms = (
+        "show", "list", "what", "what's", "whats", "when", "check", "find",
+        "available", "tell me", "everything", "anything", "agenda", "look up",
+    )
+    if any(term in text for term in readonly_terms):
+        return False
+    return False
+
+
+def calendar_readonly_intent(payload):
+    text = request_text(payload).lower()
+    if not any(term in text for term in ("calendar", "schedule", "agenda", "appointment", "meeting", "events")):
+        return False
+    return not calendar_mutation_intent(payload)
+
+
+def calendar_readonly_list_contract(payload):
+    text = request_text(payload).lower()
+    current_time = datetime.now().astimezone().replace(second=0, microsecond=0)
+    start = current_time.replace(hour=0, minute=0)
+    days = 1
+    if "tomorrow" in text:
+        start = start + timedelta(days=1)
+    elif "week" in text:
+        days = 7
+    elif "month" in text:
+        days = 31
+    end = start + timedelta(days=days)
+    return validate_calendar_contract(
+        {
+            "operation": "list",
+            "search_window": {"start": start.isoformat(), "end": end.isoformat()},
+            "allow_search_fallback": False,
+            "requires_clarification": False,
+        }
+    )
 
 
 def route_with_keywords(payload):
@@ -659,6 +694,8 @@ def validate_calendar_contract_semantics(payload, contract, artifacts):
 
 
 def build_calendar_contract(payload):
+    if calendar_readonly_intent(payload):
+        return calendar_readonly_list_contract(payload), "deterministic_readonly_list"
     artifacts = verified_calendar_artifacts(payload)
     prompt_text = calendar_contract_prompt(payload, artifacts)
     cache_key = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()

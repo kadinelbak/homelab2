@@ -56,8 +56,8 @@ class VoiceClientStateTests(unittest.TestCase):
         config = voice_client.VoiceConfig()
         self.assertEqual(config.wake_phrase, "hey_jarvis")
         self.assertEqual(config.wake_inference_framework, "onnx")
-        self.assertEqual(config.wake_threshold, 0.85)
-        self.assertEqual(config.wake_consecutive_hits, 2)
+        self.assertEqual(config.wake_threshold, 0.95)
+        self.assertEqual(config.wake_consecutive_hits, 3)
 
     def test_state_machine_completes_voice_turn(self):
         speaker = FakeSpeaker()
