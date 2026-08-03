@@ -44,6 +44,7 @@ GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://google-tools-worke
 GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN", TOKEN)
 CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
 CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN", TOKEN)
+TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
 LLM_PROFILES = {
     "local": {
         "profile": "local",
@@ -141,6 +142,36 @@ CAPABILITIES = [
         "execution_requires_approval": False,
         "tools": ["jarvis.daily_briefing"],
         "description": "Build a morning or evening briefing from Calendar, Gmail, and Tasks.",
+    },
+    {
+        "capability": "briefing_profile",
+        "worker": "profile_worker",
+        "adapter_type": "google_tools_worker",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["jarvis.briefing_profile"],
+        "description": "Read or update durable Jarvis briefing profile settings.",
+    },
+    {
+        "capability": "github_digest",
+        "worker": "github_tools_worker",
+        "adapter_type": "github_app",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["github.digest"],
+        "description": "Summarize watched GitHub repositories for briefing context.",
+    },
+    {
+        "capability": "text_to_speech",
+        "worker": "tts_worker",
+        "adapter_type": "local_application",
+        "cost_class": "local",
+        "requires_approval": False,
+        "execution_requires_approval": False,
+        "tools": ["tts.synthesize"],
+        "description": "Synthesize text into local audio for Telegram delivery.",
     },
     {
         "capability": "track_expense",
@@ -293,6 +324,7 @@ def route_with_keywords(payload):
     text = request_text(payload).lower()
 
     routes = [
+        (("briefing profile", "briefing preference", "current city", "set city", "where i live", "watch repo", "watched repo", "rememberbrief", "remember for brief"), "briefing_profile"),
         (("repo", "code", "commit", "pull request", "github issue", "branch", "test", "lint", "coding task", "summarize repo"), "edit_repository"),
         (("daily brief", "briefing", "morning brief", "evening recap", "tomorrow prep"), "daily_briefing"),
         (("gmail draft", "draft in gmail", "create draft", "make a draft", "save draft"), "manage_email"),
@@ -1215,6 +1247,38 @@ def route_request(payload):
     return route_with_keywords(payload)
 
 
+def split_multi_command_request(payload):
+    text = request_text(payload).strip()
+    if not text or payload.get("capability") or payload.get("requested_capability"):
+        return [text] if text else []
+    if len(text) > 1200:
+        return [text]
+    normalized = re.sub(r"\s+", " ", text)
+    parts = re.split(r"\s*(?:;|\n+|\bthen\b|\band then\b|\balso\b|\bafter that\b)\s*", normalized, flags=re.IGNORECASE)
+    commands = [part.strip(" .") for part in parts if part.strip(" .")]
+    if len(commands) <= 1:
+        return [text]
+    command_verbs = (
+        "find", "look", "search", "draft", "create", "add", "update", "complete", "mark",
+        "delete", "remove", "send", "reply", "schedule", "move", "list", "build", "summarize",
+    )
+    if sum(1 for command in commands if command.lower().startswith(command_verbs)) < 2:
+        return [text]
+    return commands[:6]
+
+
+def payload_for_subrequest(payload, subrequest):
+    cloned = dict(payload)
+    cloned["request"] = subrequest
+    cloned.pop("capability", None)
+    cloned.pop("requested_capability", None)
+    inputs = dict((payload.get("inputs") or {}))
+    inputs["request"] = subrequest
+    inputs["parent_request"] = request_text(payload)
+    cloned["inputs"] = inputs
+    return cloned
+
+
 def choose_execution_profile(payload, capability):
     text = request_text(payload).lower()
     deep_terms = (
@@ -1662,16 +1726,56 @@ def google_tools_result(action):
             "cost": {"estimated_usd": 0},
             "next_actions": [],
         }
+    if action.get("capability") == "briefing_profile":
+        text_lower = request.lower()
+        updates = {}
+        note = ""
+        repo_match = re.search(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", request)
+        city_match = re.search(r"(?:set|update|change).{0,30}(?:city|location|where i live)\s+(?:to\s+)?([A-Za-z .'-]{2,80})", request, re.IGNORECASE)
+        if city_match:
+            updates["current_city"] = city_match.group(1).strip(" .")
+        if repo_match and any(term in text_lower for term in ("watch", "watched", "github", "repo")):
+            current = call_google_tools("/profile/get", {}).get("profile") or {}
+            repos = list(dict.fromkeys((current.get("watched_repos") or []) + [repo_match.group(1)]))
+            updates["watched_repos"] = repos
+        if any(term in text_lower for term in ("remember", "note", "preference")) and not updates:
+            note = request.strip()
+        if updates:
+            data = call_google_tools("/profile/update", {"updates": updates})
+            summary = "Updated briefing profile."
+        elif note:
+            data = call_google_tools("/profile/notes", {"operation": "add", "note": note})
+            summary = "Saved briefing note."
+        else:
+            data = call_google_tools("/profile/get", {})
+            summary = "Fetched briefing profile."
+        return {
+            "request_id": action["request_id"],
+            "tool": action["tool"],
+            "status": data.get("status") or "completed",
+            "summary": summary,
+            "text": data.get("text") or summary,
+            "artifacts": [{"type": "briefing_profile", "item": data.get("profile") or data}],
+            "cost": {"estimated_usd": 0},
+            "next_actions": [],
+        }
     if action.get("capability") == "daily_briefing":
         kind = "evening" if "evening" in request.lower() or "tomorrow prep" in request.lower() else "morning"
         data = call_google_tools("/briefing/build", {"kind": kind})
+        artifacts = [{"type": "daily_brief", "item": data}]
+        if data.get("profile"):
+            artifacts.append({"type": "briefing_profile", "item": data.get("profile")})
+        if data.get("weather"):
+            artifacts.append({"type": "weather_location", "item": {"location": data.get("weather_location"), "weather": data.get("weather")}})
+        if data.get("github"):
+            artifacts.append({"type": "github_digest", "item": data.get("github")})
         return {
             "request_id": action["request_id"],
             "tool": action["tool"],
             "status": data.get("status") or "completed",
             "summary": f"Built {kind} briefing.",
             "text": data.get("text") or "Built briefing.",
-            "artifacts": [{"type": "daily_brief", "item": data}],
+            "artifacts": artifacts,
             "cost": {"estimated_usd": 0},
             "next_actions": [],
         }
@@ -2031,6 +2135,16 @@ class Handler(BaseHTTPRequestHandler):
             self.write_json(HTTPStatus.OK, {"ok": True, "capabilities": CAPABILITIES})
             return
 
+        if path == "/profile":
+            if not self.require_auth():
+                return
+            try:
+                data = call_google_tools("/profile/get", {})
+                self.write_json(HTTPStatus.OK, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, error_payload(str(exc)))
+            return
+
         if path.startswith("/requests/"):
             if not self.require_auth():
                 return
@@ -2063,36 +2177,70 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(HTTPStatus.BAD_REQUEST, error_payload(f"invalid_json: {exc}"))
                 return
 
-            capability, route = route_request(payload)
             request_id = payload.get("request_id") or f"req-{uuid.uuid4().hex[:12]}"
-            action = make_action(request_id, payload, capability)
+            subrequests = split_multi_command_request(payload)
+            actions = []
+            routes = []
+            capabilities = []
+            for index, subrequest in enumerate(subrequests or [request_text(payload)]):
+                sub_payload = payload_for_subrequest(payload, subrequest) if len(subrequests) > 1 else payload
+                capability, route = route_request(sub_payload)
+                action = make_action(request_id, sub_payload, capability)
+                action["sequence"] = index + 1
+                action["subrequest"] = subrequest
+                actions.append(action)
+                routes.append({"sequence": index + 1, "subrequest": subrequest, **route})
+                capabilities.append(capability)
+            primary = capabilities[0]
             request = {
                 "request_id": request_id,
                 "status": "planned",
                 "created_at": now(),
-                "capability": capability["capability"],
-                "worker": capability["worker"],
-                "summary": f"Routed request to {capability['capability']} via {capability['worker']}.",
-                "route": route,
+                "capability": primary["capability"] if len(actions) == 1 else "multi_action",
+                "worker": primary["worker"] if len(actions) == 1 else "jarvis_core",
+                "summary": f"Planned {len(actions)} Jarvis action(s).",
+                "route": routes[0] if len(actions) == 1 else {"router": "multi_command", "steps": routes},
                 "original": payload,
                 "next_actions": [
                     {
-                        "action_id": action["action_id"],
-                        "tool": action["tool"],
+                        "action_id": item["action_id"],
+                        "tool": item["tool"],
                         "authorization": "approved"
-                        if action["status"] == "approved"
+                        if item["status"] == "approved"
                         else "approval_required",
                     }
+                    for item in actions
                 ],
             }
             state = load_state()
             state["requests"][request_id] = request
-            state["actions"][action["action_id"]] = action
+            for action in actions:
+                state["actions"][action["action_id"]] = action
             save_state(state)
             self.write_json(
                 HTTPStatus.ACCEPTED,
-                {"ok": True, "request": request, "actions": [action]},
+                {"ok": True, "request": request, "actions": actions},
             )
+            return
+
+        if path == "/profile":
+            if not self.require_auth():
+                return
+            try:
+                data = call_google_tools("/profile/update", self.read_json())
+                self.write_json(HTTPStatus.OK, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, error_payload(str(exc)))
+            return
+
+        if path == "/profile/notes":
+            if not self.require_auth():
+                return
+            try:
+                data = call_google_tools("/profile/notes", self.read_json())
+                self.write_json(HTTPStatus.OK, data)
+            except Exception as exc:
+                self.write_json(HTTPStatus.BAD_GATEWAY, error_payload(str(exc)))
             return
 
         if path.startswith("/actions/") and path.endswith("/approve"):
@@ -2127,7 +2275,18 @@ class Handler(BaseHTTPRequestHandler):
             result = execute_action(action)
             action["result"] = result
             action["status"] = result["status"]
-            state["requests"][action["request_id"]]["status"] = result["status"]
+            sibling_actions = [
+                item for item in state["actions"].values()
+                if item["request_id"] == action["request_id"]
+            ]
+            if any(item.get("status") == "awaiting_approval" for item in sibling_actions):
+                state["requests"][action["request_id"]]["status"] = "partial_approval_required"
+            elif any(item.get("status") in {"approved", "planned"} for item in sibling_actions):
+                state["requests"][action["request_id"]]["status"] = "partial_completed"
+            elif all(item.get("status") == "completed" for item in sibling_actions):
+                state["requests"][action["request_id"]]["status"] = "completed"
+            else:
+                state["requests"][action["request_id"]]["status"] = result["status"]
             save_state(state)
             self.write_json(HTTPStatus.ACCEPTED, {"ok": True, "action": action})
             return

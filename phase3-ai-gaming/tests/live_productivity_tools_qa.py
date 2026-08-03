@@ -11,7 +11,7 @@ ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://127.0.0.1:8095"
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://127.0.0.1:18200").rstrip("/")
 CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://127.0.0.1:18300").rstrip("/")
 TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", os.environ.get("GOOGLE_TOOLS_TOKEN", ""))
-CONTACT_QUERY = os.environ.get("QA_CONTACT_QUERY", "")
+CONTACT_QUERY = os.environ.get("QA_CONTACT_QUERY", "a")
 
 
 def api(base_url, method, path, payload=None, timeout=180):
@@ -20,8 +20,12 @@ def api(base_url, method, path, payload=None, timeout=180):
     if TOKEN:
         headers["Authorization"] = f"Bearer {TOKEN}"
     request = urllib.request.Request(base_url + path, data=body, method=method, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} {base_url}{path} returned HTTP {exc.code}: {raw}") from exc
 
 
 def assert_ok(label, condition, detail=None):

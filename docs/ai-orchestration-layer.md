@@ -90,19 +90,21 @@ GOOGLE_CLIENT_SECRET=<Google OAuth client secret>
 GOOGLE_REDIRECT_URI=http://localhost:18200/oauth/google/callback
 ```
 
-Start the OAuth flow with an SSH tunnel from your workstation:
-
-```bash
-ssh -L 18200:100.79.132.39:18200 kelbakkouri@kadin-main-sys
-```
-
-Then open:
+Start the OAuth flow from your laptop using the server/Tailscale address for the Google Tools Worker:
 
 ```text
-http://localhost:18200/oauth/google/start
+http://100.79.132.39:18200/oauth/google/start
 ```
 
-After consent, Google redirects back to localhost through the tunnel and Jarvis stores the refresh token.
+The Google Cloud OAuth redirect URI must match the server callback:
+
+```text
+http://100.79.132.39:18200/oauth/google/callback
+```
+
+Set `GOOGLE_REDIRECT_URI` to that callback URL in the server `.env`, then rebuild/restart `google-tools-worker`. After consent, Google redirects back to the server and Jarvis stores the refresh token.
+
+If you intentionally use an SSH tunnel instead, then `http://localhost:18200/oauth/google/start` and `http://localhost:18200/oauth/google/callback` are valid, but the Google Cloud redirect URI must also be the localhost callback for that flow.
 
 Current Google worker endpoints:
 
@@ -114,7 +116,10 @@ POST /gmail/search
 POST /gmail/assist
 POST /gmail/create-draft
 POST /contacts/assist
+POST /contacts/execute-contract
 POST /tasks/assist
+POST /tasks/execute-contract
+POST /briefing/build
 POST /calendar/list
 POST /calendar/assist
 ```

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 import base64
+import html
 import json
 import os
 import re
 import secrets
+import sqlite3
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -18,6 +22,7 @@ HOST = os.environ.get("GOOGLE_TOOLS_HOST", "0.0.0.0")
 PORT = int(os.environ.get("GOOGLE_TOOLS_PORT", "18200"))
 DATA_DIR = Path(os.environ.get("GOOGLE_TOOLS_DATA_DIR", "/data"))
 TOKEN_PATH = DATA_DIR / "google-token.json"
+PROFILE_DB_PATH = DATA_DIR / "briefing-profile.sqlite3"
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:18200/oauth/google/callback")
@@ -33,6 +38,31 @@ SCOPES = [
     "https://www.googleapis.com/auth/tasks",
 ]
 DEFAULT_TIMEZONE = os.environ.get("TZ", "America/New_York")
+WEATHER_PROXY_URL = os.environ.get("WEATHER_PROXY_URL", "http://weather-proxy:8098").rstrip("/")
+NEWS_RSS_URLS = [
+    item.strip()
+    for item in os.environ.get(
+        "NEWS_RSS_URLS",
+        "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+    ).split(",")
+    if item.strip()
+]
+GITHUB_WORKER_URL = os.environ.get("GITHUB_WORKER_URL", "http://github-tools-worker:18400").rstrip("/")
+GITHUB_WORKER_TOKEN = os.environ.get("GITHUB_WORKER_TOKEN", TOOLS_TOKEN)
+
+
+DEFAULT_PROFILE = {
+    "current_city": "Gainesville",
+    "news_sources": NEWS_RSS_URLS,
+    "news_categories": ["major", "technology", "health"],
+    "morning_preferences": [
+        "Show top decisions, blockers, and the next physical action.",
+        "Include weather only when it affects travel or planning.",
+    ],
+    "evening_preferences": [
+        "Show unresolved commitments and the best first task for tomorrow.",
+    ],
+}
 
 
 def now_iso():
@@ -52,10 +82,156 @@ def write_json(path, payload):
     tmp.replace(path)
 
 
+def profile_connection():
+    db_path = PROFILE_DB_PATH
+    try:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        db_path = Path(tempfile.gettempdir()) / "jarvis-briefing-profile.sqlite3"
+    connection = sqlite3.connect(db_path, timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profile_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS profile_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.commit()
+    return connection
+
+
+def parse_json_value(value, fallback):
+    try:
+        return json.loads(value)
+    except Exception:
+        return fallback
+
+
+def normalize_repo(value):
+    value = (value or "").strip()
+    match = re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value)
+    return value if match else ""
+
+
+def get_briefing_profile():
+    profile = dict(DEFAULT_PROFILE)
+    connection = profile_connection()
+    try:
+        rows = connection.execute("SELECT key, value FROM profile_settings").fetchall()
+        for row in rows:
+            fallback = DEFAULT_PROFILE.get(row["key"], "" if row["key"] == "current_city" else [])
+            profile[row["key"]] = parse_json_value(row["value"], fallback)
+        profile["notes"] = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT id, note, created_at FROM profile_notes ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+    for key in ("watched_repos", "active_projects", "important_senders", "ignored_topics", "news_sources", "news_categories"):
+        profile.setdefault(key, [])
+    profile["current_city"] = (profile.get("current_city") or DEFAULT_PROFILE["current_city"]).strip()
+    return profile
+
+
+def update_briefing_profile(updates):
+    allowed = {
+        "current_city",
+        "watched_repos",
+        "active_projects",
+        "important_senders",
+        "ignored_topics",
+        "news_sources",
+        "news_categories",
+        "morning_preferences",
+        "evening_preferences",
+    }
+    changed = {}
+    now_value = now_iso()
+    connection = profile_connection()
+    try:
+        for key, value in (updates or {}).items():
+            if key not in allowed:
+                continue
+            if key == "current_city":
+                value = str(value or DEFAULT_PROFILE["current_city"]).strip() or DEFAULT_PROFILE["current_city"]
+            elif key == "watched_repos":
+                value = [repo for repo in (normalize_repo(item) for item in value or []) if repo]
+            elif not isinstance(value, list):
+                value = [str(value).strip()] if str(value or "").strip() else []
+            connection.execute(
+                """
+                INSERT INTO profile_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (key, json.dumps(value), now_value),
+            )
+            changed[key] = value
+        connection.commit()
+    finally:
+        connection.close()
+    profile = get_briefing_profile()
+    return {"status": "completed", "changed": changed, "profile": profile}
+
+
+def add_briefing_note(note):
+    note = re.sub(r"\s+", " ", str(note or "")).strip()
+    if not note:
+        raise ValueError("note_required")
+    connection = profile_connection()
+    try:
+        cursor = connection.execute(
+            "INSERT INTO profile_notes (note, created_at) VALUES (?, ?)",
+            (note[:1000], now_iso()),
+        )
+        connection.commit()
+        note_id = cursor.lastrowid
+    finally:
+        connection.close()
+    return {"status": "completed", "note": {"id": note_id, "note": note[:1000]}}
+
+
+def delete_briefing_note(note_id=None, text=None):
+    connection = profile_connection()
+    try:
+        if note_id:
+            connection.execute("DELETE FROM profile_notes WHERE id = ?", (int(note_id),))
+        elif text:
+            connection.execute("DELETE FROM profile_notes WHERE note LIKE ?", (f"%{str(text).strip()}%",))
+        else:
+            raise ValueError("note_id_or_text_required")
+        connection.commit()
+    finally:
+        connection.close()
+    return {"status": "completed", "profile": get_briefing_profile()}
+
+
 def urlopen_json(req, timeout=60):
     with urllib.request.urlopen(req, timeout=timeout) as response:
         raw = response.read().decode("utf-8") or ""
         return json.loads(raw) if raw else {}
+
+
+def urlopen_text(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "JarvisBriefing/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.read().decode("utf-8", errors="replace")
 
 
 def exchange_code(code):
@@ -152,6 +328,12 @@ def gmail_search(query, max_results=10):
     params = urllib.parse.urlencode({"q": query or "in:inbox newer_than:7d", "maxResults": max_results})
     listed = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}")
     return [gmail_get_message(item["id"]) for item in listed.get("messages", [])]
+
+
+def gmail_count(query):
+    params = urllib.parse.urlencode({"q": query or "in:inbox newer_than:1d", "maxResults": 1})
+    listed = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}", timeout=60)
+    return int(listed.get("resultSizeEstimate", 0) or 0)
 
 
 def infer_gmail_query(request_text):
@@ -607,6 +789,8 @@ def compact_task(task, tasklist_id=None):
         "due": task.get("due"),
         "completed": task.get("completed"),
         "updated": task.get("updated"),
+        "deleted": task.get("deleted") is True,
+        "hidden": task.get("hidden") is True,
     }
 
 
@@ -725,8 +909,9 @@ def execute_tasks_contract(contract, approved=False):
             timeout=60,
         )
         try:
-            task_get(contract["task_id"], list_id)
-            raise RuntimeError("tasks_delete_verification_failed")
+            deleted = task_get(contract["task_id"], list_id)
+            if not (deleted.get("deleted") or deleted.get("hidden")):
+                raise RuntimeError("tasks_delete_verification_failed")
         except urllib.error.HTTPError as exc:
             if exc.code not in {404, 410}:
                 raise
@@ -748,24 +933,397 @@ def response_text_for_tasks(tasks):
     return "\n".join(lines)
 
 
+def brief_message_line(msg):
+    subject = msg.get("subject") or "(no subject)"
+    sender = msg.get("from") or "(unknown sender)"
+    snippet = (msg.get("snippet") or "").strip()
+    if len(snippet) > 160:
+        snippet = snippet[:157].rstrip() + "..."
+    return f"- {subject}\n  From: {sender}\n  {snippet}"
+
+
+def dedupe_messages(*groups):
+    seen = set()
+    messages = []
+    for group in groups:
+        for msg in group or []:
+            msg_id = msg.get("id")
+            if msg_id and msg_id in seen:
+                continue
+            if msg_id:
+                seen.add(msg_id)
+            messages.append(msg)
+    return messages
+
+
+def briefing_email_sections(kind):
+    base = "in:inbox newer_than:2d -from:me -in:sent"
+    unread_query = f"{base} is:unread -category:promotions -category:social -category:forums"
+    review_query = unread_query
+    recent_query = f"{base} -category:promotions -category:social -category:forums"
+    if kind == "evening":
+        unread_query = "in:inbox is:unread newer_than:1d -from:me -in:sent -category:promotions -category:social -category:forums"
+        review_query = unread_query
+        recent_query = "in:inbox newer_than:1d -from:me -in:sent -category:promotions -category:social -category:forums"
+    review = gmail_search(review_query, 5)
+    unread = gmail_search(unread_query, 5)
+    recent = gmail_search(recent_query, 5)
+    review_items = dedupe_messages(review, unread)[:6]
+    fyis = [msg for msg in dedupe_messages(recent) if msg.get("id") not in {item.get("id") for item in review_items}][:3]
+    return {
+        "counts": {
+            "review": len(review_items),
+            "unread": gmail_count(unread_query),
+            "recent_inbox": gmail_count(recent_query),
+        },
+        "review": review_items,
+        "fyi": fyis,
+        "queries": {
+            "review": review_query,
+            "unread": unread_query,
+            "recent": recent_query,
+        },
+    }
+
+
+def response_text_for_briefing(kind, calendar, email, tasks):
+    title = "Evening recap" if kind == "evening" else "Morning briefing"
+    calendar_label = "Tomorrow calendar" if kind == "evening" else "Today calendar"
+    lines = [title, ""]
+    counts = email.get("counts") or {}
+    lines.extend([
+        "Inbox readout:",
+        f"- Review-now highlights shown: {counts.get('review', 0)}",
+        f"- Unread non-noise inbox: {counts.get('unread', 0)}",
+        f"- Recent non-noise inbox: {counts.get('recent_inbox', 0)}",
+        "",
+        "Review now:",
+    ])
+    if email.get("review"):
+        lines.extend(brief_message_line(msg) for msg in email["review"])
+    else:
+        lines.append("- Nothing urgent found in Gmail.")
+    lines.extend(["", "FYI / scan later:"])
+    if email.get("fyi"):
+        lines.extend(brief_message_line(msg) for msg in email["fyi"])
+    else:
+        lines.append("- No extra recent inbox items worth surfacing.")
+    lines.extend(["", f"{calendar_label}:"])
+    if calendar.get("events"):
+        for event in calendar["events"]:
+            start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+            lines.append(f"- {event.get('summary')} at {start}")
+    else:
+        lines.append("- No calendar events found.")
+    lines.extend(["", "Open tasks:"])
+    if tasks:
+        for task in tasks[:10]:
+            due = f" due {task.get('due')}" if task.get("due") else ""
+            lines.append(f"- {task.get('title') or '(untitled task)'}{due}")
+    else:
+        lines.append("- No open Google Tasks.")
+    if len(tasks) > 10:
+        lines.append(f"- Plus {len(tasks) - 10} more open task(s).")
+    return "\n".join(lines)
+
+
+def fetch_weather_summary(current_city=None):
+    if not WEATHER_PROXY_URL:
+        return {"status": "disabled", "text": "Weather is not configured."}
+    try:
+        with urllib.request.urlopen(WEATHER_PROXY_URL + "/summary", timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+    except Exception as exc:
+        return {"status": "unavailable", "text": f"Weather unavailable: {str(exc)[:120]}"}
+    cities = payload.get("cities") or []
+    if current_city:
+        needle = str(current_city).casefold()
+        filtered = [
+            city for city in cities
+            if needle in str(city.get("name") or "").casefold()
+            or needle in str(city.get("id") or "").casefold()
+        ]
+        cities = filtered
+    lines = []
+    for city in cities[:1 if current_city else 4]:
+        lines.append(f"- {city.get('name')}: {city.get('label')}")
+    return {
+        "status": "completed",
+        "preview": payload.get("preview") or "",
+        "cities": cities,
+        "location": current_city or "",
+        "text": "\n".join(lines) if lines else f"- Weather unavailable for {current_city}." if current_city else "- Weather summary had no configured locations.",
+    }
+
+
+def clean_news_text(value):
+    value = html.unescape(re.sub(r"<[^>]+>", "", value or ""))
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def fetch_major_news(max_items=5):
+    items = []
+    seen = set()
+    errors = []
+    for url in NEWS_RSS_URLS:
+        try:
+            raw = urlopen_text(url, timeout=25)
+            root = ET.fromstring(raw)
+            for item in root.findall(".//item"):
+                title = clean_news_text(item.findtext("title"))
+                link = clean_news_text(item.findtext("link"))
+                source = clean_news_text(item.findtext("source")) or urllib.parse.urlparse(url).netloc
+                if not title:
+                    continue
+                key = title.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append({"title": title[:220], "source": source[:120], "link": link})
+                if len(items) >= max_items:
+                    break
+        except Exception as exc:
+            errors.append(str(exc)[:120])
+        if len(items) >= max_items:
+            break
+    if not items:
+        return {"status": "unavailable", "items": [], "text": "- Major news unavailable." + (f" {errors[0]}" if errors else "")}
+    return {
+        "status": "completed",
+        "items": items,
+        "text": "\n".join(f"- {item['title']} ({item['source']})" for item in items),
+    }
+
+
+def call_github_digest(profile):
+    repos = profile.get("watched_repos") or []
+    if not GITHUB_WORKER_URL or not repos:
+        return {"status": "not_configured", "items": [], "text": "- No watched GitHub repositories configured."}
+    body = json.dumps({"repos": repos}).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if GITHUB_WORKER_TOKEN and not GITHUB_WORKER_TOKEN.startswith("CHANGE_ME"):
+        headers["Authorization"] = f"Bearer {GITHUB_WORKER_TOKEN}"
+    req = urllib.request.Request(GITHUB_WORKER_URL + "/github/digest", data=body, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except Exception as exc:
+        return {"status": "unavailable", "items": [], "text": f"- GitHub digest unavailable: {str(exc)[:120]}"}
+
+
+def event_time_text(event):
+    start = event.get("start") or {}
+    return start.get("dateTime") or start.get("date") or "time not set"
+
+
+def task_due_rank(task):
+    due = task.get("due")
+    if not due:
+        return 9
+    try:
+        due_date = datetime.fromisoformat(str(due).replace("Z", "+00:00")).date()
+        today = datetime.now().astimezone().date()
+        delta = (due_date - today).days
+        if delta < 0:
+            return 0
+        if delta == 0:
+            return 1
+        if delta <= 3:
+            return 2
+    except Exception:
+        return 4
+    return 5
+
+
+def message_score(message, profile):
+    labels = {str(label).upper() for label in message.get("labels") or []}
+    text = " ".join([message.get("from", ""), message.get("subject", ""), message.get("snippet", "")]).casefold()
+    ignored = [str(item).casefold() for item in profile.get("ignored_topics") or []]
+    if any(item and item in text for item in ignored):
+        return -10
+    score = 0
+    if "IMPORTANT" in labels:
+        score += 3
+    if "UNREAD" in labels:
+        score += 2
+    if any(word in text for word in ("reply", "deadline", "due", "interview", "application", "professor", "security alert", "action required")):
+        score += 3
+    senders = [str(item).casefold() for item in profile.get("important_senders") or []]
+    if any(sender and sender in text for sender in senders):
+        score += 4
+    return score
+
+
+def brief_line(value, fallback):
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    return value[:180] if value else fallback
+
+
+def top_messages(email, profile, limit=4):
+    messages = (email.get("review") or []) + (email.get("fyi") or [])
+    ranked = sorted(
+        ((message_score(message, profile), message) for message in messages),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    return [message for score, message in ranked if score > 0][:limit]
+
+
+def top_tasks(tasks, limit=3):
+    open_tasks = [task for task in tasks or [] if task.get("status") != "completed" and not task.get("deleted")]
+    return sorted(open_tasks, key=lambda task: (task_due_rank(task), task.get("updated") or ""))[:limit]
+
+
+def active_project_lines(profile, github):
+    lines = []
+    github_items = github.get("items") or []
+    for project in (profile.get("active_projects") or [])[:5]:
+        lines.append(f"- {brief_line(project, 'Active project')} - next action: define the next concrete step.")
+    for item in github_items[:3]:
+        repo = item.get("repo") or item.get("repository") or "GitHub"
+        title = item.get("title") or item.get("summary") or item.get("type") or "project update"
+        lines.append(f"- {repo}: {brief_line(title, 'project update')}")
+    return lines or ["- No active projects configured yet. Add one in Jarvis Chat or with /rememberbrief."]
+
+
+def github_lines(github):
+    items = github.get("items") or []
+    if not items:
+        return [github.get("text") or "- No GitHub items requiring attention."]
+    return [
+        f"- {(item.get('repo') or item.get('repository') or 'GitHub')}: {brief_line(item.get('title') or item.get('summary') or item.get('url'), 'attention needed')}"
+        for item in items[:5]
+    ]
+
+
+def compose_morning_brief(calendar, email, tasks, weather, news, github, profile):
+    events = calendar.get("events") or []
+    picked_tasks = top_tasks(tasks, 3)
+    messages = top_messages(email, profile, 4)
+    lines = [f"MORNING BRIEF - {datetime.now().astimezone().strftime('%A, %B %-d' if os.name != 'nt' else '%A, %B %#d')}"]
+    lines.extend(["", "TODAY"])
+    lines.extend([f"- {event_time_text(event)} - {event.get('summary') or '(no title)'}" for event in events[:8]] or ["- No calendar events found for today."])
+    lines.extend(["", "TOP 3"])
+    if picked_tasks:
+        for index, task in enumerate(picked_tasks, 1):
+            due = f" due {task.get('due')}" if task.get("due") else ""
+            lines.append(f"{index}. {brief_line(task.get('title'), 'Untitled task')}{due}")
+    else:
+        lines.extend(["1. Choose the one result that would make today successful.", "2. Review unresolved messages.", "3. Add one concrete task to Google Tasks."])
+    lines.extend(["", "RISKS"])
+    risk_lines = []
+    for task in picked_tasks:
+        rank = task_due_rank(task)
+        if rank <= 2:
+            risk_lines.append(f"- Task pressure: {brief_line(task.get('title'), 'Untitled task')}")
+    if not events and not picked_tasks:
+        risk_lines.append("- No scheduled structure or dated tasks found; pick a first work block deliberately.")
+    lines.extend(risk_lines or ["- No obvious deadline or calendar conflict risk found."])
+    lines.extend(["", "MESSAGES"])
+    if email.get("status") == "unavailable":
+        lines.append(f"- Gmail unavailable: {brief_line(email.get('error'), 'source error')}")
+    else:
+        lines.extend([
+            f"- {brief_line(message.get('from'), 'Unknown sender')}: {brief_line(message.get('subject') or message.get('snippet'), 'Needs review')}"
+            for message in messages
+        ] or ["- No important messages surfaced by the current rules."])
+    lines.extend(["", "PROJECTS"])
+    lines.extend(active_project_lines(profile, github))
+    lines.extend(["", "GITHUB"])
+    lines.extend(github_lines(github))
+    lines.extend(["", "WEATHER"])
+    lines.append(weather.get("text") if weather else "- Weather unavailable.")
+    lines.extend(["", "NEWS"])
+    lines.append(news.get("text") if news else "- Major news unavailable.")
+    lines.extend(["", "SUGGESTED PLAN"])
+    if events:
+        lines.append("- Work around the calendar commitments above; protect the largest open gap for Top 3 item 1.")
+    else:
+        lines.append("- Create one deep-work block first, then batch email/admin after the first meaningful task is done.")
+    lines.extend(["", "ONE QUESTION", "What single result would make today successful even if the rest of the plan changes?"])
+    return "\n".join(lines)
+
+
+def compose_evening_brief(calendar, email, tasks, github, profile):
+    events = calendar.get("events") or []
+    remaining = top_tasks(tasks, 5)
+    messages = top_messages(email, profile, 4)
+    lines = [f"EVENING BRIEF - {datetime.now().astimezone().strftime('%A, %B %-d' if os.name != 'nt' else '%A, %B %#d')}"]
+    lines.extend(["", "COMPLETED", "- Completed tasks are inferred from Google Tasks when completion history is available; none were surfaced in this v1 digest."])
+    lines.extend(["", "UNRESOLVED"])
+    lines.extend([f"- {brief_line(task.get('title'), 'Untitled task')}" for task in remaining] or ["- No open Google Tasks surfaced."])
+    lines.extend(["", "WAITING"])
+    if email.get("status") == "unavailable":
+        lines.append(f"- Gmail unavailable: {brief_line(email.get('error'), 'source error')}")
+    else:
+        lines.extend([
+            f"- Review: {brief_line(message.get('from'), 'Unknown sender')} - {brief_line(message.get('subject') or message.get('snippet'), 'Needs review')}"
+            for message in messages
+        ] or ["- No people-waiting items surfaced by the current rules."])
+    lines.extend(["", "PROJECT CHANGES"])
+    lines.extend(active_project_lines(profile, github))
+    lines.extend(["", "TOMORROW"])
+    lines.extend([f"- {event_time_text(event)} - {event.get('summary') or '(no title)'}" for event in events[:8]] or ["- No calendar events found for tomorrow."])
+    lines.extend(["", "SHUTDOWN", "- Pick tomorrow's first task.", "- Review calendar.", "- Reschedule or delete anything that should not silently roll forward."])
+    return "\n".join(lines)
+
+
+def source_error(name, exc):
+    return {"status": "unavailable", "source": name, "error": str(exc)[:240]}
+
+
+def fallback_email_section(exc):
+    return {
+        "status": "unavailable",
+        "counts": {"review": 0, "unread": 0, "recent_inbox": 0},
+        "review": [],
+        "fyi": [],
+        "error": str(exc)[:240],
+    }
+
+
 def build_briefing(kind="morning"):
     kind = "evening" if str(kind).lower() == "evening" else "morning"
+    profile = get_briefing_profile()
     calendar_request = "tomorrow" if kind == "evening" else "today"
-    calendar = calendar_list(calendar_request)
-    gmail_query = "in:inbox (is:important OR is:unread) newer_than:3d"
-    messages = gmail_search(gmail_query, 8)
-    tasks = tasks_list(False, 20)
-    title = "Evening recap" if kind == "evening" else "Morning briefing"
-    lines = [title, ""]
-    lines.append(response_text_for_calendar(calendar))
-    lines.extend(["", response_text_for_gmail(messages), "", response_text_for_tasks(tasks)])
+    try:
+        calendar = calendar_list(calendar_request)
+    except Exception as exc:
+        calendar = {"events": [], **source_error("calendar", exc)}
+    try:
+        email = briefing_email_sections(kind)
+    except Exception as exc:
+        email = fallback_email_section(exc)
+    try:
+        tasks = tasks_list(False, 20)
+    except Exception as exc:
+        tasks = []
+        tasks_error = source_error("tasks", exc)
+    else:
+        tasks_error = None
+    github = call_github_digest(profile)
+    weather = fetch_weather_summary(profile.get("current_city")) if kind == "morning" else None
+    news = fetch_major_news() if kind == "morning" else None
+    text = (
+        compose_evening_brief(calendar, email, tasks, github, profile)
+        if kind == "evening"
+        else compose_morning_brief(calendar, email, tasks, weather, news, github, profile)
+    )
     return {
         "status": "completed",
         "kind": kind,
+        "profile": profile,
         "calendar": calendar,
-        "messages": messages,
+        "email": email,
+        "messages": email.get("review", []) + email.get("fyi", []),
         "tasks": tasks,
-        "text": "\n".join(lines),
+        "tasks_error": tasks_error,
+        "weather": weather,
+        "weather_location": profile.get("current_city"),
+        "news": news,
+        "github": github,
+        "text": text,
+        "decision_text": text,
     }
 
 
@@ -1293,6 +1851,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/briefing/build":
                 result = build_briefing(payload.get("kind") or "morning")
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
+            if path == "/profile/get":
+                self.write_json(HTTPStatus.OK, {"ok": True, "profile": get_briefing_profile()})
+                return
+            if path == "/profile/update":
+                result = update_briefing_profile(payload.get("updates") or payload)
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
+            if path == "/profile/notes":
+                operation = payload.get("operation") or "add"
+                if operation == "add":
+                    result = add_briefing_note(payload.get("note"))
+                elif operation in {"delete", "forget"}:
+                    result = delete_briefing_note(payload.get("id"), payload.get("text"))
+                else:
+                    raise ValueError("profile_notes_operation_invalid")
                 self.write_json(HTTPStatus.OK, {"ok": True, **result})
                 return
             if path == "/calendar/list":

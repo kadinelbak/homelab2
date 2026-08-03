@@ -78,6 +78,7 @@ def planned_response(planned, executed=None):
     request = planned.get("request") or {}
     actions = planned.get("actions") or []
     action = actions[0] if actions else {}
+    executed_actions = executed.get("actions") if isinstance(executed, dict) else None
     response = {
         "ok": planned.get("ok", False),
         "request_id": request.get("request_id"),
@@ -87,9 +88,23 @@ def planned_response(planned, executed=None):
         "route": request.get("route"),
         "authorization": (request.get("next_actions") or [{}])[0].get("authorization"),
         "action": summarize_action(action),
+        "actions": [summarize_action(item) for item in (executed_actions or actions)],
         "message": request.get("summary") or "Jarvis created an action.",
     }
-    if executed:
+    if executed_actions:
+        response["request_status"] = executed.get("request_status") or response["request_status"]
+        messages = []
+        approval = []
+        for item in executed_actions:
+            summary = summarize_action(item)
+            if summary.get("requires_approval") or item.get("status") == "awaiting_approval":
+                approval.append(summary.get("action_id"))
+            elif summary.get("text"):
+                messages.append(summary["text"])
+        if approval:
+            messages.append("Approval required for: " + ", ".join(approval))
+        response["message"] = "\n\n".join(messages) or response["message"]
+    elif executed:
         executed_action = (executed.get("action") or {})
         response["request_status"] = executed_action.get("status") or response["request_status"]
         response["action"] = summarize_action(executed_action)
@@ -123,18 +138,21 @@ def jarvis_request(payload):
     status, planned = call_orchestrator("POST", "/requests", body, timeout=240)
     if status >= 400:
         return status, planned
-    action = (planned.get("actions") or [{}])[0]
-    if action.get("permissions", {}).get("may_execute"):
-        execute_status, executed = call_orchestrator(
-            "POST",
-            f"/actions/{action['action_id']}/execute",
-            {},
-            timeout=int(body["limits"]["maximum_runtime_seconds"]) + 30,
-        )
-        if execute_status >= 400:
-            return execute_status, executed
-        return HTTPStatus.OK, planned_response(planned, executed)
-    return HTTPStatus.OK, planned_response(planned)
+    executed_actions = []
+    for action in planned.get("actions") or []:
+        if action.get("permissions", {}).get("may_execute"):
+            execute_status, executed = call_orchestrator(
+                "POST",
+                f"/actions/{action['action_id']}/execute",
+                {},
+                timeout=int(body["limits"]["maximum_runtime_seconds"]) + 30,
+            )
+            if execute_status >= 400:
+                return execute_status, executed
+            executed_actions.append(executed.get("action") or action)
+        else:
+            executed_actions.append(action)
+    return HTTPStatus.OK, planned_response(planned, {"actions": executed_actions})
 
 
 def jarvis_get_request(payload):

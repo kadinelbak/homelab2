@@ -327,10 +327,17 @@ class TasksContractTests(unittest.TestCase):
 
 class BriefingTests(unittest.TestCase):
     def test_briefing_combines_calendar_email_and_tasks(self):
-        with mock.patch.object(worker, "calendar_list", return_value={"events": []}), mock.patch.object(worker, "gmail_search", return_value=[]), mock.patch.object(worker, "tasks_list", return_value=[]):
+        with mock.patch.object(worker, "calendar_list", return_value={"events": []}), mock.patch.object(worker, "briefing_email_sections", return_value={"review": [], "fyi": []}), mock.patch.object(worker, "tasks_list", return_value=[]), mock.patch.object(worker, "call_github_digest", return_value={"items": [], "text": "- No GitHub items."}), mock.patch.object(worker, "fetch_weather_summary", return_value={"status": "completed", "text": "- Gainesville: 80 F"}), mock.patch.object(worker, "fetch_major_news", return_value={"status": "completed", "text": "- Headline (Source)"}):
             result = worker.build_briefing("evening")
         self.assertEqual(result["kind"], "evening")
-        self.assertIn("Evening recap", result["text"])
+        self.assertIn("EVENING BRIEF", result["text"])
+        self.assertIn("UNRESOLVED", result["text"])
+
+    def test_morning_briefing_includes_weather_and_news(self):
+        with mock.patch.object(worker, "calendar_list", return_value={"events": []}), mock.patch.object(worker, "briefing_email_sections", return_value={"review": [], "fyi": []}), mock.patch.object(worker, "tasks_list", return_value=[]), mock.patch.object(worker, "call_github_digest", return_value={"items": [], "text": "- No GitHub items."}), mock.patch.object(worker, "fetch_weather_summary", return_value={"status": "completed", "text": "- Gainesville: 80 F"}), mock.patch.object(worker, "fetch_major_news", return_value={"status": "completed", "text": "- Headline (Source)"}):
+            result = worker.build_briefing("morning")
+        self.assertIn("WEATHER", result["text"])
+        self.assertIn("NEWS", result["text"])
 
 
 class PaperlessVerificationTests(unittest.TestCase):
@@ -355,6 +362,35 @@ class ManagerRoutingTests(unittest.TestCase):
             capability, metadata = core.route_request(payload)
         self.assertEqual(capability["capability"], "manage_email")
         self.assertEqual(metadata["router"], "safety_override")
+
+    def test_multi_command_splitter_extracts_ordered_commands(self):
+        payload = {"request": "Find contact Sarah then add task buy milk and then build my morning briefing", "inputs": {}}
+        self.assertEqual(core.split_multi_command_request(payload), [
+            "Find contact Sarah",
+            "add task buy milk",
+            "build my morning briefing",
+        ])
+
+    def test_multi_command_request_creates_multiple_actions(self):
+        payload = {
+            "request": "Find contact Sarah then add task buy milk",
+            "permissions": {"may_execute": False, "may_publish": False},
+        }
+        contacts = core.capability_by_name("manage_contacts")
+        tasks = core.capability_by_name("manage_tasks")
+        with mock.patch.object(core, "route_request", side_effect=[
+            (contacts, {"router": "test"}),
+            (tasks, {"router": "test"}),
+        ]), mock.patch.object(core, "build_contacts_contract", return_value=({"operation": "search", "query": "Sarah", "requires_clarification": False}, "test")), mock.patch.object(core, "build_tasks_contract", return_value=({"operation": "create", "title": "buy milk", "requires_clarification": False}, "test")):
+            actions = []
+            for index, subrequest in enumerate(core.split_multi_command_request(payload)):
+                sub_payload = core.payload_for_subrequest(payload, subrequest)
+                capability, _ = core.route_request(sub_payload)
+                action = core.make_action("req-multi", sub_payload, capability)
+                action["sequence"] = index + 1
+                actions.append(action)
+        self.assertEqual([item["capability"] for item in actions], ["manage_contacts", "manage_tasks"])
+        self.assertEqual([item["sequence"] for item in actions], [1, 2])
 
 
 if __name__ == "__main__":

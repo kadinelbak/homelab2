@@ -57,6 +57,11 @@ BRIEFING_CHAT_IDS = {
 }
 BRIEFING_MORNING_TIME = os.environ.get("JARVIS_TELEGRAM_MORNING_BRIEF_TIME", "07:30")
 BRIEFING_EVENING_TIME = os.environ.get("JARVIS_TELEGRAM_EVENING_BRIEF_TIME", "20:30")
+BRIEFING_VOICE_ENABLED = os.environ.get("JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
+TTS_WORKER_TOKEN = os.environ.get("JARVIS_TTS_TOKEN", "")
+TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
+TTS_MAX_CHARS = int(os.environ.get("JARVIS_TTS_MAX_CHARS", "12000"))
 try:
     LOCAL_TZ = ZoneInfo(os.environ.get("TZ", "America/New_York"))
 except ZoneInfoNotFoundError:
@@ -93,6 +98,66 @@ def send_message(chat_id, text):
                 "disable_web_page_preview": True,
             },
         )
+
+
+def telegram_api_multipart(method, fields, files):
+    boundary = "----JarvisTelegramBoundary" + uuid.uuid4().hex
+    chunks = []
+    for key, value in fields.items():
+        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+        chunks.append(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
+        chunks.append(str(value).encode("utf-8"))
+        chunks.append(b"\r\n")
+    for key, file_info in files.items():
+        filename, content_type, data = file_info
+        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+        chunks.append(
+            f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode("utf-8")
+        )
+        chunks.append(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        chunks.append(data)
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+        data=b"".join(chunks),
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=POLL_TIMEOUT + 60) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def synthesize_voice(text):
+    payload = json.dumps({"text": text[:TTS_MAX_CHARS], "voice": TTS_VOICE, "format": "ogg"}).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if TTS_WORKER_TOKEN and not TTS_WORKER_TOKEN.startswith("CHANGE_ME"):
+        headers["Authorization"] = f"Bearer {TTS_WORKER_TOKEN}"
+    req = urllib.request.Request(
+        TTS_WORKER_URL + "/tts/synthesize",
+        data=payload,
+        method="POST",
+        headers=headers,
+    )
+    with urllib.request.urlopen(req, timeout=240) as response:
+        return response.read(), response.headers.get("Content-Type", "audio/ogg")
+
+
+def send_voice_briefing(chat_id, text):
+    if not BRIEFING_VOICE_ENABLED:
+        return {"status": "disabled"}
+    try:
+        audio, content_type = synthesize_voice(text)
+        telegram_api_multipart(
+            "sendVoice",
+            {"chat_id": chat_id},
+            {"voice": ("briefing.ogg", content_type or "audio/ogg", audio)},
+        )
+        return {"status": "completed"}
+    except Exception as exc:
+        print(f"telegram briefing voice error: {exc}", flush=True)
+        send_message(chat_id, f"Voice briefing unavailable: {str(exc)[:160]}")
+        return {"status": "failed", "error": str(exc)}
 
 
 def allowed(chat_id):
@@ -570,6 +635,37 @@ def build_briefing(chat_id, kind="morning"):
     return text
 
 
+def send_briefing(chat_id, kind="morning"):
+    text = build_briefing(chat_id, kind)
+    send_message(chat_id, text)
+    send_voice_briefing(chat_id, text)
+
+
+def get_profile():
+    return get_json(ORCHESTRATOR_URL + "/profile", headers={"Authorization": f"Bearer {ORCHESTRATOR_TOKEN}"}, timeout=60)
+
+
+def update_profile(updates):
+    return post_json(ORCHESTRATOR_URL + "/profile", {"updates": updates})
+
+
+def profile_note(operation, **payload):
+    return post_json(ORCHESTRATOR_URL + "/profile/notes", {"operation": operation, **payload})
+
+
+def profile_summary(profile):
+    repos = profile.get("watched_repos") or []
+    projects = profile.get("active_projects") or []
+    return "\n".join(
+        [
+            f"City: {profile.get('current_city') or 'Gainesville'}",
+            "Watched repos: " + (", ".join(repos) if repos else "none"),
+            "Active projects: " + (", ".join(projects[:5]) if projects else "none"),
+            f"Brief notes: {len(profile.get('notes') or [])}",
+        ]
+    )
+
+
 def parse_brief_time(value):
     match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or "").strip())
     if not match:
@@ -599,7 +695,7 @@ def briefing_scheduler():
                     if now_local.hour == hour and now_local.minute == minute and key not in sent:
                         for chat_id in briefing_targets():
                             if allowed(chat_id):
-                                send_message(chat_id, build_briefing(chat_id, kind))
+                                send_briefing(chat_id, kind)
                         sent.add(key)
                 if len(sent) > 20:
                     today = now_local.date().isoformat()
@@ -611,24 +707,28 @@ def briefing_scheduler():
 
 def summarize_plan(planned):
     request = planned.get("request") or {}
-    action = (planned.get("actions") or [{}])[0]
+    actions = planned.get("actions") or []
+    action = actions[0] if actions else {}
     workflow = action.get("workflow_level") or {}
     lines = [
         request.get("summary") or "I created a Jarvis action.",
         "",
         f"Capability: {request.get('capability', 'unknown')}",
-        f"Worker: {action.get('worker', 'unknown')}",
-        f"Status: {action.get('status', 'unknown')}",
+        f"Actions: {len(actions)}",
+        f"Status: {request.get('status', action.get('status', 'unknown'))}",
         f"Level: {workflow.get('level', '?')} - {workflow.get('name', 'unknown')}",
     ]
-    if action.get("requires_approval"):
+    for item in actions:
+        lines.append(f"{item.get('sequence', '?')}. {item.get('capability')} via {item.get('worker')} - {item.get('status')}")
+    approval_actions = [item for item in actions if item.get("requires_approval")]
+    if approval_actions:
         lines.extend(
             [
                 "",
-                "Approval required before I do anything else.",
-                f"Reply: /approve {action.get('action_id')}",
+                "Approval required before I do anything else for:",
             ]
         )
+        lines.extend(f"/approve {item.get('action_id')}" for item in approval_actions)
     return "\n".join(lines)
 
 
@@ -639,11 +739,19 @@ def handle_request(chat_id, text):
         remember(chat_id, "assistant", response)
         return response
     planned = plan_request(chat_id, text)
-    action = (planned.get("actions") or [{}])[0]
-    if action.get("permissions", {}).get("may_execute"):
-        executed = execute_action(action["action_id"])
-        result = (executed.get("action") or {}).get("result") or {}
-        response = result.get("text") or result.get("summary") or "Done."
+    responses = []
+    approval_needed = []
+    for action in planned.get("actions") or []:
+        if action.get("permissions", {}).get("may_execute"):
+            executed = execute_action(action["action_id"])
+            result = (executed.get("action") or {}).get("result") or {}
+            responses.append(result.get("text") or result.get("summary") or "Done.")
+        else:
+            approval_needed.append(action)
+    if responses or approval_needed:
+        if approval_needed:
+            responses.append(summarize_plan({**planned, "actions": approval_needed}))
+        response = "\n\n".join(responses)
         remember(chat_id, "assistant", response)
         return response
     response = summarize_plan(planned)
@@ -701,6 +809,7 @@ def handle_command(chat_id, text):
             "For audio files, use Open WebUI transcription first.\n"
             "For approval-gated actions, I will give you an /approve command.\n"
             "Use /brief, /brief morning, or /brief evening for Calendar/Gmail/Tasks briefing.\n"
+            "Use /city, /setcity, /watchrepo, /unwatchrepo, /briefprefs, /rememberbrief, and /forgetbrief to manage briefing context.\n"
             "Use /forget to clear this chat's memory."
         )
     if command == "/health":
@@ -715,7 +824,52 @@ def handle_command(chat_id, text):
         return result.get("text") or result.get("summary") or "Approved and executed."
     if command == "/brief":
         kind = "evening" if rest.strip().lower().startswith("even") else "morning"
-        return build_briefing(chat_id, kind)
+        text = build_briefing(chat_id, kind)
+        send_voice_briefing(chat_id, text)
+        return text
+    if command == "/city":
+        data = get_profile()
+        profile = data.get("profile") or {}
+        return f"Current briefing city: {profile.get('current_city') or 'Gainesville'}"
+    if command == "/setcity":
+        city = rest.strip()
+        if not city:
+            return "Usage: /setcity Gainesville"
+        data = update_profile({"current_city": city})
+        profile = data.get("profile") or {}
+        return f"Current briefing city set to {profile.get('current_city') or city}."
+    if command == "/briefprefs":
+        data = get_profile()
+        return profile_summary(data.get("profile") or {})
+    if command == "/watchrepo":
+        repo = rest.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo or ""):
+            return "Usage: /watchrepo owner/repo"
+        profile = (get_profile().get("profile") or {})
+        repos = list(dict.fromkeys((profile.get("watched_repos") or []) + [repo]))
+        update_profile({"watched_repos": repos})
+        return f"Watching GitHub repo: {repo}"
+    if command == "/unwatchrepo":
+        repo = rest.strip()
+        if not repo:
+            return "Usage: /unwatchrepo owner/repo"
+        profile = (get_profile().get("profile") or {})
+        repos = [item for item in (profile.get("watched_repos") or []) if item.lower() != repo.lower()]
+        update_profile({"watched_repos": repos})
+        return f"Removed GitHub repo from briefing watchlist: {repo}"
+    if command == "/rememberbrief":
+        note = rest.strip()
+        if not note:
+            return "Usage: /rememberbrief MCAT is the top project this week"
+        data = profile_note("add", note=note)
+        return f"Saved briefing note #{(data.get('note') or {}).get('id', '?')}."
+    if command == "/forgetbrief":
+        target = rest.strip()
+        if not target:
+            return "Usage: /forgetbrief note-id-or-text"
+        payload = {"id": int(target)} if target.isdigit() else {"text": target}
+        profile_note("delete", **payload)
+        return "Removed matching briefing note."
     if command == "/forget":
         forget(chat_id)
         return "Forgot this Telegram chat's recent Jarvis context."

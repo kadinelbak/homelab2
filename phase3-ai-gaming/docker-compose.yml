@@ -410,6 +410,11 @@ services:
       JARVIS_TELEGRAM_BRIEFING_CHAT_IDS: ${JARVIS_TELEGRAM_BRIEFING_CHAT_IDS:-}
       JARVIS_TELEGRAM_MORNING_BRIEF_TIME: ${JARVIS_TELEGRAM_MORNING_BRIEF_TIME:-07:30}
       JARVIS_TELEGRAM_EVENING_BRIEF_TIME: ${JARVIS_TELEGRAM_EVENING_BRIEF_TIME:-20:30}
+      JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED: ${JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED:-false}
+      JARVIS_TTS_WORKER_URL: http://tts-worker:8101
+      JARVIS_TTS_TOKEN: ${JARVIS_TTS_TOKEN:-}
+      JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-default}
+      JARVIS_TTS_MAX_CHARS: ${JARVIS_TTS_MAX_CHARS:-12000}
       JARVIS_TELEGRAM_USE_OPENWEBUI: ${JARVIS_TELEGRAM_USE_OPENWEBUI:-false}
       OPEN_WEBUI_URL: http://open-webui:8080
       OPEN_WEBUI_TELEGRAM_API_KEY: ${OPEN_WEBUI_TELEGRAM_API_KEY:-}
@@ -423,6 +428,7 @@ services:
       - homelab_internal
     depends_on:
       - ai-orchestrator
+      - tts-worker
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -448,10 +454,57 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:18200/oauth/google/callback}
       GOOGLE_TOOLS_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      WEATHER_PROXY_URL: ${WEATHER_PROXY_URL:-http://weather-proxy:8098}
+      NEWS_RSS_URLS: ${NEWS_RSS_URLS:-https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en}
+      GITHUB_WORKER_URL: http://github-tools-worker:18400
+      GITHUB_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/google-tools:/data
     ports:
       - "${TAILSCALE_HOST_IP:-127.0.0.1}:18200:18200"
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # GITHUB TOOLS WORKER - GitHub App backed project digest connector
+  # ---------------------------------------------------------------------------
+  github-tools-worker:
+    build:
+      context: ./github-tools-worker
+    container_name: jarvis_github_tools
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai", "github"]
+    environment:
+      TZ: ${TZ}
+      GITHUB_TOOLS_PORT: 18400
+      GITHUB_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # ---------------------------------------------------------------------------
+  # TTS WORKER - Local text-to-speech for Telegram briefing voice notes
+  # ---------------------------------------------------------------------------
+  tts-worker:
+    build:
+      context: ./tts-worker
+    container_name: jarvis_tts_worker
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai", "voice"]
+    environment:
+      TZ: ${TZ}
+      JARVIS_TTS_PORT: 8101
+      JARVIS_TTS_TOKEN: ${JARVIS_TTS_TOKEN:-}
+      JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-default}
+      JARVIS_TTS_MAX_CHARS: ${JARVIS_TTS_MAX_CHARS:-12000}
     networks:
       - homelab_internal
     labels:

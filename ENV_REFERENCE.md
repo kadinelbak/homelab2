@@ -92,6 +92,7 @@ bash scripts/setup.sh --validate-only
 | `N8N_BASIC_AUTH_USER` | Optional | Basic auth username if enabled. |
 | `N8N_BASIC_AUTH_PASSWORD` | Optional | Basic auth password if enabled. |
 | `AI_ORCHESTRATOR_TOKEN` | Yes for AI orchestrator | Bearer token required for request intake, approval, and action handoff endpoints. |
+| `GOOGLE_REDIRECT_URI` | Yes for Google OAuth | Google Tools callback URL. For laptop-to-server OAuth, use the server/Tailscale URL, for example `http://100.79.132.39:18200/oauth/google/callback`, and register the same URI in Google Cloud. |
 | `AI_ORCHESTRATOR_USE_OLLAMA_ROUTER` | Optional | Enables local Ollama model routing before deterministic keyword fallback. |
 | `AI_ORCHESTRATOR_ROUTER_MODEL` | Optional | Ollama model used for request routing. Defaults to `llama3.1:latest`. |
 | `AI_ORCHESTRATOR_ROUTER_TIMEOUT` | Optional | Seconds to wait for Ollama routing before using keyword fallback. Defaults to `30`. |
@@ -101,6 +102,16 @@ bash scripts/setup.sh --validate-only
 | `JARVIS_TELEGRAM_BRIEFING_CHAT_IDS` | Optional | Comma-separated Telegram chat IDs that receive scheduled briefings. Defaults to allowed chat IDs when blank. |
 | `JARVIS_TELEGRAM_MORNING_BRIEF_TIME` | Optional | Local `HH:MM` time for the morning Calendar/Gmail/Tasks briefing. Default `07:30`. |
 | `JARVIS_TELEGRAM_EVENING_BRIEF_TIME` | Optional | Local `HH:MM` time for the evening recap and tomorrow prep. Default `20:30`. |
+| `JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED` | Optional | Set to `true` to send Telegram briefing voice notes after the text brief. Defaults to `false`. |
+| `JARVIS_TTS_TOKEN` | Optional | Bearer token for the internal TTS worker. Leave blank on the private Docker network or set to protect `/tts/synthesize`. |
+| `JARVIS_TTS_VOICE` | Optional | Local TTS voice name for briefing audio. Defaults to `default`, mapped to `en-us` by the TTS worker. |
+| `JARVIS_TTS_MAX_CHARS` | Optional | Maximum characters sent to local TTS for a briefing voice note. Defaults to `12000`. |
+| `WEATHER_PROXY_URL` | Optional | Internal weather summary URL used by Jarvis morning briefing. Defaults to `http://weather-proxy:8098`. |
+| `NEWS_RSS_URLS` | Optional | Comma-separated RSS feed URLs for morning major-news headlines. Defaults to Google News US top stories RSS. |
+| `GITHUB_APP_ID` | Optional for GitHub briefings | GitHub App ID used by the GitHub tools worker. Required for GitHub App auth unless `GITHUB_TOKEN` is supplied temporarily. |
+| `GITHUB_APP_INSTALLATION_ID` | Optional for GitHub briefings | GitHub App installation ID for the repos Jarvis may read. |
+| `GITHUB_APP_PRIVATE_KEY` | Optional for GitHub briefings | GitHub App private key. Store with escaped newlines in `.env` or inject as a secret. |
+| `GITHUB_TOKEN` | Optional fallback | Temporary installation/PAT token fallback for the GitHub tools worker. Prefer GitHub App settings long term. |
 | `JARVIS_FAST_LLM_*` | Optional | External 70B-style model profile for general assistant drafting, summaries, and normal planning. Requires provider base URL and API key. |
 | `JARVIS_DEEP_LLM_*` | Optional | External larger reasoning model profile for architecture, coding plans, decomposition, and complex work. Requires provider base URL and API key. |
 | `WHISPER_*` | Optional | Whisper worker settings for speech-to-text. Defaults to CPU `base` with `int8` compute. |

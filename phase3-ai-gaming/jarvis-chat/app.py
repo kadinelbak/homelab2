@@ -173,6 +173,40 @@ def page():
     </section>
 
     <section class="panel">
+      <label>Briefing Profile</label>
+      <div class="grid">
+        <div>
+          <label for="profileCity">Current city</label>
+          <input id="profileCity" placeholder="Gainesville">
+        </div>
+        <div>
+          <label for="profileRepos">Watched GitHub repos</label>
+          <input id="profileRepos" placeholder="owner/repo, owner/another-repo">
+        </div>
+      </div>
+      <label for="profileProjects">Active projects</label>
+      <textarea id="profileProjects" placeholder="One active project per line"></textarea>
+      <div class="grid">
+        <div>
+          <label for="profileSenders">Important senders/domains</label>
+          <textarea id="profileSenders" placeholder="professor@example.edu&#10;school.edu"></textarea>
+        </div>
+        <div>
+          <label for="profileIgnored">Ignored topics</label>
+          <textarea id="profileIgnored" placeholder="newsletter topic&#10;routine alert"></textarea>
+        </div>
+      </div>
+      <label for="profileNote">Add briefing note</label>
+      <textarea id="profileNote" placeholder="MCAT is the top project this week"></textarea>
+      <div class="row" style="margin-top: 12px;">
+        <button id="loadProfile">Load Profile</button>
+        <button class="primary" id="saveProfile">Save Profile</button>
+        <button id="addProfileNote">Add Note</button>
+      </div>
+      <pre id="profileRaw" class="muted">Profile not loaded yet.</pre>
+    </section>
+
+    <section class="panel">
       <label>Chat</label>
       <div id="chat" class="chat">
         <div class="msg jarvis">Ready. Ask me for a draft, plan, idea, or a homelab action.</div>
@@ -307,6 +341,52 @@ def page():
       return data;
     }}
 
+    function listValue(id) {{
+      return document.getElementById(id).value
+        .split(/[\\n,]/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }}
+
+    function fillProfile(profile) {{
+      document.getElementById('profileCity').value = profile.current_city || 'Gainesville';
+      document.getElementById('profileRepos').value = (profile.watched_repos || []).join(', ');
+      document.getElementById('profileProjects').value = (profile.active_projects || []).join('\\n');
+      document.getElementById('profileSenders').value = (profile.important_senders || []).join('\\n');
+      document.getElementById('profileIgnored').value = (profile.ignored_topics || []).join('\\n');
+      document.getElementById('profileRaw').textContent = JSON.stringify(profile, null, 2);
+    }}
+
+    async function loadProfile() {{
+      const res = await fetch('/api/profile', {{headers: headers()}});
+      const data = await res.json();
+      rawEl.textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) throw new Error(data.error || `HTTP ${{res.status}}`);
+      fillProfile(data.profile || {{}});
+    }}
+
+    async function saveProfile() {{
+      const updates = {{
+        current_city: document.getElementById('profileCity').value.trim() || 'Gainesville',
+        watched_repos: listValue('profileRepos'),
+        active_projects: listValue('profileProjects'),
+        important_senders: listValue('profileSenders'),
+        ignored_topics: listValue('profileIgnored')
+      }};
+      const data = await call('/api/profile', {{updates}});
+      fillProfile(data.profile || {{}});
+      healthEl.textContent = 'Briefing profile saved.';
+    }}
+
+    async function addProfileNote() {{
+      const note = document.getElementById('profileNote').value.trim();
+      if (!note) return;
+      await call('/api/profile/notes', {{operation: 'add', note}});
+      document.getElementById('profileNote').value = '';
+      await loadProfile();
+      healthEl.textContent = 'Briefing note saved.';
+    }}
+
     async function transcribeAudio() {{
       const file = document.getElementById('audio').files[0];
       if (!file) {{
@@ -342,6 +422,18 @@ def page():
     document.getElementById('saveToken').onclick = () => {{
       localStorage.setItem('jarvisChatToken', tokenInput.value.trim());
       healthEl.textContent = 'Token saved in this browser.';
+    }};
+
+    document.getElementById('loadProfile').onclick = async () => {{
+      try {{ await loadProfile(); }} catch (err) {{ healthEl.textContent = err.message; }}
+    }};
+
+    document.getElementById('saveProfile').onclick = async () => {{
+      try {{ await saveProfile(); }} catch (err) {{ healthEl.textContent = err.message; }}
+    }};
+
+    document.getElementById('addProfileNote').onclick = async () => {{
+      try {{ await addProfileNote(); }} catch (err) {{ healthEl.textContent = err.message; }}
     }};
 
     document.getElementById('send').onclick = async () => {{
@@ -469,6 +561,13 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/api/profile":
+            if not self.authorized():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                return
+            status, data = self.proxy("GET", "/profile")
+            self.write_json(status, data)
+            return
         self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
     def do_POST(self):
@@ -505,6 +604,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json(exc.code, data)
             except Exception as exc:
                 self.write_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
+            return
+
+        if path == "/api/profile":
+            status, data = self.proxy("POST", "/profile", self.read_json())
+            self.write_json(status, data)
+            return
+
+        if path == "/api/profile/notes":
+            status, data = self.proxy("POST", "/profile/notes", self.read_json())
+            self.write_json(status, data)
             return
 
         if path.startswith("/api/actions/"):
