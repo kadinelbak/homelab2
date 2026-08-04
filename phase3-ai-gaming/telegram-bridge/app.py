@@ -317,7 +317,7 @@ def speechify_briefing_text(text):
 
 def synthesize_voice(text):
     speech_text = speechify_briefing_text(text)
-    payload = json.dumps({"text": speech_text[:TTS_MAX_CHARS], "voice": TTS_VOICE, "format": "ogg"}).encode("utf-8")
+    payload = json.dumps({"text": speech_text, "voice": TTS_VOICE, "format": "ogg", "max_chars": 0}).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if TTS_WORKER_TOKEN and not TTS_WORKER_TOKEN.startswith("CHANGE_ME"):
         headers["Authorization"] = f"Bearer {TTS_WORKER_TOKEN}"

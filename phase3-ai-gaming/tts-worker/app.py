@@ -136,8 +136,13 @@ def synthesize_espeak(text, voice, tmpdir, output_format="ogg"):
     return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize(text, voice, output_format="ogg"):
-    text = str(text or "").strip()[:MAX_CHARS]
+def synthesize(text, voice, output_format="ogg", max_chars=None):
+    text = str(text or "").strip()
+    if max_chars is None:
+        max_chars = MAX_CHARS
+    max_chars = int(max_chars or 0)
+    if max_chars > 0:
+        text = text[:max_chars]
     if not text:
         raise ValueError("text_required")
     output_format = str(output_format or "ogg").lower()
@@ -220,6 +225,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload.get("text"),
                 payload.get("voice") or DEFAULT_VOICE,
                 payload.get("format") or "ogg",
+                payload.get("max_chars"),
             )
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})

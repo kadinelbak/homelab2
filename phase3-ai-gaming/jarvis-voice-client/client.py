@@ -186,6 +186,22 @@ def spoken_response_text(text, max_chars=900):
     return spoken.rstrip(".") + ". I put the full answer on screen."
 
 
+def full_speech_response(data):
+    planned = data.get("planned") or {}
+    candidates = []
+    request = planned.get("request") or {}
+    candidates.extend([request.get("worker"), request.get("summary")])
+    original = request.get("original") or planned.get("original") or {}
+    candidates.extend([original.get("source"), original.get("capability")])
+    for action in planned.get("actions") or []:
+        candidates.extend([action.get("capability"), action.get("worker"), action.get("tool")])
+        result = action.get("result") or {}
+        candidates.extend(artifact.get("type") for artifact in result.get("artifacts") or [])
+    candidates.extend(artifact.get("type") for artifact in data.get("artifacts") or [])
+    text = " ".join(str(item or "").lower() for item in candidates)
+    return any(term in text for term in ("daily_brief", "briefing", "automation", "scheduled"))
+
+
 def encode_multipart(field_name, filename, content_type, data):
     boundary = "----jarvisvoice" + uuid.uuid4().hex
     body = b"".join(
@@ -407,7 +423,8 @@ class JarvisVoiceSession:
         turn.approval_required = bool(data.get("approval_required"))
         turn.states.append("speak")
         self.speaker.print_jarvis(turn.response_text)
-        self.speak(spoken_response_text(turn.response_text, self.client.config.spoken_response_max_chars))
+        speech_text = turn.response_text if full_speech_response(data) else spoken_response_text(turn.response_text, self.client.config.spoken_response_max_chars)
+        self.speak(speech_text)
         turn.states.append("idle")
         self.set_state(VoiceState.LISTENING)
         return turn

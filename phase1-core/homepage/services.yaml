@@ -117,6 +117,10 @@
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:18100
         description: Simple request console for Jarvis
+    - Media AI:
+        icon: si-openai
+        href: http://kadin-main-sys.tail00cf0e.ts.net:3100
+        description: Media creation workflow pipeline
     - AI Orchestrator:
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:8095/health
