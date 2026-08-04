@@ -3,3 +3,6 @@ sounddevice==0.4.7
 numpy==1.26.4
 pygame==2.6.1
 python-dotenv==1.0.1
+pystray==0.19.5
+Pillow==10.4.0
+keyboard==0.13.5

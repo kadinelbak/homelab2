@@ -22,16 +22,20 @@ jarvis_chat = load("voice_jarvis_chat", ROOT / "jarvis-chat" / "app.py")
 
 
 class FakeClient:
-    def __init__(self, approval_required=False, fail_tts=False):
+    def __init__(self, approval_required=False, fail_tts=False, transcript="what is on my calendar today", response_text=None):
         self.config = voice_client.VoiceConfig(greeting="Hey Kad, what do you need?")
         self.approval_required = approval_required
         self.fail_tts = fail_tts
+        self.transcript = transcript
+        self.response_text = response_text or "You have one dentist reminder."
+        self.asked = []
 
     def transcribe(self, wav_bytes):
-        return "what is on my calendar today"
+        return self.transcript
 
     def ask(self, text):
-        return {"text": "You have one dentist reminder.", "approval_required": self.approval_required}
+        self.asked.append(text)
+        return {"text": self.response_text, "approval_required": self.approval_required}
 
     def synthesize(self, text):
         if self.fail_tts:
@@ -59,6 +63,21 @@ class FakeSpeaker:
         self.audio.append((audio_bytes, content_type))
 
 
+class FakeTunnel:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.ensure_calls = 0
+        self.restart_calls = 0
+
+    def ensure(self):
+        self.ensure_calls += 1
+        return self.ok
+
+    def restart(self):
+        self.restart_calls += 1
+        return self.ok
+
+
 class VoiceClientStateTests(unittest.TestCase):
     def test_voice_config_defaults_to_onnx_for_windows_wake_word(self):
         config = voice_client.VoiceConfig()
@@ -66,6 +85,9 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertEqual(config.wake_inference_framework, "onnx")
         self.assertEqual(config.wake_threshold, 0.98)
         self.assertEqual(config.wake_consecutive_hits, 4)
+        self.assertTrue(config.enable_wake_word)
+        self.assertTrue(config.enable_push_to_talk)
+        self.assertEqual(config.push_to_talk_hotkey, "ctrl+alt+j")
 
     def test_state_machine_completes_voice_turn(self):
         speaker = FakeSpeaker()
@@ -101,6 +123,65 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertIn(turn.response_text, speaker.local)
         self.assertTrue(speaker.status)
 
+    def test_push_to_talk_records_without_wake_detection(self):
+        speaker = FakeSpeaker()
+        client = FakeClient()
+        tunnel = FakeTunnel()
+        states = []
+        controller = voice_client.VoiceController(
+            client.config,
+            speaker=speaker,
+            tunnel=tunnel,
+            recorder=lambda config: b"wav",
+            client=client,
+        )
+        controller.on_state_change = lambda state, message="": states.append(state)
+        turn = controller.push_to_talk()
+        self.assertEqual(turn.transcript, "what is on my calendar today")
+        self.assertEqual(tunnel.ensure_calls, 1)
+        self.assertIn(voice_client.VoiceState.RECORDING, states)
+        self.assertIn(voice_client.VoiceState.PROCESSING, states)
+        self.assertEqual(controller.state, voice_client.VoiceState.LISTENING)
+
+    def test_wake_suppressed_while_speaking_and_after_turn(self):
+        config = voice_client.VoiceConfig(suppress_wake_while_speaking=True)
+        controller = voice_client.VoiceController(config, speaker=FakeSpeaker(), tunnel=FakeTunnel(), client=FakeClient())
+        controller.set_state(voice_client.VoiceState.SPEAKING)
+        self.assertFalse(controller.should_accept_wake())
+        controller.set_state(voice_client.VoiceState.LISTENING)
+        controller.suppress_until = voice_client.time.time() + 30
+        self.assertFalse(controller.should_accept_wake())
+
+    def test_tunnel_restart_updates_state(self):
+        config = voice_client.VoiceConfig()
+        tunnel = FakeTunnel(ok=True)
+        controller = voice_client.VoiceController(config, speaker=FakeSpeaker(), tunnel=tunnel, client=FakeClient())
+        self.assertTrue(controller.restart_tunnel())
+        self.assertEqual(tunnel.restart_calls, 1)
+        self.assertEqual(controller.state, voice_client.VoiceState.LISTENING)
+
+    def test_response_normalization_humanizes_calendar_times_and_ids(self):
+        text = "Calendar:\n1. Dentist reminder | 2026-08-03T21:00:00-04:00 -> 2026-08-03T21:30:00-04:00\nEvent ID: abc123"
+        normalized = voice_client.normalize_response_text(text)
+        self.assertIn("Dentist reminder, 9 PM to 9:30 PM", normalized)
+        self.assertNotIn("Event ID", normalized)
+
+    def test_easter_egg_exact_match_only_and_harmless(self):
+        self.assertEqual(
+            voice_client.easter_egg_response("How fat is Zach?"),
+            "Zach is running in full legendary mode today.",
+        )
+        self.assertIsNone(voice_client.easter_egg_response("how fat is Zach today"))
+        self.assertIsNone(voice_client.easter_egg_response("tell me how fat is Zach"))
+
+    def test_easter_egg_does_not_call_jarvis_core(self):
+        speaker = FakeSpeaker()
+        client = FakeClient(transcript="How fat is Zach?")
+        session = voice_client.JarvisVoiceSession(client, speaker)
+        turn = session.handle_recording(b"wav", greet=False)
+        self.assertEqual(turn.response_text, "Zach is running in full legendary mode today.")
+        self.assertEqual(client.asked, [])
+
 
 class FakeHTTPResponse:
     def __init__(self, body, status=200, headers=None):
@@ -120,14 +201,26 @@ class FakeHTTPResponse:
 
 class JarvisChatVoiceProxyTests(unittest.TestCase):
     def serve(self):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), jarvis_chat.Handler)
+        class TestServer(ThreadingHTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+        server = TestServer(("127.0.0.1", 0), jarvis_chat.Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        server._thread = thread
         return server
+
+    def close_server(self, server):
+        server.shutdown()
+        server.server_close()
+        server._thread.join(timeout=2)
 
     def post(self, server, path, body, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
-        conn.request("POST", path, body=body, headers=headers or {})
+        request_headers = {"Connection": "close"}
+        request_headers.update(headers or {})
+        conn.request("POST", path, body=body, headers=request_headers)
         response = conn.getresponse()
         data = response.read()
         conn.close()
@@ -148,7 +241,7 @@ class JarvisChatVoiceProxyTests(unittest.TestCase):
             self.assertIn(b"unauthorized", data)
         finally:
             jarvis_chat.CHAT_TOKEN = old_token
-            server.shutdown()
+            self.close_server(server)
 
     def test_voice_request_executes_allowed_actions_and_reports_approval(self):
         server = self.serve()
@@ -185,7 +278,7 @@ class JarvisChatVoiceProxyTests(unittest.TestCase):
         finally:
             jarvis_chat.CHAT_TOKEN = old_token
             jarvis_chat.Handler.proxy = old_proxy
-            server.shutdown()
+            self.close_server(server)
 
     def test_voice_synthesize_proxies_audio(self):
         server = self.serve()
@@ -206,7 +299,7 @@ class JarvisChatVoiceProxyTests(unittest.TestCase):
             self.assertEqual(json.loads(request.data.decode("utf-8")).get("format"), "wav")
         finally:
             jarvis_chat.CHAT_TOKEN = old_token
-            server.shutdown()
+            self.close_server(server)
 
     def test_voice_synthesize_rejects_invalid_json(self):
         server = self.serve()
@@ -223,7 +316,7 @@ class JarvisChatVoiceProxyTests(unittest.TestCase):
             self.assertIn(b"invalid_json", data)
         finally:
             jarvis_chat.CHAT_TOKEN = old_token
-            server.shutdown()
+            self.close_server(server)
 
 
 if __name__ == "__main__":
