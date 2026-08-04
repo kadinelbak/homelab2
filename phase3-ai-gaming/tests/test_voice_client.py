@@ -166,6 +166,22 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertIn("Dentist reminder, 9 PM to 9:30 PM", normalized)
         self.assertNotIn("Event ID", normalized)
 
+    def test_spoken_response_text_shortens_long_answers(self):
+        text = " ".join(f"Sentence {idx} has helpful detail." for idx in range(40))
+        spoken = voice_client.spoken_response_text(text, max_chars=180)
+        self.assertLessEqual(len(spoken), 230)
+        self.assertIn("full answer on screen", spoken)
+
+    def test_jarvis_chat_client_marks_voice_requests_concise(self):
+        client = voice_client.JarvisChatClient(voice_client.VoiceConfig(chat_url="http://jarvis.local"))
+        with mock.patch.object(voice_client.urllib.request, "urlopen", return_value=FakeHTTPResponse(b'{"ok":true,"text":"short"}', headers={"Content-Type": "application/json"})) as urlopen:
+            data = client.ask("explain bikes")
+        self.assertEqual(data["text"], "short")
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["inputs"]["response_style"], "spoken_concise")
+        self.assertTrue(payload["inputs"]["voice_response"])
+
     def test_easter_egg_exact_match_only_and_harmless(self):
         self.assertEqual(
             voice_client.easter_egg_response("How fat is Zach?"),

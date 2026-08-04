@@ -22,6 +22,20 @@ class ContractValidationTests(unittest.TestCase):
     def test_request_text_reads_nested_inputs(self):
         self.assertEqual(core.request_text({"inputs": {"request": "nested request"}}), "nested request")
 
+    def test_voice_fallback_prompt_is_spoken_concise(self):
+        action = {
+            "worker": "llm_worker",
+            "capability": "general_assistant",
+            "tool": "ollama.chat",
+            "inputs": {
+                "request": "explain how a bike works",
+                "voice_response": True,
+                "response_style": "spoken_concise",
+            },
+        }
+        self.assertIn("voice conversation", core.fallback_prompt(action))
+        self.assertIn("2 to 4 short sentences", core.fallback_system_prompt(action))
+
     def test_move_that_event_routes_to_calendar(self):
         payload = {"request": "Can you actually move that event by 1 hour later?", "inputs": {}}
         self.assertTrue(core.calendar_intent(payload))

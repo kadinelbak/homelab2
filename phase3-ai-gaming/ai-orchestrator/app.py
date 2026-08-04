@@ -1863,13 +1863,23 @@ def contacts_contract_requires_approval(contract):
 
 
 def fallback_system_prompt(action):
+    inputs = action.get("inputs", {}) or {}
+    voice_prefix = ""
+    if inputs.get("voice_response") or inputs.get("response_style") == "spoken_concise":
+        voice_prefix = (
+            "This answer will be spoken aloud. Reply in 2 to 4 short sentences by default. "
+            "Avoid markdown, long lists, tables, metadata, and filler. "
+            "If the user asks for a detailed explanation, give a concise overview first and offer to go deeper. "
+        )
     if action["worker"] == "llm_worker":
         return (
+            voice_prefix +
             "You are Jarvis, a concise personal homelab assistant. "
             "Be practical, friendly, and direct. If the user asks for a draft, produce the draft. "
             "Benign romantic or affectionate writing between consenting adults is allowed; refuse only unsafe, coercive, exploitative, or explicit sexual content involving minors."
         )
     return (
+        voice_prefix +
         "You are Jarvis Core running in local fallback mode. "
         "A dedicated connector is not wired yet, so do not claim that you changed external systems. "
         "Return the most useful safe result: a draft, checklist, structured action proposal, or next-step plan. "
@@ -1884,6 +1894,12 @@ def fallback_prompt(action):
         return (
             "Create the requested draft now. Do not ask what to help with. "
             "If details are missing, make a useful neutral draft with editable bracketed fields.\n\n"
+            f"User request: {prompt_text}"
+        )
+    if inputs.get("voice_response") or inputs.get("response_style") == "spoken_concise":
+        return (
+            "Answer for a voice conversation. Keep it short, useful, and natural to hear. "
+            "Do not use bullet lists unless the user explicitly asks for a list.\n\n"
             f"User request: {prompt_text}"
         )
     if action["worker"] == "llm_worker":

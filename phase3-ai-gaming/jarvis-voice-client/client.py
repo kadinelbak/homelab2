@@ -52,6 +52,7 @@ class VoiceConfig:
     push_to_talk_hotkey: str = "ctrl+alt+j"
     suppress_wake_while_speaking: bool = True
     log_dir: str = "logs"
+    spoken_response_max_chars: int = 900
     tunnel_server: str = "kadin@100.79.132.39"
     tunnel_local_port: int = 18100
     tunnel_remote_port: int = 18100
@@ -80,6 +81,7 @@ class VoiceConfig:
             push_to_talk_hotkey=os.environ.get("JARVIS_PUSH_TO_TALK_HOTKEY", cls.push_to_talk_hotkey),
             suppress_wake_while_speaking=env_bool("JARVIS_SUPPRESS_WAKE_WHILE_SPEAKING", cls.suppress_wake_while_speaking),
             log_dir=os.environ.get("JARVIS_LOG_DIR", cls.log_dir),
+            spoken_response_max_chars=int(os.environ.get("JARVIS_SPOKEN_RESPONSE_MAX_CHARS", cls.spoken_response_max_chars)),
             tunnel_server=os.environ.get("JARVIS_TUNNEL_SERVER", cls.tunnel_server),
             tunnel_local_port=int(os.environ.get("JARVIS_TUNNEL_LOCAL_PORT", cls.tunnel_local_port)),
             tunnel_remote_port=int(os.environ.get("JARVIS_TUNNEL_REMOTE_PORT", cls.tunnel_remote_port)),
@@ -164,6 +166,26 @@ def normalize_response_text(text):
     return text.strip()
 
 
+def spoken_response_text(text, max_chars=900):
+    text = normalize_response_text(text)
+    if len(text) <= max_chars:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    parts = []
+    total = 0
+    for sentence in sentences:
+        if not sentence:
+            continue
+        if total + len(sentence) + 1 > max_chars:
+            break
+        parts.append(sentence)
+        total += len(sentence) + 1
+    spoken = " ".join(parts).strip()
+    if not spoken:
+        spoken = text[:max_chars].rsplit(" ", 1)[0].strip()
+    return spoken.rstrip(".") + ". I put the full answer on screen."
+
+
 def encode_multipart(field_name, filename, content_type, data):
     boundary = "----jarvisvoice" + uuid.uuid4().hex
     body = b"".join(
@@ -192,6 +214,7 @@ class JarvisChatClient:
         return headers
 
     def request_json(self, path, payload, timeout=180):
+        start = time.perf_counter()
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.config.chat_url + path,
@@ -200,9 +223,12 @@ class JarvisChatClient:
             headers=self.headers("application/json"),
         )
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8") or "{}")
+            result = json.loads(response.read().decode("utf-8") or "{}")
+        logging.info("timing request_json path=%s seconds=%.2f", path, time.perf_counter() - start)
+        return result
 
     def transcribe(self, wav_bytes):
+        start = time.perf_counter()
         body, content_type = encode_multipart("audio", "request.wav", "audio/wav", wav_bytes)
         req = urllib.request.Request(
             self.config.chat_url + "/api/voice/transcribe",
@@ -223,16 +249,28 @@ class JarvisChatClient:
             raise RuntimeError(f"transcription_failed: {detail}") from exc
         if not data.get("ok"):
             raise RuntimeError(data.get("error") or "transcription_failed")
+        logging.info("timing transcribe chars=%s seconds=%.2f", len(data.get("text") or ""), time.perf_counter() - start)
         return (data.get("text") or "").strip()
 
     def ask(self, text):
-        return self.request_json(
-            "/api/voice/request",
-            {"text": text, "source": "wake-word-client", "inputs": {"client": "jarvis-voice-client"}},
-            timeout=300,
-        )
+        start = time.perf_counter()
+        inputs = {
+            "client": "jarvis-voice-client",
+            "voice_response": True,
+            "response_style": "spoken_concise",
+        }
+        payload = {
+            "text": text,
+            "source": "wake-word-client",
+            "inputs": inputs,
+            "limits": {"maximum_runtime_seconds": 180, "maximum_cost_usd": 0},
+        }
+        data = self.request_json("/api/voice/request", payload, timeout=240)
+        logging.info("timing ask chars=%s seconds=%.2f", len(data.get("text") or ""), time.perf_counter() - start)
+        return data
 
     def synthesize(self, text):
+        start = time.perf_counter()
         data = json.dumps({"text": text, "voice": self.config.tts_voice, "format": "wav"}).encode("utf-8")
         req = urllib.request.Request(
             self.config.chat_url + "/api/voice/synthesize",
@@ -241,7 +279,10 @@ class JarvisChatClient:
             headers=self.headers("application/json"),
         )
         with urllib.request.urlopen(req, timeout=240) as response:
-            return response.read(), response.headers.get("Content-Type", "audio/ogg")
+            audio = response.read()
+            content_type = response.headers.get("Content-Type", "audio/ogg")
+        logging.info("timing synthesize chars=%s bytes=%s seconds=%.2f", len(text), len(audio), time.perf_counter() - start)
+        return audio, content_type
 
     def health(self):
         req = urllib.request.Request(self.config.chat_url + "/health", headers=self.headers())
@@ -313,7 +354,9 @@ class JarvisVoiceSession:
         try:
             self.set_state(VoiceState.SPEAKING, text[:120])
             audio, content_type = self.client.synthesize(text)
+            start = time.perf_counter()
             self.speaker.play_audio(audio, content_type)
+            logging.info("timing play_audio bytes=%s seconds=%.2f", len(audio), time.perf_counter() - start)
             return True
         except Exception as exc:
             self.speaker.print_status(f"TTS unavailable: {exc}")
@@ -357,12 +400,14 @@ class JarvisVoiceSession:
             return turn
         turn.states.append("request")
         self.set_state(VoiceState.PROCESSING, "Asking Jarvis")
+        start = time.perf_counter()
         data = self.client.ask(turn.transcript)
+        logging.info("timing jarvis_request seconds=%.2f", time.perf_counter() - start)
         turn.response_text = normalize_response_text(data.get("text") or "Jarvis returned no response text.")
         turn.approval_required = bool(data.get("approval_required"))
         turn.states.append("speak")
         self.speaker.print_jarvis(turn.response_text)
-        self.speak(turn.response_text)
+        self.speak(spoken_response_text(turn.response_text, self.client.config.spoken_response_max_chars))
         turn.states.append("idle")
         self.set_state(VoiceState.LISTENING)
         return turn
@@ -529,7 +574,9 @@ class VoiceController:
         self.session.speak(self.config.greeting)
         self.speaker.print_status("Listening to your request...")
         self.set_state(VoiceState.RECORDING, trigger)
+        start = time.perf_counter()
         wav_bytes = self.recorder(self.config)
+        logging.info("timing record trigger=%s bytes=%s seconds=%.2f", trigger, len(wav_bytes or b""), time.perf_counter() - start)
         turn = self.session.handle_recording(wav_bytes, greet=False)
         self.suppress_until = time.time() + self.config.post_turn_cooldown_seconds
         self.set_state(VoiceState.LISTENING)
