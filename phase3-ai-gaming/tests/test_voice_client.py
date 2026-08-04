@@ -22,24 +22,30 @@ jarvis_chat = load("voice_jarvis_chat", ROOT / "jarvis-chat" / "app.py")
 
 
 class FakeClient:
-    def __init__(self, approval_required=False, fail_tts=False, transcript="what is on my calendar today", response_text=None):
+    def __init__(self, approval_required=False, fail_tts=False, transcript="what is on my calendar today", response_text=None, planned=None):
         self.config = voice_client.VoiceConfig(greeting="Hey Kad, what do you need?")
         self.approval_required = approval_required
         self.fail_tts = fail_tts
         self.transcript = transcript
         self.response_text = response_text or "You have one dentist reminder."
+        self.planned = planned
         self.asked = []
+        self.synthesized = []
 
     def transcribe(self, wav_bytes):
         return self.transcript
 
     def ask(self, text):
         self.asked.append(text)
-        return {"text": self.response_text, "approval_required": self.approval_required}
+        data = {"text": self.response_text, "approval_required": self.approval_required}
+        if self.planned is not None:
+            data["planned"] = self.planned
+        return data
 
     def synthesize(self, text):
         if self.fail_tts:
             raise RuntimeError("tts down")
+        self.synthesized.append(text)
         return b"ogg", "audio/ogg"
 
 
@@ -171,6 +177,33 @@ class VoiceClientStateTests(unittest.TestCase):
         spoken = voice_client.spoken_response_text(text, max_chars=180)
         self.assertLessEqual(len(spoken), 230)
         self.assertIn("full answer on screen", spoken)
+
+    def test_full_speech_response_detects_briefing(self):
+        data = {
+            "planned": {
+                "actions": [
+                    {
+                        "capability": "daily_briefing",
+                        "worker": "briefing_worker",
+                        "tool": "jarvis.daily_briefing",
+                    }
+                ]
+            }
+        }
+        self.assertTrue(voice_client.full_speech_response(data))
+        self.assertFalse(voice_client.full_speech_response({"planned": {"actions": [{"capability": "general_assistant"}]}}))
+
+    def test_briefing_response_is_not_shortened_for_speech(self):
+        long_text = " ".join(f"Brief item {idx} has useful detail." for idx in range(80))
+        speaker = FakeSpeaker()
+        client = FakeClient(
+            response_text=long_text,
+            planned={"actions": [{"capability": "daily_briefing", "worker": "briefing_worker"}]},
+        )
+        session = voice_client.JarvisVoiceSession(client, speaker)
+        session.handle_recording(b"wav", greet=False)
+        self.assertEqual(client.synthesized[-1], long_text)
+        self.assertNotIn("full answer on screen", speaker.local[-1])
 
     def test_jarvis_chat_client_marks_voice_requests_concise(self):
         client = voice_client.JarvisChatClient(voice_client.VoiceConfig(chat_url="http://jarvis.local"))

@@ -18,6 +18,7 @@ def load(name, path):
 
 worker = load("decision_google_worker", ROOT / "google-tools-worker" / "app.py")
 telegram = load("decision_telegram_bridge", ROOT / "telegram-bridge" / "app.py")
+tts_worker = load("decision_tts_worker", ROOT / "tts-worker" / "app.py")
 
 sys.modules.setdefault("jwt", types.SimpleNamespace(encode=lambda *args, **kwargs: "jwt"))
 github_worker = load("decision_github_worker", ROOT / "github-tools-worker" / "app.py")
@@ -183,6 +184,28 @@ NEWS
         self.assertIn("9pm to 9:30pm", spoken)
         self.assertIn("sixty-five thousand people evacuated", spoken)
         self.assertIn("seventy-eight buildings damaged", spoken)
+
+    def test_synthesize_voice_does_not_cap_briefing_payload(self):
+        long_text = "MORNING BRIEF - Monday, August 3\n\n" + "\n".join(f"- Brief item {idx}" for idx in range(900))
+        fake_response = mock.Mock()
+        fake_response.__enter__ = mock.Mock(return_value=fake_response)
+        fake_response.__exit__ = mock.Mock(return_value=False)
+        fake_response.read.return_value = b"audio"
+        fake_response.headers = {"Content-Type": "audio/ogg"}
+        with mock.patch.object(telegram.urllib.request, "urlopen", return_value=fake_response) as urlopen:
+            audio, content_type = telegram.synthesize_voice(long_text)
+        self.assertEqual(audio, b"audio")
+        self.assertEqual(content_type, "audio/ogg")
+        request = urlopen.call_args.args[0]
+        payload = telegram.json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["max_chars"], 0)
+        self.assertGreater(len(payload["text"]), telegram.TTS_MAX_CHARS)
+
+    def test_tts_worker_max_chars_zero_means_unlimited(self):
+        with mock.patch.object(tts_worker, "synthesize_kokoro", return_value=(b"audio", "audio/ogg")) as synth:
+            audio, content_type = tts_worker.synthesize("abcdef", "default", "ogg", max_chars=0)
+        self.assertEqual((audio, content_type), (b"audio", "audio/ogg"))
+        self.assertEqual(synth.call_args.args[0], "abcdef")
 
     def test_telegram_voice_message_transcribes_and_enqueues(self):
         update = {
