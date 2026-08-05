@@ -166,9 +166,209 @@ def normalize_response_text(text):
     return text.strip()
 
 
-def spoken_response_text(text, max_chars=900):
+SMALL_NUMBER_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+]
+TENS_NUMBER_WORDS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+MONTH_NAMES = [
+    "",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+]
+
+
+def sentence_text(value):
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    value = value.strip("-* ")
+    if not value:
+        return ""
+    if value[-1] not in ".?!":
+        value += "."
+    return value
+
+
+def integer_words(value):
+    number = int(str(value).replace(",", ""))
+    if number < 0:
+        return "negative " + integer_words(abs(number))
+    if number < 20:
+        return SMALL_NUMBER_WORDS[number]
+    if number < 100:
+        tens, ones = divmod(number, 10)
+        return TENS_NUMBER_WORDS[tens] if ones == 0 else f"{TENS_NUMBER_WORDS[tens]}-{SMALL_NUMBER_WORDS[ones]}"
+    if number < 1000:
+        hundreds, rest = divmod(number, 100)
+        return f"{SMALL_NUMBER_WORDS[hundreds]} hundred" + (f" {integer_words(rest)}" if rest else "")
+    for scale, label in ((1_000_000_000, "billion"), (1_000_000, "million"), (1_000, "thousand")):
+        if number >= scale:
+            high, rest = divmod(number, scale)
+            return f"{integer_words(high)} {label}" + (f" {integer_words(rest)}" if rest else "")
+    return str(number)
+
+
+def number_words(value):
+    value = str(value).replace(",", "")
+    if "." not in value:
+        return integer_words(value)
+    whole, decimal = value.split(".", 1)
+    spoken_decimal = " ".join(SMALL_NUMBER_WORDS[int(digit)] for digit in decimal if digit.isdigit())
+    return f"{integer_words(whole)} point {spoken_decimal}".strip()
+
+
+def date_from_iso_date(match):
+    year, month, day = (int(part) for part in match.groups())
+    if 1 <= month <= 12:
+        return f"{MONTH_NAMES[month]} {day}, {year}"
+    return match.group(0)
+
+
+def speech_unit_text(text):
+    text = str(text or "")
+
+    def money(match):
+        amount = match.group("amount")
+        suffix = (match.group("suffix") or "").upper()
+        scale = {"K": "thousand", "M": "million", "B": "billion", "T": "trillion"}.get(suffix, "")
+        parts = [number_words(amount)]
+        if scale:
+            parts.append(scale)
+        parts.append("dollars")
+        return " ".join(parts)
+
+    def temp(match):
+        amount = str(round(float(match.group("amount").replace(",", ""))))
+        unit = match.group("unit").upper()
+        return f"{integer_words(amount)} degrees {'fahrenheit' if unit == 'F' else 'celsius'}"
+
+    text = re.sub(r"\$(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<suffix>[KMBT])?\b", money, text, flags=re.I)
+    text = re.sub(r"(?P<amount>-?\d[\d,]*(?:\.\d+)?)\s*°?\s*(?P<unit>[FC])\b", temp, text)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)%", lambda match: f"{number_words(match.group(1))} percent", text)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)\s*mph\b", lambda match: f"{number_words(match.group(1))} miles per hour", text, flags=re.I)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)\s*mi\b", lambda match: f"{number_words(match.group(1))} miles", text, flags=re.I)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)\s*in\b", lambda match: f"{number_words(match.group(1))} inches", text, flags=re.I)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)\s*hr\b", lambda match: f"{number_words(match.group(1))} hours", text, flags=re.I)
+    text = re.sub(r"\b(\d[\d,]*(?:\.\d+)?)\s*min\b", lambda match: f"{number_words(match.group(1))} minutes", text, flags=re.I)
+    text = re.sub(r"\bPRs\b", "pull requests", text)
+    text = re.sub(r"\bPR\b", "pull request", text)
+    text = re.sub(r"\bCI\b", "C I", text)
+    text = re.sub(r"\bAPI\b", "A P I", text)
+    text = re.sub(r"\bOAuth\b", "O auth", text)
+    return text
+
+
+def regular_numbers_to_words(text):
+    placeholders = {}
+
+    def protect(pattern, value):
+        def replacement(match):
+            key = f"__JARVIS_SPEECH_PROTECT_{len(placeholders)}__"
+            placeholders[key] = match.group(0)
+            return key
+
+        return re.sub(pattern, replacement, value, flags=re.I | re.M)
+
+    text = protect(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text)
+    text = protect(r"\b\d{1,2}(?::\d{2})?\s*(?:A|P)\s*M\b", text)
+    text = protect(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b", text)
+    text = protect(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b", text)
+    text = protect(r"\b\d{4}-\d{2}-\d{2}\b", text)
+    text = re.sub(
+        r"(?<![\w:./-])-?\d[\d,]*(?:\.\d+)?(?![\w:./-])",
+        lambda match: number_words(match.group(0)),
+        text,
+    )
+    for key, original in placeholders.items():
+        text = text.replace(key, original)
+    return text
+
+
+def normalize_speech_text(text):
     text = normalize_response_text(text)
-    if len(text) <= max_chars:
+    spoken = []
+    section_names = {
+        "TOP 3": "Top three.",
+        "TODAY": "Today.",
+        "MESSAGES": "Messages.",
+        "PROJECTS": "Projects.",
+        "GITHUB": "GitHub.",
+        "WEATHER": "Weather.",
+        "NEWS": "News.",
+        "RISKS": "Risks.",
+        "SUGGESTED PLAN": "Suggested plan.",
+        "ONE QUESTION": "One question.",
+        "COMPLETED": "Completed.",
+        "UNRESOLVED": "Unresolved.",
+        "WAITING": "Waiting.",
+        "PROJECT CHANGES": "Project changes.",
+        "TOMORROW": "Tomorrow.",
+        "SHUTDOWN": "Shutdown.",
+    }
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"[*_`]+", "", line)
+        line = re.sub(r"<([^>]+)>", "", line).strip()
+        upper_line = line.upper()
+        if upper_line in section_names:
+            spoken.append(section_names[upper_line])
+            continue
+        if upper_line.startswith("MORNING BRIEF"):
+            date = line.split("-", 1)[1].strip() if "-" in line else ""
+            spoken.append(sentence_text(f"Morning brief for {date}" if date else "Morning brief"))
+            continue
+        if upper_line.startswith("EVENING BRIEF"):
+            date = line.split("-", 1)[1].strip() if "-" in line else ""
+            spoken.append(sentence_text(f"Evening brief for {date}" if date else "Evening brief"))
+            continue
+        line = re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b", date_from_iso_date, line)
+        line = speech_unit_text(line)
+        numbered = re.match(r"^(\d+)[.)]\s*(.+)$", line)
+        if numbered:
+            spoken.append(sentence_text(f"Number {integer_words(numbered.group(1))} is {numbered.group(2)}"))
+            continue
+        if line.startswith(("- ", "* ")):
+            spoken.append(sentence_text(line[2:].strip()))
+            continue
+        spoken.append(sentence_text(line))
+    text = "\n\n".join(spoken)
+    text = regular_numbers_to_words(text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def speech_response_text(text, max_chars=900, cap=True):
+    text = normalize_speech_text(text)
+    if not cap or max_chars <= 0 or len(text) <= max_chars:
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text)
     parts = []
@@ -184,6 +384,10 @@ def spoken_response_text(text, max_chars=900):
     if not spoken:
         spoken = text[:max_chars].rsplit(" ", 1)[0].strip()
     return spoken.rstrip(".") + ". I put the full answer on screen."
+
+
+def spoken_response_text(text, max_chars=900):
+    return speech_response_text(text, max_chars=max_chars, cap=True)
 
 
 def full_speech_response(data):
@@ -423,7 +627,11 @@ class JarvisVoiceSession:
         turn.approval_required = bool(data.get("approval_required"))
         turn.states.append("speak")
         self.speaker.print_jarvis(turn.response_text)
-        speech_text = turn.response_text if full_speech_response(data) else spoken_response_text(turn.response_text, self.client.config.spoken_response_max_chars)
+        speech_text = speech_response_text(
+            turn.response_text,
+            self.client.config.spoken_response_max_chars,
+            cap=not full_speech_response(data),
+        )
         self.speak(speech_text)
         turn.states.append("idle")
         self.set_state(VoiceState.LISTENING)

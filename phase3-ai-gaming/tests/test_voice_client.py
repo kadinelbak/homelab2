@@ -178,6 +178,25 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertLessEqual(len(spoken), 230)
         self.assertIn("full answer on screen", spoken)
 
+    def test_spoken_response_expands_numbers_money_percent_temperature(self):
+        text = "WEATHER\n- Gainesville: 78.7 F, 80% rain\nNEWS\n- 65,000 people affected by $1.8B fund"
+        spoken = voice_client.spoken_response_text(text, max_chars=0)
+        self.assertIn("seventy-nine degrees fahrenheit", spoken)
+        self.assertIn("eighty percent rain", spoken)
+        self.assertIn("sixty-five thousand people affected", spoken)
+        self.assertIn("one point eight billion dollars fund", spoken)
+
+    def test_spoken_response_reads_numbered_lists_naturally(self):
+        text = "TOP 3\n1. MCAT Studying\n2. buy milk\n3. check the mail"
+        spoken = voice_client.spoken_response_text(text, max_chars=0)
+        self.assertIn("Top three.", spoken)
+        self.assertIn("Number one is MCAT Studying.", spoken)
+        self.assertIn("Number two is buy milk.", spoken)
+        self.assertIn("Number three is check the mail.", spoken)
+
+    def test_visual_response_text_stays_compact(self):
+        self.assertIn("78.7 F", voice_client.normalize_response_text("Weather: 78.7 F"))
+
     def test_full_speech_response_detects_briefing(self):
         data = {
             "planned": {
@@ -194,7 +213,7 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertFalse(voice_client.full_speech_response({"planned": {"actions": [{"capability": "general_assistant"}]}}))
 
     def test_briefing_response_is_not_shortened_for_speech(self):
-        long_text = " ".join(f"Brief item {idx} has useful detail." for idx in range(80))
+        long_text = "WEATHER\n- Gainesville: 78.7 F\n" + " ".join(f"Brief item {idx} has useful detail." for idx in range(80))
         speaker = FakeSpeaker()
         client = FakeClient(
             response_text=long_text,
@@ -202,7 +221,7 @@ class VoiceClientStateTests(unittest.TestCase):
         )
         session = voice_client.JarvisVoiceSession(client, speaker)
         session.handle_recording(b"wav", greet=False)
-        self.assertEqual(client.synthesized[-1], long_text)
+        self.assertIn("seventy-nine degrees fahrenheit", client.synthesized[-1])
         self.assertNotIn("full answer on screen", speaker.local[-1])
 
     def test_jarvis_chat_client_marks_voice_requests_concise(self):
