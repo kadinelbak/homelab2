@@ -31,7 +31,7 @@ Use `python client.py --push-to-talk` to test one push-to-talk turn from the con
 
 The client listens locally for `hey_jarvis`, records the request, sends audio to Jarvis Chat for Whisper transcription, sends the transcript to Jarvis Core, and plays the Kokoro response.
 
-Jarvis Chat remains the only server-facing endpoint the laptop needs.
+Jarvis Chat remains the only server-facing endpoint the laptop needs. Jarvis Chat routes Phase 4 voice requests such as daily brief, task capture, portfolio evidence capture, and homelab maintenance notes to Jarvis Core internally, so the laptop does not need a separate Jarvis Core tunnel.
 
 The default config expects an SSH tunnel from laptop `127.0.0.1:18100` to server `127.0.0.1:18100`. Tray mode starts and reconnects that tunnel automatically. You can still use `.\start_tunnel.ps1` before console debugging, or change `JARVIS_CHAT_URL` if Jarvis Chat is intentionally exposed another way.
 

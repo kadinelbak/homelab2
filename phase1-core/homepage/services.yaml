@@ -83,6 +83,18 @@
         description: Document management
 
 - Media Automations:
+    - Media Automation Status:
+        icon: mdi-server-network
+        href: http://100.79.132.39:18100/core
+        description: Read-only Arr stack and torrent reachability
+        widget:
+          type: customapi
+          url: http://jarvis_chat:18100/api/media/automations/summary
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: preview
+              label: Stack
     - Prowlarr:
         icon: prowlarr
         href: http://kadin-main-sys.tail00cf0e.ts.net:9696
@@ -115,8 +127,16 @@
 - AI Automations:
     - Jarvis Chat:
         icon: si-openai
-        href: http://kadin-main-sys.tail00cf0e.ts.net:18100
+        href: http://100.79.132.39:18100
         description: Simple request console for Jarvis
+        widget:
+          type: customapi
+          url: http://jarvis_chat:18100/api/core/notifications/summary
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: preview
+              label: Jarvis
     - Media AI:
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:3100
@@ -133,6 +153,10 @@
         icon: open-webui
         href: http://kadin-main-sys.tail00cf0e.ts.net:8080
         description: Chat interface for Ollama
+    - SCAD AI Generator:
+        icon: mdi-cube-scan
+        href: http://kadin-main-sys.tail00cf0e.ts.net:18104
+        description: Batch OpenSCAD generation and preview
     - n8n:
         icon: n8n
         href: http://kadin-main-sys.tail00cf0e.ts.net:5678

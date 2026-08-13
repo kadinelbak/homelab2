@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
+import hashlib
 import html
 import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 HOST = os.environ.get("JARVIS_CHAT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("JARVIS_CHAT_PORT", "8096"))
 ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
+JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
+JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN", ORCHESTRATOR_TOKEN)
+CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
+CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN", ORCHESTRATOR_TOKEN)
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
 TTS_WORKER_TOKEN = os.environ.get("JARVIS_TTS_TOKEN", "")
 TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
 CHAT_TOKEN = os.environ.get("JARVIS_CHAT_TOKEN", "")
+USER_TIMEZONE = os.environ.get("JARVIS_USER_TIMEZONE", "America/New_York")
 
 
 def configured_token():
@@ -46,6 +54,137 @@ def summarize_voice_plan(planned):
 def result_text(data):
     result = (data.get("action") or {}).get("result") or {}
     return result.get("text") or result.get("summary") or data.get("summary") or ""
+
+
+def wants_core_voice(text):
+    lowered = str(text or "").lower()
+    terms = (
+        "daily brief",
+        "morning brief",
+        "evening recap",
+        "add task",
+        "create task",
+        "new task",
+        "to do",
+        "todo",
+        "capture",
+        "evidence",
+        "portfolio",
+        "maintenance",
+        "homelab",
+        "media automation",
+        "media automations",
+        "arr stack",
+        "torrent status",
+        "drive inventory",
+        "google drive inventory",
+        "drive migration",
+        "google drive migration",
+        "service health",
+        "complete task",
+        "reopen task",
+        "update task",
+        "resolve maintenance",
+        "reopen maintenance",
+        "what are my tasks",
+        "list tasks",
+        "codex",
+        "coding task",
+        "codex dashboard",
+        "codex tasks",
+        "code task",
+        "fix code",
+        "implement",
+        "debug",
+        "refactor",
+        "write tests",
+        "pending approvals",
+        "what approvals",
+        "notifications",
+        "read notifications",
+        "what notifications",
+        "approve ",
+    )
+    return any(term in lowered for term in terms)
+
+
+def core_voice_text(data):
+    if data.get("status") == "confirmation_required":
+        return data.get("text") or "Please confirm that action."
+    if data.get("status") == "ambiguous":
+        names = []
+        for item in data.get("matches") or []:
+            action = item.get("action") or {}
+            names.append((action.get("preview") or {}).get("summary") or action.get("tool_name") or item.get("id"))
+        return "I found multiple matching approvals: " + "; ".join(names[:5]) + ". Please be more specific."
+    if data.get("text"):
+        return data["text"]
+    if data.get("approvals") is not None:
+        approvals = data.get("approvals") or []
+        if not approvals:
+            return "There are no matching pending approvals."
+        names = []
+        for item in approvals[:5]:
+            action = item.get("action") or {}
+            names.append((action.get("preview") or {}).get("summary") or action.get("tool_name") or item.get("id"))
+        return "Pending approvals: " + "; ".join(names) + "."
+    if data.get("notifications") is not None:
+        notifications = data.get("notifications") or []
+        if not notifications:
+            return "There are no pending Jarvis notifications."
+        lines = []
+        for item in notifications[:5]:
+            payload = item.get("payload") or {}
+            title = payload.get("title") or "Jarvis notification"
+            body = payload.get("body") or ""
+            lines.append(f"{title}: {body}".strip(": "))
+        return "Pending notifications: " + "; ".join(lines) + "."
+    if data.get("checks") is not None and data.get("preview"):
+        failed = [item.get("label") or item.get("name") for item in data.get("checks") or [] if not item.get("ok")]
+        if failed:
+            return f"{data.get('preview')}. Needs attention: " + ", ".join(failed[:5]) + "."
+        return str(data.get("preview")) + "."
+    if data.get("total") is not None and data.get("items") is not None:
+        destinations = data.get("by_destination") or {}
+        return f"{data.get('summary')}. Suggested destinations: " + "; ".join(f"{k}: {v}" for k, v in list(destinations.items())[:5]) + "."
+    if data.get("plan") is not None and data.get("inventory") is not None:
+        plan = data.get("plan") or {}
+        inventory = data.get("inventory") or {}
+        batches = plan.get("suggested_batches") or []
+        return f"{inventory.get('summary')}. {plan.get('summary')} Suggested batches: " + "; ".join(f"{b.get('destination')}: {b.get('count')}" for b in batches[:5]) + "."
+    if data.get("status") == "approved":
+        action = data.get("action") or {}
+        return f"Approved {action.get('tool_name', 'the action')}."
+    if data.get("task") and data.get("operation"):
+        return f"{data.get('operation').replace('_', ' ').title()}: {data['task'].get('title')}."
+    if data.get("maintenance") and data.get("operation"):
+        item = data["maintenance"]
+        return f"{data.get('operation').replace('_', ' ').title()} maintenance for {item.get('service_name')}: {item.get('summary')}."
+    if data.get("type") == "task" and data.get("task"):
+        return f"Captured task: {data['task'].get('title')}"
+    if data.get("type") == "evidence" and data.get("evidence"):
+        return f"Captured evidence: {data['evidence'].get('title')}"
+    if data.get("type") == "maintenance" and data.get("maintenance"):
+        item = data["maintenance"]
+        return f"Captured maintenance note for {item.get('service_name')}: {item.get('summary')}"
+    if data.get("tasks") is not None:
+        tasks = data.get("tasks") or []
+        if not tasks:
+            return "You do not have open Jarvis Core tasks."
+        names = "; ".join(item.get("title", "task") for item in tasks[:5])
+        return f"Top Jarvis Core tasks: {names}."
+    if data.get("codex_tasks") is not None:
+        tasks = data.get("codex_tasks") or []
+        if not tasks:
+            return "There are no Codex tasks yet."
+        names = []
+        for item in tasks[:5]:
+            names.append(f"{item.get('status')}: {item.get('request')}")
+        return "Codex tasks: " + "; ".join(names) + "."
+    if data.get("request") and data.get("actions"):
+        action = data["actions"][0]
+        return f"Approval is required for {action.get('tool_name', 'that action')}."
+    return "Jarvis Core handled that."
 
 
 def page():
@@ -88,6 +227,24 @@ def page():
       justify-content: space-between;
       gap: 16px;
       margin-bottom: 18px;
+    }}
+    .nav {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }}
+    .nav a {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      border: 1px solid rgba(94, 234, 212, 0.75);
+      border-radius: 6px;
+      background: #102521;
+      color: var(--text);
+      padding: 9px 12px;
+      font-weight: 700;
+      text-decoration: none;
     }}
     h1 {{ margin: 0; font-size: 24px; letter-spacing: 0; }}
     .status {{ color: var(--muted); font-size: 14px; }}
@@ -170,6 +327,8 @@ def page():
     @media (max-width: 760px) {{
       .grid {{ grid-template-columns: 1fr; }}
       header {{ align-items: flex-start; flex-direction: column; }}
+      .nav {{ width: 100%; }}
+      .nav a {{ justify-content: center; width: 100%; }}
       button {{ width: 100%; }}
     }}
   </style>
@@ -181,7 +340,10 @@ def page():
         <h1>Jarvis Chat</h1>
         <div class="status" id="health">Checking orchestrator...</div>
       </div>
-      <button id="refresh" title="Refresh health and current request">Refresh</button>
+      <nav class="nav" aria-label="Jarvis navigation">
+        <a href="/core" title="Open Core approvals, Codex jobs, diagnostics, tasks, evidence, maintenance, and daily briefs">Core Console</a>
+        <button id="refresh" title="Refresh health and current request">Refresh</button>
+      </nav>
     </header>
 
     <section class="panel {'hidden' if not auth_required else ''}" id="authPanel">
@@ -260,6 +422,7 @@ def page():
       </div>
       <div class="row" style="margin-top: 12px;">
         <button class="primary" id="send">Send Request</button>
+        <button id="openCore" type="button">Open Core Console</button>
         <button class="warn" id="approve" disabled>Approve Action</button>
         <button id="execute" disabled>Queue Execution</button>
       </div>
@@ -456,6 +619,10 @@ def page():
       try {{ await addProfileNote(); }} catch (err) {{ healthEl.textContent = err.message; }}
     }};
 
+    document.getElementById('openCore').onclick = () => {{
+      window.location.href = '/core';
+    }};
+
     document.getElementById('send').onclick = async () => {{
       try {{
         const request = document.getElementById('request').value.trim();
@@ -513,6 +680,868 @@ def page():
 </html>"""
 
 
+def core_console_page():
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Core Console</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0f141b; --panel:#161d26; --line:#344150; --text:#f5f7fb; --muted:#aeb9c7; --accent:#5eead4; --warn:#fbbf24; --danger:#fb7185; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, Segoe UI, sans-serif; }
+    main { width:min(1180px, calc(100vw - 28px)); margin:0 auto; padding:22px 0 44px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; }
+    h1 { margin:0; font-size:24px; letter-spacing:0; }
+    h2 { margin:0 0 10px; font-size:16px; letter-spacing:0; }
+    button, select { border:1px solid var(--line); border-radius:6px; background:#1f2935; color:var(--text); padding:9px 11px; }
+    button { cursor:pointer; font-weight:650; }
+    .grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; }
+    .panel { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:12px; min-height:120px; }
+    .full { grid-column:1 / -1; }
+    .item { border-top:1px solid var(--line); padding:9px 0; }
+    .item:first-child { border-top:0; }
+    .muted { color:var(--muted); }
+    .ok { color:var(--accent); }
+    .bad { color:var(--danger); }
+    .warn { color:var(--warn); }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:6px 0 0; font-size:12px; line-height:1.4; color:#d8dee9; }
+    a { color:var(--accent); }
+    @media (max-width: 780px) { .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Jarvis Core Console</h1>
+      <div class="muted" id="status">Loading Core state...</div>
+    </div>
+    <div>
+      <button onclick="loadAll()">Refresh</button>
+      <a href="/" style="margin-left:10px;">Chat</a>
+    </div>
+  </header>
+  <section class="grid">
+    <div class="panel"><h2>Approvals</h2><div id="approvals"></div></div>
+    <div class="panel"><h2>Diagnostics</h2><div id="diagnostics"></div></div>
+    <div class="panel full"><h2>Codex Jobs</h2><div id="codex"></div></div>
+    <div class="panel"><h2>Tasks</h2><div id="tasks"></div></div>
+    <div class="panel"><h2>Evidence</h2><div id="evidence"></div></div>
+    <div class="panel"><h2>Maintenance</h2><div id="maintenance"></div></div>
+    <div class="panel"><h2>Daily Brief</h2><div id="brief"></div></div>
+    <div class="panel"><h2>Drive Inventory</h2><div id="drive"></div></div>
+    <div class="panel"><h2>Drive Staging</h2><div id="driveStaging"></div></div>
+    <div class="panel"><h2>Smart Destinations</h2><div id="driveDestinations"></div></div>
+    <div class="panel"><h2>Notifications</h2><div id="notifications"></div></div>
+    <div class="panel"><h2>Audit</h2><div id="audit"></div></div>
+  </section>
+</main>
+<script>
+async function get(path) {
+  const res = await fetch(path);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.detail?.error || `HTTP ${res.status}`);
+  return data;
+}
+function esc(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function item(html) { return `<div class="item">${html}</div>`; }
+function renderApprovals(data) {
+  const rows = data.approvals || [];
+  approvals.innerHTML = rows.length ? rows.slice(0,8).map(a => {
+    const action = a.action || {};
+    const title = action.preview?.summary || action.tool_name || a.id;
+    return item(`<b>${esc(title)}</b><br><span class="muted">${esc(a.status)} · ${esc(a.reason)}</span>`);
+  }).join('') : '<span class="muted">No pending approvals.</span>';
+}
+function renderDiagnostics(data) {
+  diagnostics.innerHTML = (data.checks || []).map(c => item(`<span class="${c.ok ? 'ok' : 'bad'}">${c.ok ? 'OK' : 'FAIL'}</span> <b>${esc(c.name)}</b><br><span class="muted">${esc(c.summary || c.error || c.status)}</span>`)).join('');
+}
+function renderCodex(data) {
+  const tasks = data.codex_tasks || [];
+  codex.innerHTML = tasks.length ? tasks.slice(0,12).map(t => {
+    const artifacts = (t.artifacts || []).map(a => `${a.kind || a.name}: ${a.path || ''}`).join('\\n');
+    return item(`<b>${esc(t.status)}</b> ${esc(t.request)}<br><span class="muted">Action ${esc(t.action_id)}</span><pre>${esc(artifacts || 'No worker artifacts yet.')}</pre>`);
+  }).join('') : '<span class="muted">No Codex tasks yet.</span>';
+}
+function renderCodexWorker(data) {
+  const jobs = data.jobs || [];
+  if (!jobs.length) return;
+  codex.innerHTML += item(`<b>Worker job files</b>` + jobs.slice(0,8).map(j => `<pre>${esc(j.job_id)} · ${esc(j.status)}\\n${esc(j.summary)}</pre>`).join(''));
+}
+function renderList(target, key, data, titleField) {
+  const rows = data[key] || [];
+  target.innerHTML = rows.length ? rows.slice(0,8).map(r => item(`<b>${esc(r[titleField] || r.title || r.summary || r.event_type || r.id)}</b><br><span class="muted">${esc(r.status || r.service_name || r.evidence_type || r.created_at || '')}</span>`)).join('') : '<span class="muted">No records.</span>';
+}
+async function loadAll() {
+  status.textContent = 'Refreshing...';
+  const [ap, diag, cx, jobs, task, ev, maint, br, au] = await Promise.all([
+    get('/api/core/approvals?status=pending'),
+    get('/api/core/diagnostics'),
+    get('/api/core/codex/tasks'),
+    get('/api/codex/jobs'),
+    get('/api/core/tasks'),
+    get('/api/core/evidence'),
+    get('/api/core/maintenance'),
+    get('/api/core/daily-brief?kind=morning'),
+    get('/api/core/audit?q=codex')
+  ]);
+  renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
+  renderList(tasks, 'tasks', task, 'title');
+  renderList(evidence, 'evidence', ev, 'title');
+  renderList(maintenance, 'maintenance', maint, 'summary');
+  brief.innerHTML = `<pre>${esc(br.text || JSON.stringify(br, null, 2))}</pre>`;
+  renderList(audit, 'events', au, 'event_type');
+  status.textContent = 'Ready.';
+}
+loadAll().catch(err => { status.textContent = err.message; });
+</script>
+</body>
+</html>"""
+
+
+def interactive_core_console_page():
+    return r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Core Console</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1017; --panel:#141b24; --panel2:#1d2632; --line:#2b3948; --text:#f6f8fb; --muted:#9aa8b8; --accent:#5eead4; --warn:#fbbf24; --danger:#fb7185; --soft:#0f1720; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, Segoe UI, sans-serif; }
+    main { width:min(1360px, calc(100vw - 32px)); margin:0 auto; padding:22px 0 44px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:14px; }
+    h1 { margin:0; font-size:22px; letter-spacing:0; }
+    h2 { margin:0; font-size:14px; letter-spacing:0; }
+    button, select { border:1px solid var(--line); border-radius:7px; background:var(--panel2); color:var(--text); padding:8px 10px; }
+    button { cursor:pointer; font-weight:650; }
+    button.primary { border-color:rgba(94,234,212,.8); background:#12302d; }
+    button.danger { border-color:rgba(251,113,133,.8); }
+    button.ghost { background:transparent; }
+    .brand { display:flex; align-items:center; gap:12px; min-width:0; }
+    .mark { display:grid; place-items:center; width:38px; height:38px; border:1px solid rgba(94,234,212,.45); border-radius:8px; background:#102521; color:var(--accent); font-weight:900; }
+    .top-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .icon-button { display:inline-grid; place-items:center; width:36px; height:36px; padding:0; border-radius:999px; text-decoration:none; border:1px solid var(--line); background:var(--panel2); color:var(--text); font-size:18px; line-height:1; }
+    .icon-button:hover { border-color:rgba(94,234,212,.55); background:#121d28; }
+    .status-line { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:13px; margin-top:2px; }
+    .pulse { width:8px; height:8px; border-radius:999px; background:var(--accent); box-shadow:0 0 18px rgba(94,234,212,.7); }
+    .overview { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .metric { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:var(--soft); border-radius:999px; padding:6px 10px; min-height:34px; }
+    button.metric { cursor:pointer; color:var(--text); }
+    button.metric:hover { border-color:rgba(94,234,212,.55); background:#121d28; }
+    .metric b { display:inline; font-size:14px; }
+    .metric span { color:var(--muted); font-size:12px; }
+    .metric.attn { border-color:rgba(251,191,36,.42); background:#1f1b12; }
+    .metric.bad { border-color:rgba(251,113,133,.42); background:#21141b; }
+    .grid { display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); column-gap:24px; row-gap:22px; align-items:start; }
+    .panel { grid-column:span 4; border:0; background:transparent; border-radius:0; padding:0; min-height:0; overflow:visible; }
+    .span-6 { grid-column:span 6; }
+    .span-8 { grid-column:span 8; }
+    .span-12, .full { grid-column:1 / -1; }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 2px 8px; border-bottom:0; }
+    .panel-title { display:flex; align-items:center; gap:9px; min-width:0; }
+    .sigil { display:grid; place-items:center; width:28px; height:28px; border:1px solid rgba(94,234,212,.28); border-radius:7px; background:#101923; color:var(--accent); font-size:11px; font-weight:900; flex:0 0 auto; }
+    .panel-body { border:1px solid rgba(43,57,72,.72); background:rgba(20,27,36,.78); border-radius:8px; padding:8px 12px; }
+    .brief-body { padding:14px; }
+    .brief-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:16px; align-items:start; }
+    .brief-text { white-space:pre-wrap; line-height:1.55; color:#dce5ef; margin:0; font-size:14px; }
+    .brief-stack { display:grid; gap:10px; }
+    .brief-section { border:1px solid rgba(43,57,72,.62); border-radius:8px; padding:10px; background:rgba(15,23,32,.54); }
+    .brief-section b { display:block; margin-bottom:7px; }
+    .brief-section button { width:100%; text-align:left; border:0; border-top:1px solid rgba(43,57,72,.54); border-radius:0; background:transparent; padding:8px 0; }
+    .brief-section button:first-of-type { border-top:0; }
+    .count { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .item { border-top:1px solid var(--line); padding:9px 0; }
+    .item:first-child { border-top:0; }
+    .item-button { display:block; width:100%; text-align:left; border:0; border-top:1px solid rgba(43,57,72,.56); border-radius:0; background:transparent; padding:10px 0; color:var(--text); }
+    .item-button:first-child { border-top:0; }
+    .item-button:hover { background:rgba(94,234,212,.045); }
+    .compact-line { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+    .compact-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+    .compact-sub { color:var(--muted); font-size:12px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .muted { color:var(--muted); }
+    .ok { color:var(--accent); }
+    .bad { color:var(--danger); }
+    .warn { color:var(--warn); }
+    .pill { display:inline-flex; align-items:center; border:1px solid rgba(43,57,72,.8); border-radius:999px; padding:2px 8px; color:var(--muted); font-size:12px; margin-right:6px; margin-bottom:6px; background:rgba(15,23,32,.62); }
+    .drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.48); opacity:0; pointer-events:none; transition:opacity .16s ease; }
+    .drawer { position:fixed; top:0; right:0; width:min(760px, 100vw); height:100vh; background:#111821; border-left:1px solid var(--line); padding:18px; transform:translateX(100%); transition:transform .16s ease; overflow:auto; box-shadow:-20px 0 48px rgba(0,0,0,.32); }
+    body.drawer-open .drawer-backdrop { opacity:1; pointer-events:auto; }
+    body.drawer-open .drawer { transform:translateX(0); }
+    .drawer-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:14px; }
+    .drawer h2 { font-size:20px; margin:0 0 6px; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+    .field { border-top:1px solid var(--line); padding:10px 0; }
+    .field b { display:block; margin-bottom:4px; }
+    .drive-shell { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#0f1720; }
+    .drive-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); background:#151f2a; }
+    .drive-crumbs { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; }
+    .drive-crumb { border:0; background:transparent; padding:4px 6px; color:var(--text); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .drive-crumb:hover { background:rgba(94,234,212,.08); }
+    .drive-meta { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+    .drive-table { width:100%; padding:8px; }
+    .drive-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px; border:1px solid transparent; border-radius:7px; min-height:56px; }
+    .drive-row:last-child { border-bottom:0; }
+    .drive-row:hover { background:rgba(94,234,212,.055); border-color:rgba(94,234,212,.16); }
+    .drive-row.selected { background:rgba(94,234,212,.11); border-color:rgba(94,234,212,.42); }
+    .drive-name { display:flex; align-items:center; gap:10px; min-width:0; }
+    .drive-name button { border:0; background:transparent; padding:3px; text-align:left; min-width:0; flex:1; }
+    .drive-title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:750; color:var(--text); }
+    .drive-subtitle { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:12px; margin-top:2px; }
+    .drive-icon { display:inline-grid; place-items:center; width:30px; height:30px; border:1px solid var(--line); border-radius:6px; background:#1f2935; color:var(--accent); font-size:11px; font-weight:800; flex:0 0 auto; }
+    .drive-icon.file { color:#d8dee9; }
+    .drive-check { width:32px; height:32px; padding:0; display:inline-grid; place-items:center; border-radius:999px; }
+    .drive-row.selected .drive-check { border-color:rgba(94,234,212,.8); color:var(--accent); }
+    .drive-empty { padding:18px 12px; color:var(--muted); }
+    .drive-section { border-top:1px solid var(--line); }
+    .drive-section-title { padding:9px 12px; color:var(--muted); font-size:12px; font-weight:750; text-transform:uppercase; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:6px 0 0; font-size:12px; line-height:1.4; color:#d8dee9; }
+    a { color:var(--accent); }
+    @media (max-width: 980px) { .panel, .span-6, .span-8 { grid-column:1 / -1; } .brief-layout { grid-template-columns:1fr; } }
+    @media (max-width: 780px) { main { width:min(100vw - 22px, 1360px); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; } .top-actions { width:100%; justify-content:flex-start; } .drive-row { grid-template-columns:minmax(0,1fr) auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">
+      <span class="mark">J</span>
+      <div>
+        <h1>Jarvis Core</h1>
+        <div class="status-line"><span class="pulse"></span><span id="status">Loading Core state...</span></div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="icon-button" title="Refresh" aria-label="Refresh" onclick="loadAll()">&#8635;</button>
+      <a class="icon-button" href="/" title="Chat" aria-label="Chat">&#128172;</a>
+    </div>
+  </header>
+  <section class="overview" id="overview"></section>
+  <section class="grid">
+    <div class="panel span-12"><div class="panel-head"><div class="panel-title"><span class="sigil">DB</span><h2>Daily Brief</h2></div><span class="count" id="briefCount"></span></div><div class="panel-body brief-body" id="brief"></div></div>
+  </section>
+</main>
+<div class="drawer-backdrop" onclick="closeDrawer()"></div>
+<aside class="drawer" aria-live="polite">
+  <div class="drawer-header">
+    <div>
+      <h2 id="drawerTitle">Details</h2>
+      <div class="muted" id="drawerSubtitle"></div>
+    </div>
+    <button class="ghost" onclick="closeDrawer()">Close</button>
+  </div>
+  <div class="actions" id="drawerActions"></div>
+  <div id="drawerBody"></div>
+</aside>
+<script>
+const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
+async function get(path) {
+  const res = await fetch(path);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.detail?.error || `HTTP ${res.status}`);
+  return data;
+}
+async function send(method, path, body) {
+  const res = await fetch(path, { method, headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.detail?.error || `HTTP ${res.status}`);
+  return data;
+}
+function esc(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function row(label, value) {
+  if (value === undefined || value === null || value === '') return '';
+  const rendered = typeof value === 'object' ? `<pre>${esc(JSON.stringify(value, null, 2))}</pre>` : esc(value);
+  return `<div class="field"><b>${esc(label)}</b>${rendered}</div>`;
+}
+function itemButton(kind, idx, html) {
+  return `<button class="item-button" onclick="openItem('${kind}', ${idx})">${html}</button>`;
+}
+function setCount(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+function compactButton(kind, idx, title, subtitle = '', badge = '') {
+  return itemButton(kind, idx, `<div class="compact-line"><span class="compact-title">${esc(title)}</span>${badge ? `<span class="pill">${esc(badge)}</span>` : ''}</div>${subtitle ? `<div class="compact-sub">${esc(subtitle)}</div>` : ''}`);
+}
+function emptyState(text) {
+  return `<span class="muted">${esc(text)}</span>`;
+}
+function displayTitle(value) {
+  let text = String(value || '').trim();
+  text = text.replace(/^add task\s+/i, '');
+  text = text.replace(/^codex coding task:\s*/i, '');
+  text = text.replace(/^homelab maintenance note:\s*/i, '');
+  text = text.replace(/^capture evidence:\s*/i, '');
+  text = text.replace(/^Jarvis evidence packet$/i, 'Portfolio evidence packet');
+  text = text.replace(/^notif_[a-z0-9]+$/i, 'Jarvis notification');
+  text = text.replace(/\s+/g, ' ');
+  if (!text) return 'Untitled';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+function notificationTitle(n) {
+  const payload = n.payload || {};
+  return displayTitle(payload.title || payload.summary || payload.body || n.id);
+}
+function notificationSubtitle(n) {
+  const payload = n.payload || {};
+  return payload.body || payload.summary || `${n.channel || 'notification'} / ${n.status || ''}`;
+}
+function maintenanceTitle(m) {
+  return displayTitle(m.summary || m.service_name || 'Maintenance item');
+}
+function evidenceTitle(e) {
+  return displayTitle(e.title || e.summary || 'Evidence');
+}
+function usefulRows(key, rows) {
+  if (key === 'evidence') {
+    const nonPackets = rows.filter(item => item.evidence_type !== 'packet');
+    return nonPackets.length ? nonPackets : rows;
+  }
+  if (key === 'notifications') {
+    const pending = rows.filter(item => item.status !== 'delivered');
+    return pending.length ? pending : rows;
+  }
+  return rows;
+}
+function renderOverview(data) {
+  const failed = (data.diag.checks || []).filter(c => !c.ok).length;
+  const running = (data.cx.codex_tasks || []).filter(t => ['proposed','running','queued'].includes(String(t.status || '').toLowerCase())).length;
+  const due = (data.task.tasks || []).length;
+  const maintenance = (data.maint.maintenance || []).filter(m => m.status !== 'resolved').length;
+  const approvals = (data.ap.approvals || []).length;
+  const notifications = (data.notif.notifications || []).length;
+  const automations = (data.auto.automations || []).filter(a => ['scheduled_or_on_demand','continuous','event_driven'].includes(String(a.mode || ''))).length;
+  const selectedDrive = state.selectedDriveFolders.length;
+  overview.innerHTML = [
+    metric('AP', approvals, 'approvals', approvals ? 'attn' : '', 'openApprovalsHub()'),
+    metric('DX', failed, 'diagnostics', failed ? 'bad' : '', 'openDiagnosticsHub()'),
+    metric('CX', running, 'codex', running ? 'attn' : '', 'openCodexHub()'),
+    metric('DR', selectedDrive, 'drive', selectedDrive ? 'attn' : '', 'openDrive()'),
+    metric('AT', automations, 'automations', automations ? '' : '', 'openAutomationsHub()'),
+    metric('MT', maintenance, 'maintenance', maintenance ? 'attn' : '', 'openMaintenanceHub()'),
+    metric('IN', notifications, 'inbox', notifications ? 'attn' : '', 'openNotificationsHub()')
+  ].join('');
+}
+function metric(code, value, label, tone = '', action = '') {
+  return `<button class="metric ${tone}" onclick="${action}" title="${esc(label)}"><span>${esc(code)}</span><b>${esc(value)}</b><span>${esc(label)}</span></button>`;
+}
+function closeDrawer() { document.body.classList.remove('drawer-open'); }
+function openDrawer(title, subtitle, body, actions = '') {
+  drawerTitle.textContent = title || 'Details';
+  drawerSubtitle.textContent = subtitle || '';
+  drawerBody.innerHTML = body || '';
+  drawerActions.innerHTML = actions || '';
+  document.body.classList.add('drawer-open');
+}
+async function guarded(label, fn, warning = '') {
+  const suffix = warning ? `\n\n${warning}` : '';
+  if (!confirm(`${label}?${suffix}`)) return;
+  try {
+    status.textContent = `${label}...`;
+    await fn();
+    await loadAll();
+    closeDrawer();
+    status.textContent = 'Ready.';
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+function renderApprovals(data) {
+  state.approvals = data.approvals || [];
+}
+function renderDiagnostics(data) {
+  state.diagnostics = data.checks || [];
+}
+function renderCodex(data) {
+  state.codexTasks = data.codex_tasks || [];
+}
+function renderCodexWorker(data) {
+  state.codexJobs = data.jobs || [];
+}
+function renderList(target, key, data, titleField) {
+  const rows = data[key] || [];
+  state[key] = rows;
+  const kind = key === 'tasks' ? 'task' : key === 'evidence' ? 'evidence' : key === 'maintenance' ? 'maintenance' : key === 'notifications' ? 'notifications' : 'audit';
+  const countIds = {tasks: 'tasksCount', evidence: 'evidenceCount', maintenance: 'maintenanceCount', notifications: 'notificationsCount', events: 'auditCount'};
+  if (!target) return;
+  const visibleRows = usefulRows(key, rows);
+  setCount(countIds[key], `${visibleRows.length}`);
+  target.innerHTML = visibleRows.length ? visibleRows.slice(0,5).map((r) => {
+    const idx = rows.indexOf(r);
+    if (key === 'tasks') return compactButton(kind, idx, displayTitle(r.title), r.status || '', r.priority ? `P${r.priority}` : '');
+    if (key === 'evidence') return compactButton(kind, idx, evidenceTitle(r), r.evidence_type || '');
+    if (key === 'maintenance') return compactButton(kind, idx, maintenanceTitle(r), r.service_name || r.status || '', r.status || '');
+    if (key === 'notifications') return compactButton(kind, idx, notificationTitle(r), notificationSubtitle(r), r.status || '');
+    return compactButton(kind, idx, displayTitle(r[titleField] || r.title || r.summary || r.event_type || r.id), r.created_at || '');
+  }).join('') : emptyState('No records.');
+}
+function renderBrief(data) {
+  state.brief = data || {};
+  const taskCount = (data.tasks_due_soon || []).length;
+  const approvalsCount = (data.pending_approvals || []).length;
+  const maintCount = (data.open_maintenance || []).length;
+  setCount('briefCount', data.kind || 'brief');
+  const actions = (data.recommended_actions || []).slice(0,4).map((title, idx) => `<button onclick="makeBriefTaskFromRecommendation(${idx})"><span class="compact-title">${esc(displayTitle(title))}</span></button>`).join('') || `<span class="muted">No recommendations yet.</span>`;
+  const taskRows = (data.tasks_due_soon || []).slice(0,5).map((task) => `<button onclick="openTaskById('${esc(task.id)}')"><span class="compact-title">${esc(displayTitle(task.title))}</span><span class="compact-sub">${esc(task.due_at || task.status || '')}</span></button>`).join('') || `<span class="muted">No task pressure.</span>`;
+  const approvalRows = (data.pending_approvals || []).slice(0,4).map((approval) => {
+    const action = approval.action || {};
+    return `<button onclick="openApprovalById('${esc(approval.id)}')"><span class="compact-title">${esc(displayTitle(action.preview?.summary || action.tool_name || 'Approval'))}</span><span class="compact-sub">${esc(approval.reason || action.risk_level || '')}</span></button>`;
+  }).join('') || `<span class="muted">No pending approvals.</span>`;
+  const maintenanceRows = (data.open_maintenance || []).slice(0,4).map((m) => `<button onclick="openMaintenanceById('${esc(m.id)}')"><span class="compact-title">${esc(maintenanceTitle(m))}</span><span class="compact-sub">${esc(m.service_name || m.status || '')}</span></button>`).join('') || `<span class="muted">No open maintenance.</span>`;
+  brief.innerHTML = `<div><span class="pill">${taskCount} tasks</span><span class="pill">${approvalsCount} approvals</span><span class="pill">${maintCount} maint</span><button class="ghost" onclick="openBrief()">Details</button></div><div class="brief-layout"><pre class="brief-text">${esc(data.text || 'No brief text yet.')}</pre><div class="brief-stack"><div class="brief-section"><b>Next</b>${actions}</div><div class="brief-section"><b>Tasks</b>${taskRows}</div><div class="brief-section"><b>Approvals</b>${approvalRows}</div><div class="brief-section"><b>Maintenance</b>${maintenanceRows}</div></div></div>`;
+}
+function renderDrive(data) {
+  state.drive = data || {};
+  const rows = data.items || [];
+  setCount('driveCount', `${state.selectedDriveFolders.length} selected`);
+  const staged = state.driveStaging?.total || 0;
+  drive.innerHTML = `<div class="actions"><button class="primary" onclick="openDrive()">Open</button><button title="Propose copy batch" onclick="proposeDriveStagingCopy()">+ Copy</button><button title="Load metadata inventory" onclick="loadFullDriveInventory()">Scan</button></div>` +
+    `<button class="item-button" onclick="openItem('drive', 0)"><div class="compact-line"><span class="compact-title">${esc(data.summary || 'Drive ready')}</span><span class="pill">${staged} staged</span></div><div class="compact-sub">Browse root folders, select directories, then propose an approval-gated copy batch.</div></button>` +
+    (rows.length ? rows.slice(0,4).map((item, idx) => compactButton('driveItem', idx, item.name, `${item.life_category_label || item.life_category || 'Needs Review'} / ${item.migration_action || item.suggested_action || 'needs_review'}`)).join('') : '');
+}
+function renderDriveStaging(data) {
+  state.driveStaging = data || {};
+  const manifests = data.manifests || [];
+  driveStaging.innerHTML = `<button class="item-button" onclick="openItem('driveStaging', 0)"><b>${esc(data.summary || 'No staged Drive items')}</b><br><span class="muted">${esc(data.total_bytes || 0)} bytes &middot; ${esc(JSON.stringify(data.by_category || {}))}</span></button>` +
+    (manifests.length ? manifests.slice(0,6).map((item, idx) => itemButton('stagedDriveItem', idx, `<b>${esc(item.name || item.file_id)}</b><br><span class="muted">${esc(item.category || '')} &middot; ${esc(item.destination || '')} &middot; ${esc(item.staged_relative_path || '')}</span>`)).join('') : '<span class="muted">No staged files yet.</span>');
+}
+function renderDriveDestinations(data) {
+  state.driveDestinations = data || {};
+  const services = data.services || {};
+  const staged = data.staged_items || [];
+  const serviceRows = Object.values(services).map(s => `<span class="${s.ready ? 'ok' : 'bad'}">${s.ready ? 'OK' : 'WAIT'}</span> ${esc(s.label)}`).join('<br>');
+  driveDestinations.innerHTML = `<button class="item-button" onclick="openItem('driveDestinations', 0)"><b>${esc(data.summary || 'Destination readiness')}</b><br><span class="muted">${serviceRows}</span></button>` +
+    (staged.length ? staged.slice(0,6).map((item, idx) => itemButton('smartDestinationItem', idx, `<b>${esc(item.name)}</b><br><span class="muted">${esc(item.destination)} &middot; ${item.ready ? 'ready' : 'waiting'}</span>`)).join('') : '<span class="muted">No staged destination decisions yet.</span>');
+}
+function approvalActions(a) {
+  const risk = a.action?.risk_level || '';
+  const warning = ['destructive', 'sensitive'].includes(risk) || a.action?.tool_name === 'codex.run_task' ? 'This can run code or perform a high-risk action.' : '';
+  return `<button class="primary" onclick="guarded('Approve this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:true,decided_by:'jarvis-core-console'}), '${esc(warning)}')">Approve</button>
+    <button class="danger" onclick="guarded('Reject this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:false,decided_by:'jarvis-core-console'}))">Reject</button>`;
+}
+function openApproval(a) {
+  const action = a.action || {};
+  openDrawer(action.preview?.summary || action.tool_name || a.id, `Approval ${a.status}`, [
+    row('Reason', a.reason), row('Risk level', action.risk_level), row('Tool', action.tool_name),
+    row('Preview', action.preview), row('Action id', action.id), row('Approval id', a.id),
+    row('Decided by', a.decided_by), row('Decided at', a.decided_at)
+  ].join(''), a.status === 'pending' ? approvalActions(a) : '');
+}
+function openTask(t) {
+  const actions = t.status === 'completed'
+    ? `<button class="primary" onclick="guarded('Reopen task', () => send('PATCH','/api/core/tasks/${esc(t.id)}',{status:'open'}))">Reopen</button>`
+    : `<button class="primary" onclick="guarded('Complete task', () => send('POST','/api/core/tasks/${esc(t.id)}/complete'))">Complete</button>`;
+  openDrawer(t.title || t.id, `Task ${t.status || ''}`, [
+    row('Priority', t.priority), row('Due', t.due_at), row('Estimated minutes', t.estimated_minutes),
+    row('Effort', t.effort_level), row('Project id', t.project_id), row('Source', t.source),
+    row('Tags', t.tags), row('Score', t.score), row('Created', t.created_at),
+    row('Updated', t.updated_at), row('Completed', t.completed_at), row('Task id', t.id)
+  ].join(''), actions);
+}
+function openEvidence(e) {
+  const uri = e.uri ? `<a href="${esc(e.uri)}" target="_blank" rel="noreferrer">${esc(e.uri)}</a>` : '';
+  openDrawer(e.title || e.id, `Evidence ${e.evidence_type || ''}`, [
+    row('Summary', e.summary), row('URI', uri), row('Project id', e.project_id),
+    row('Tags', e.tags), row('Captured', e.captured_at), row('Evidence id', e.id)
+  ].join(''));
+}
+function openMaintenance(m) {
+  const actions = m.status === 'resolved'
+    ? `<button class="primary" onclick="guarded('Reopen maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{status:'open',resolved:false}))">Reopen</button>`
+    : `<button class="primary" onclick="guarded('Resolve maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{resolved:true}))">Resolve</button>`;
+  openDrawer(m.summary || m.service_name || m.id, `Maintenance ${m.status || ''}`, [
+    row('Service', m.service_name), row('Type', m.record_type), row('Details', m.details),
+    row('Next check', m.next_check_at), row('Resolved', m.resolved_at), row('Created', m.created_at),
+    row('Updated', m.updated_at), row('Record id', m.id)
+  ].join(''), actions);
+}
+function openMaintenanceHub() {
+  const rows = state.maintenance.filter(m => m.status !== 'resolved');
+  openDrawer('Maintenance', `${rows.length} open`, rows.length ? rows.slice(0,12).map((m, idx) => compactButton('maintenance', state.maintenance.indexOf(m), maintenanceTitle(m), m.service_name || m.status || '', m.status || '')).join('') : emptyState('No open maintenance records.'));
+}
+function openApprovalsHub() {
+  openDrawer('Approvals', `${state.approvals.length} pending`, state.approvals.length ? state.approvals.slice(0,12).map((a, idx) => {
+    const action = a.action || {};
+    const title = action.preview?.summary || action.tool_name || a.id;
+    return compactButton('approval', idx, displayTitle(title), a.reason || action.tool_name || '', action.risk_level || a.status);
+  }).join('') : emptyState('No pending approvals.'));
+}
+function openDiagnosticsHub() {
+  const failed = state.diagnostics.filter(c => !c.ok);
+  const rows = failed.length ? failed : state.diagnostics;
+  const maintenance = state.maintenance.filter(m => m.status !== 'resolved');
+  const body = (maintenance.length ? compactButton('maintenanceHub', 0, 'Maintenance', `${maintenance.length} open records`, 'open') : '') +
+    (rows.length ? rows.slice(0,12).map((c) => {
+      const idx = state.diagnostics.indexOf(c);
+      return compactButton('diagnostic', idx, c.name, c.summary || c.error || c.status || '', c.ok ? 'OK' : 'FAIL');
+    }).join('') : emptyState('No diagnostics returned.'));
+  openDrawer('Diagnostics', failed.length ? `${failed.length} need attention` : `${state.diagnostics.length} OK`, body);
+}
+function openCodexHub() {
+  const coreRows = state.codexTasks.slice(0,8).map((t, idx) => compactButton('codexTask', idx, displayTitle(t.request || 'Coding task'), 'Core task', t.status || 'task')).join('');
+  const workerRows = state.codexJobs.slice(0,6).map((j, idx) => {
+    const summary = (j.summary || '').includes('--ask-for-approval') ? 'Historical failed job from old Codex CLI flag. Current worker uses the corrected flag.' : (j.summary || '');
+    return compactButton('codexJob', idx, 'Worker artifact', summary, j.status || 'job');
+  }).join('');
+  openDrawer('Codex', `${state.codexTasks.length} core / ${state.codexJobs.length} worker`, coreRows + workerRows || emptyState('No Codex activity yet.'));
+}
+function openNotificationsHub() {
+  const rows = usefulRows('notifications', state.notifications);
+  openDrawer('Inbox', `${rows.length} items`, rows.length ? rows.slice(0,12).map((n) => compactButton('notifications', state.notifications.indexOf(n), notificationTitle(n), notificationSubtitle(n), n.status || '')).join('') : emptyState('No notifications.'));
+}
+function automationTitle(a) {
+  return displayTitle(a.name || 'Automation');
+}
+function automationSubtitle(a) {
+  return [a.schedule, a.mode].filter(Boolean).join(' / ');
+}
+function openAutomationsHub() {
+  const rows = state.automations || [];
+  const active = rows.filter(a => a.status !== 'disabled').length;
+  openDrawer('Automations', `${active} available`, rows.length ? rows.map((a, idx) => compactButton('automation', idx, automationTitle(a), automationSubtitle(a), a.status || '')).join('') : emptyState('No automation inventory available.'));
+}
+function openAutomation(a) {
+  openDrawer(automationTitle(a), a.status || 'Automation', [
+    row('Category', a.category), row('Mode', a.mode), row('Schedule', a.schedule),
+    row('Last run', a.last_run || 'Not recorded'), row('Next run', a.next_run || 'Not scheduled by Core'),
+    row('Channels', a.channels), row('Source', a.source), row('Summary', a.summary)
+  ].join(''));
+}
+function openDiagnostic(d) {
+  const name = String(d.name || '').toLowerCase();
+  const related = state.maintenance.filter(m => {
+    const svc = String(m.service_name || '').toLowerCase();
+    return svc && (svc.includes(name) || name.includes(svc));
+  });
+  openDrawer(d.name || 'Diagnostic', d.ok ? 'OK' : 'Needs attention', [
+    row('Summary', d.summary), row('Status', d.status), row('Error', d.error),
+    row('Raw check', d), row('Related maintenance', related.map(m => `${m.status}: ${m.summary}`).join('\n') || 'No related maintenance records.')
+  ].join(''));
+}
+async function openCodexJob(j) {
+  openDrawer(j.job_id, j.status || 'Codex worker job', '<span class="muted">Loading artifacts...</span>');
+  const jobId = encodeURIComponent(j.job_id);
+  const [detail, request, stdout, stderr] = await Promise.all([
+    get(`/api/codex/jobs/${jobId}`),
+    get(`/api/codex/jobs/${jobId}/artifact?name=request.json`).catch(err => ({error: err.message})),
+    get(`/api/codex/jobs/${jobId}/artifact?name=stdout.txt`).catch(err => ({error: err.message})),
+    get(`/api/codex/jobs/${jobId}/artifact?name=stderr.txt`).catch(err => ({error: err.message}))
+  ]);
+  const job = detail.job || detail;
+  openDrawer(j.job_id, job.status || 'Codex worker job', [
+    row('Summary', job.summary), row('Request path', request.path), row('Request preview', request.content || request.preview || request.error),
+    row('Changed files', job.changed_files), row('Test results', job.test_results),
+    row('Stdout path', stdout.path), row('Stdout preview', stdout.content || stdout.preview || stdout.error),
+    row('Stderr path', stderr.path), row('Stderr preview', stderr.content || stderr.preview || stderr.error), row('Job metadata', job)
+  ].join(''));
+}
+function openCodexTask(t) {
+  openDrawer(t.request || t.action_id || 'Codex task', `Core status ${t.status || ''}`, [
+    row('Action id', t.action_id || t.id), row('Status', t.status), row('Request', t.request),
+    row('Artifacts', t.artifacts), row('Execution', t.execution), row('Approval', t.approval), row('Raw task', t)
+  ].join(''));
+}
+async function makeBriefAction(actionType) {
+  const title = prompt(actionType === 'calendar_hold' ? 'Calendar hold title' : 'Task title');
+  if (!title) return;
+  const minutes = Number(prompt('Estimated minutes', '30') || 30);
+  const payload = { title, action_type: actionType, estimated_minutes: minutes, priority: 3, idempotency_key: `console-${actionType}-${Date.now()}` };
+  if (actionType === 'calendar_hold') payload.when_text = prompt('When should Jarvis look for time?', 'tomorrow morning') || 'tomorrow morning';
+  await send('POST', '/api/core/daily-brief/actions', payload);
+  await loadAll();
+  status.textContent = actionType === 'calendar_hold' ? 'Calendar hold proposed for approval.' : 'Task created from daily brief.';
+}
+async function makeBriefTaskFromRecommendation(idx) {
+  const title = (state.brief.recommended_actions || [])[idx];
+  if (!title) return;
+  await send('POST', '/api/core/daily-brief/actions', {title: displayTitle(title), action_type: 'task', estimated_minutes: 30, priority: 3, idempotency_key: `console-rec-${Date.now()}-${idx}`});
+  await loadAll();
+  status.textContent = 'Task created from daily brief.';
+}
+function openTaskById(id) {
+  const item = state.tasks.find(task => task.id === id);
+  if (item) openTask(item);
+}
+function openApprovalById(id) {
+  const item = state.approvals.find(approval => approval.id === id);
+  if (item) openApproval(item);
+}
+function openMaintenanceById(id) {
+  const item = state.maintenance.find(record => record.id === id);
+  if (item) openMaintenance(item);
+}
+function openBrief() {
+  const br = state.brief || {};
+  const actions = `<button class="primary" onclick="makeBriefAction('task')">Create Task</button><button onclick="makeBriefAction('calendar_hold')">Create Calendar Hold</button>`;
+  const google = br.google || {};
+  const googleSummary = google.text || [
+    google.calendar?.events ? `${google.calendar.events.length} calendar events` : '',
+    google.gmail?.messages ? `${google.gmail.messages.length} mail items` : '',
+    google.news?.items ? `${google.news.items.length} news items` : ''
+  ].filter(Boolean).join(' / ');
+  openDrawer('Daily Brief', br.kind || 'morning', [
+    row('Brief', br.text),
+    row('Tasks', briefList(br.tasks_due_soon, item => `${item.title}${item.due_at ? ` due ${item.due_at}` : ''}`)),
+    row('Approvals', briefList(br.pending_approvals, item => `${item.action?.tool_name || 'approval'}: ${item.reason || item.status || ''}`)),
+    row('Maintenance', briefList(br.open_maintenance, item => `${item.service_name}: ${item.summary}`)),
+    row('Evidence', briefList(br.recent_evidence, item => `${item.evidence_type}: ${item.title}`)),
+    row('Google', googleSummary || 'No Google summary returned.')
+  ].join(''), actions);
+}
+function briefList(items, mapper) {
+  const rows = (items || []).slice(0, 6).map(mapper).filter(Boolean);
+  return rows.length ? rows.map(item => `- ${item}`).join('\n') : 'None';
+}
+async function openDrive() {
+  const hasInventory = Boolean(state.drive.total);
+  let plan = {mode: 'folder_selection'};
+  if (hasInventory && !state.drivePlanLoaded) {
+    plan = await send('POST', '/api/core/drive/migration-plan', {max_results: 100, include_paths: false});
+    state.drivePlan = plan.plan || {};
+    state.drivePlanLoaded = true;
+  }
+  if (!state.driveFoldersLoaded) await loadDriveFolders();
+  const current = currentDriveFolder();
+  if (current && !state.driveChildren[current.id]) await loadDriveChildren(current.id);
+  const actions = driveBrowserActions(current);
+  const subtitle = current ? driveTrailLabel() : 'My Drive roots';
+  openDrawer('Drive', subtitle, driveBrowser(), actions);
+}
+async function loadDriveFolders() {
+  const data = await send('POST', '/api/core/drive/folders', {max_results: 10000, my_drive_only: true, top_level_only: true, root_topics_only: true});
+  state.driveFolders = data.folders || [];
+  state.driveFoldersLoaded = true;
+  return data;
+}
+async function refreshDriveFolders() {
+  state.driveFoldersLoaded = false;
+  state.driveChildren = {};
+  await loadDriveFolders();
+  await openDrive();
+}
+function selectedDriveFolderNames() {
+  return state.selectedDriveFolders.map(id => driveFolderName(id) || id).join('\n') || 'No folders selected.';
+}
+function toggleDriveFolder(folderId) {
+  const set = new Set(state.selectedDriveFolders);
+  if (set.has(folderId)) set.delete(folderId); else set.add(folderId);
+  state.selectedDriveFolders = Array.from(set);
+  openDrive().catch(err => { status.textContent = err.message; });
+}
+function currentDriveFolder() {
+  return state.driveTrail.length ? state.driveTrail[state.driveTrail.length - 1] : null;
+}
+function driveTrailLabel() {
+  return state.driveTrail.map(folder => folder.name).join(' / ');
+}
+function driveFolderName(folderId) {
+  const root = state.driveFolders.find(folder => folder.id === folderId);
+  if (root) return root.name;
+  for (const page of Object.values(state.driveChildren)) {
+    const found = (page.folders || []).find(folder => folder.id === folderId);
+    if (found) return found.name;
+  }
+  return '';
+}
+function driveBrowserActions(current) {
+  const selected = state.selectedDriveFolders.length;
+  const back = current ? `<button title="Back" onclick="driveBack()">&#8592;</button>` : '';
+  const select = current ? `<button title="Select current folder" onclick="toggleDriveFolder('${esc(current.id)}')">${state.selectedDriveFolders.includes(current.id) ? '&#9745;' : '&#9744;'}</button>` : '';
+  return `${back}${select}<button title="Refresh" onclick="refreshDriveFolders()">&#8635;</button><button class="primary" title="Propose copy batch" onclick="proposeDriveStagingCopy()">+ Copy</button><span class="pill">${selected}</span>`;
+}
+async function openDriveFolderAt(idx) {
+  const current = currentDriveFolder();
+  const folders = current ? ((state.driveChildren[current.id] || {}).folders || []) : (state.driveFolders || []);
+  const folder = folders[idx];
+  if (!folder) return;
+  state.driveTrail.push({id: folder.id, name: folder.name});
+  await loadDriveChildren(folder.id);
+  await openDrive();
+}
+async function driveBack() {
+  state.driveTrail.pop();
+  await openDrive();
+}
+async function loadDriveChildren(folderId) {
+  const data = await send('POST', '/api/core/drive/children', {folder_id: folderId, max_results: 500, my_drive_only: true});
+  state.driveChildren[folderId] = data;
+  return data;
+}
+function driveBrowser() {
+  const current = currentDriveFolder();
+  const selected = selectedDriveFolderNames();
+  const folders = current ? ((state.driveChildren[current.id] || {}).folders || []) : (state.driveFolders || []);
+  const files = current ? ((state.driveChildren[current.id] || {}).files || []) : [];
+  const crumbs = `<div class="drive-crumbs"><button class="drive-crumb" title="My Drive roots" onclick="state.driveTrail=[]; openDrive()">My Drive</button>${state.driveTrail.map((folder, idx) => `<span class="muted">/</span><button class="drive-crumb" onclick="driveJump(${idx})" title="${esc(folder.name)}">${esc(folder.name)}</button>`).join('')}</div>`;
+  const folderRows = folders.length ? folders.map((folder, idx) => driveFolderRow(folder, idx)).join('') : '<div class="drive-empty">No child folders.</div>';
+  const fileRows = current ? (files.length ? files.map((file, idx) => driveFileRow(file, idx, current.id)).join('') : '<div class="drive-empty">No files at this level.</div>') : '';
+  return `<div class="drive-shell"><div class="drive-bar">${crumbs}<div class="drive-meta"><span class="pill">${folders.length} dirs</span><span class="pill">${files.length} files</span><span class="pill" title="${esc(selected)}">${state.selectedDriveFolders.length} sel</span></div></div><div class="drive-table">${folderRows}${current ? `<div class="drive-section"><div class="drive-section-title">Files</div>${fileRows}</div>` : ''}</div></div>`;
+}
+function driveFolderRow(folder, idx) {
+  const selected = state.selectedDriveFolders.includes(folder.id);
+  const checked = selected ? '&#10003;' : '';
+  return `<div class="drive-row ${selected ? 'selected' : ''}"><div class="drive-name"><span class="drive-icon">DIR</span><button title="Open folder" onclick="openDriveFolderAt(${idx})"><span class="drive-title">${esc(folder.name)}</span><span class="drive-subtitle">Folder</span></button></div><button class="drive-check" title="Select folder" onclick="toggleDriveFolder('${esc(folder.id)}')">${checked}</button></div>`;
+}
+function driveFileRow(file, idx, folderId) {
+  return `<div class="drive-row"><div class="drive-name"><span class="drive-icon file">${esc(driveFileIcon(file))}</span><button title="Open file details" onclick="openDriveChildFile('${esc(folderId)}', ${idx})"><span class="drive-title">${esc(file.name)}</span><span class="drive-subtitle">${esc(file.life_category_label || file.life_category || 'Needs Review')} · ${esc(file.migration_action || 'needs_review')}</span></button></div><span></span></div>`;
+}
+function driveFileIcon(file) {
+  const mime = String(file.mime_type || '').toLowerCase();
+  const kind = String(file.kind || '').toLowerCase();
+  if (mime.includes('spreadsheet') || kind.includes('sheet')) return 'SHT';
+  if (mime.includes('presentation') || kind.includes('slide')) return 'SLD';
+  if (mime.includes('pdf')) return 'PDF';
+  if (mime.includes('image')) return 'IMG';
+  if (mime.includes('video')) return 'VID';
+  if (mime.includes('document') || kind.includes('doc')) return 'DOC';
+  return 'FIL';
+}
+async function driveJump(index) {
+  state.driveTrail = state.driveTrail.slice(0, index + 1);
+  await openDrive();
+}
+function openDriveChildFile(folderId, idx) {
+  const file = ((state.driveChildren[folderId] || {}).files || [])[idx];
+  if (file) openDriveItem(file);
+}
+async function loadFullDriveInventory() {
+  status.textContent = 'Loading full Drive inventory...';
+  const data = await send('POST', '/api/core/drive/inventory', {max_results: 10000, include_paths: true, top_level_only: true, root_topics_only: true, my_drive_only: true});
+  data.full_inventory_loaded = true;
+  renderDrive(data);
+  state.drivePlanLoaded = false;
+  await openDrive();
+  status.textContent = 'Full Drive inventory loaded.';
+}
+async function proposeDriveStagingCopy() {
+  const category = prompt('Category to stage, or blank for all copy-ready items', 'professional_education') || '';
+  const maxResults = Number(prompt('Maximum files to propose', '3') || 3);
+  const payload = {max_results: maxResults, migration_action: 'copy_to_homelab', include_folder_ids: state.selectedDriveFolders, exclude_names: ['griproot', 'grip', 'assistive device', 'hands team'], my_drive_only: true, idempotency_key: `drive-stage-${Date.now()}`};
+  if (category.trim()) payload.category = category.trim();
+  await send('POST', '/api/core/drive/staging-copy/propose', payload);
+  await loadAll();
+  status.textContent = 'Drive staging copy proposed for approval.';
+}
+function openDriveItem(item) {
+  const link = item.web_view_link ? `<a href="${esc(item.web_view_link)}" target="_blank" rel="noreferrer">${esc(item.web_view_link)}</a>` : '';
+  openDrawer(item.name || item.id, item.suggested_destination || 'Drive item', [
+    row('Kind', item.kind), row('MIME type', item.mime_type), row('Modified', item.modified_time),
+    row('Google Drive path', item.google_drive_path), row('Google folder', item.google_drive_folder_path),
+    row('Category', item.life_category_label || item.life_category), row('Migration action', item.migration_action || item.suggested_action),
+    row('This would go here', item.recommended_home || item.suggested_destination), row('Secondary home', item.secondary_home),
+    row('Jarvis relationship', item.relationship_home), row('Why', item.routing_reason),
+    row('Migration pathway', item.migration_pathway), row('Current action', item.suggested_action),
+    row('Link', link), row('Drive id', item.id)
+  ].join(''));
+}
+function openDriveStaging() {
+  const data = state.driveStaging || {};
+  openDrawer('Drive Staging', data.summary || 'Staged copies', [
+    row('Staging root', data.staging_root), row('Total files', data.total), row('Total bytes', data.total_bytes),
+    row('By category', data.by_category), row('By destination', data.by_destination), row('Manifests', data.manifests)
+  ].join(''));
+}
+function openStagedDriveItem(item) {
+  openDrawer(item.name || item.file_id, item.destination || 'Staged Drive item', [
+    row('Local staged path', item.path), row('Relative path', item.staged_relative_path), row('File exists', item.file_exists),
+    row('Manifest path', item.manifest_path), row('Bytes', item.bytes), row('Category', item.category),
+    row('Destination', item.destination), row('Export type', item.export_type), row('Content type', item.content_type),
+    row('Google source', item.web_view_link), row('Drive id', item.file_id), row('Modified', item.modified_time),
+    row('Action id', item.action_id)
+  ].join(''));
+}
+function openDriveDestinations() {
+  const data = state.driveDestinations || {};
+  openDrawer('Smart Destinations', data.summary || 'Destination readiness', [
+    row('Services', data.services), row('Pathway', data.pathway), row('Staged items', data.staged_items)
+  ].join(''));
+}
+function openSmartDestinationItem(item) {
+  openDrawer(item.name || 'Destination item', item.ready ? 'Destination ready' : 'Destination waiting', [
+    row('Destination', item.destination), row('Service', item.service), row('Ready', item.ready),
+    row('Next action', item.next_action), row('Reason', item.reason),
+    row('Local path', item.local_path), row('Manifest path', item.manifest_path)
+  ].join(''));
+}
+function openAudit(a) {
+  openDrawer(a.event_type || a.id, a.created_at || 'Audit event', [
+    row('Actor', a.actor), row('Subject id', a.subject_id), row('Correlation id', a.correlation_id),
+    row('Payload', a.payload), row('Raw event', a)
+  ].join(''));
+}
+function openItem(kind, idx) {
+  if (kind === 'approval') return openApproval(state.approvals[idx]);
+  if (kind === 'diagnostic') return openDiagnostic(state.diagnostics[idx]);
+  if (kind === 'codexTask') return openCodexTask(state.codexTasks[idx]);
+  if (kind === 'codexJob') return openCodexJob(state.codexJobs[idx]);
+  if (kind === 'task') return openTask(state.tasks[idx]);
+  if (kind === 'evidence') return openEvidence(state.evidence[idx]);
+  if (kind === 'maintenance') return openMaintenance(state.maintenance[idx]);
+  if (kind === 'maintenanceHub') return openMaintenanceHub();
+  if (kind === 'brief') return openBrief();
+  if (kind === 'drive') return openDrive();
+  if (kind === 'driveItem') return openDriveItem((state.drive.items || [])[idx]);
+  if (kind === 'driveStaging') return openDriveStaging();
+  if (kind === 'stagedDriveItem') return openStagedDriveItem((state.driveStaging.manifests || [])[idx]);
+  if (kind === 'driveDestinations') return openDriveDestinations();
+  if (kind === 'smartDestinationItem') return openSmartDestinationItem((state.driveDestinations.staged_items || [])[idx]);
+  if (kind === 'notifications') return openNotification(state.notifications[idx]);
+  if (kind === 'automation') return openAutomation(state.automations[idx]);
+  if (kind === 'audit') return openAudit(state.audit[idx]);
+}
+function openNotification(n) {
+  openDrawer(n.payload?.title || n.id, `${n.channel} ${n.status}`, [
+    row('Body', n.payload?.body), row('Severity', n.payload?.severity), row('Payload', n.payload),
+    row('Created', n.created_at), row('Notification id', n.id)
+  ].join(''));
+}
+function currentBriefKind() {
+  const hour = new Date().getHours();
+  return hour >= 17 || hour < 4 ? 'evening' : 'morning';
+}
+async function loadAll() {
+  status.textContent = 'Refreshing...';
+  const briefKind = currentBriefKind();
+  const [ap, diag, cx, jobs, task, ev, maint, br, notif, auto, ds, dd] = await Promise.all([
+    get('/api/core/approvals?status=pending'),
+    get('/api/core/diagnostics'),
+    get('/api/core/codex/tasks'),
+    get('/api/codex/jobs'),
+    get('/api/core/tasks'),
+    get('/api/core/evidence'),
+    get('/api/core/maintenance'),
+    get(`/api/core/daily-brief?kind=${briefKind}`),
+    get('/api/core/notifications'),
+    get('/api/core/automations'),
+    send('POST', '/api/core/drive/staging-status', {max_results: 20}),
+    send('POST', '/api/core/drive/destinations', {max_results: 20})
+  ]);
+  const dr = state.drive.total
+    ? state.drive
+    : {ok: true, summary: 'Drive inventory loads on demand', total: 0, items: [], by_category: {}, by_action: {}, lazy: true};
+  state.evidence = ev.evidence || [];
+  state.maintenance = maint.maintenance || [];
+  state.notifications = notif.notifications || [];
+  state.automations = auto.automations || [];
+  state.driveStaging = ds || {};
+  state.driveDestinations = dd || {};
+  renderOverview({ap, diag, cx, task, maint, notif, auto});
+  renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
+  state.tasks = task.tasks || [];
+  setCount('tasksCount', `${state.tasks.length}`);
+  renderBrief(br);
+  state.audit = [];
+  status.textContent = 'Ready.';
+}
+loadAll().catch(err => { status.textContent = err.message; });
+</script>
+</body>
+</html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "homelab-jarvis-chat/0.1"
 
@@ -564,10 +1593,175 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
 
+    def core_proxy(self, method, path, payload=None, timeout=180):
+        body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
+        req = urllib.request.Request(
+            JARVIS_CORE_URL + path,
+            data=body,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {JARVIS_CORE_TOKEN}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                data = json.loads(exc.read().decode("utf-8") or "{}")
+            except Exception:
+                data = {"error": str(exc)}
+            return exc.code, data
+        except Exception as exc:
+            return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
+
+    def codex_proxy(self, method, path, payload=None, timeout=120):
+        body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
+        headers = {"Content-Type": "application/json"}
+        if CODEX_WORKER_TOKEN:
+            headers["Authorization"] = f"Bearer {CODEX_WORKER_TOKEN}"
+        req = urllib.request.Request(CODEX_WORKER_URL + path, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                data = json.loads(exc.read().decode("utf-8") or "{}")
+            except Exception:
+                data = {"error": str(exc)}
+            return exc.code, data
+        except Exception as exc:
+            return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
+
+    def core_voice_request(self, text):
+        lowered = text.lower()
+        if "morning brief" in lowered:
+            return self.core_proxy("GET", "/api/v1/daily-brief?kind=morning&save=true", timeout=240)
+        if "evening recap" in lowered:
+            return self.core_proxy("GET", "/api/v1/daily-brief?kind=evening&save=true", timeout=240)
+        if "daily brief" in lowered:
+            hour = datetime.now(ZoneInfo(USER_TIMEZONE)).hour
+            kind = "evening" if hour >= 17 or hour < 4 else "morning"
+            return self.core_proxy("GET", f"/api/v1/daily-brief?kind={kind}&save=true", timeout=240)
+        if "pending approvals" in lowered or "what approvals" in lowered:
+            return self.core_proxy("GET", "/api/v1/approvals?status=pending")
+        if "media automation" in lowered or "media automations" in lowered or "arr stack" in lowered or "torrent status" in lowered:
+            return self.core_proxy("GET", "/api/v1/media/automations/status")
+        if "drive migration" in lowered or "google drive migration" in lowered:
+            return self.core_proxy("POST", "/api/v1/drive/migration-plan", {"max_results": 50}, timeout=120)
+        if "drive inventory" in lowered or "google drive inventory" in lowered:
+            return self.core_proxy("POST", "/api/v1/drive/inventory", {"max_results": 50}, timeout=120)
+        if "notification" in lowered:
+            status, data = self.core_proxy("GET", "/api/v1/notifications?channel=voice&status=pending")
+            if status >= 400:
+                return status, data
+            delivered = []
+            for item in data.get("notifications") or []:
+                delivery_status, _ = self.core_proxy(
+                    "POST",
+                    f"/api/v1/notifications/{item.get('id')}/delivery",
+                    {"status": "delivered", "delivered_by": "jarvis-chat-voice"},
+                    timeout=60,
+                )
+                delivered.append({"id": item.get("id"), "status": delivery_status})
+            data["delivered"] = delivered
+            return status, data
+        if lowered.startswith("approve ") or " approve " in lowered:
+            import urllib.parse
+
+            confirmed = lowered.startswith("confirm approve ") or " confirm approve " in lowered
+            q = lowered.split("approve", 1)[1].strip(" .")
+            status, matches = self.core_proxy("GET", f"/api/v1/approvals?status=pending&q={urllib.parse.quote(q)}")
+            if status >= 400:
+                return status, matches
+            risky = []
+            for approval in matches.get("approvals") or []:
+                action = approval.get("action") or {}
+                if action.get("tool_name") == "codex.run_task" or action.get("risk_level") in {"destructive", "sensitive"}:
+                    risky.append(approval)
+            if risky and not confirmed:
+                return HTTPStatus.OK, {
+                    "ok": True,
+                    "text": f"That approval may run code or a high-risk action. To confirm, say: confirm approve {q}.",
+                    "approval_required": True,
+                    "approvals": risky,
+                }
+            return self.core_proxy("POST", f"/api/v1/approvals/decide-by-title?q={urllib.parse.quote(q)}", {"approved": True, "decided_by": "hey-jarvis"}, timeout=240)
+        if any(lowered.startswith(prefix) or f" {prefix}" in lowered for prefix in ("complete task ", "reopen task ")):
+            operation = "complete_task" if "complete task" in lowered else "reopen_task"
+            phrase = "complete task" if operation == "complete_task" else "reopen task"
+            confirmed = lowered.startswith(f"confirm {phrase} ") or f" confirm {phrase} " in lowered
+            q = lowered.split(phrase, 1)[1].strip(" .")
+            return self.core_voice_edit_task(q, operation, confirmed)
+        if any(prefix in lowered for prefix in ("resolve maintenance ", "reopen maintenance ")):
+            operation = "resolve_maintenance" if "resolve maintenance" in lowered else "reopen_maintenance"
+            phrase = "resolve maintenance" if operation == "resolve_maintenance" else "reopen maintenance"
+            confirmed = lowered.startswith(f"confirm {phrase} ") or f" confirm {phrase} " in lowered
+            q = lowered.split(phrase, 1)[1].strip(" .")
+            return self.core_voice_edit_maintenance(q, operation, confirmed)
+        if "what are my tasks" in lowered or "list tasks" in lowered:
+            return self.core_proxy("GET", "/api/v1/tasks")
+        if "codex dashboard" in lowered or "codex tasks" in lowered:
+            return self.core_proxy("GET", "/api/v1/codex/tasks")
+        if any(term in lowered for term in ("codex", "coding task", "code task", "fix code", "implement", "debug", "refactor", "write tests")):
+            return self.core_proxy("POST", "/api/v1/codex/tasks", {"request": text, "idempotency_key": f"voice-codex-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:24]}"})
+        if "complete task" in lowered:
+            return HTTPStatus.OK, {"ok": True, "text": "Tell me the exact task id in Jarvis Chat for now, and I can mark it complete."}
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+        return self.core_proxy("POST", "/api/v1/capture", {"text": text, "idempotency_key": f"voice-{digest}"})
+
+    def core_voice_edit_task(self, q, operation, confirmed):
+        status, data = self.core_proxy("GET", "/api/v1/tasks")
+        if status >= 400:
+            return status, data
+        matches = [item for item in data.get("tasks") or [] if q.casefold() in (item.get("title") or "").casefold()]
+        if not matches:
+            return HTTPStatus.NOT_FOUND, {"ok": False, "error": "task_not_found"}
+        if len(matches) > 1:
+            return HTTPStatus.OK, {"ok": True, "status": "ambiguous", "matches": [{"action": {"preview": {"summary": item.get("title")}, "tool_name": "task.update"}, "id": item.get("id")} for item in matches[:5]]}
+        task = matches[0]
+        phrase = "complete task" if operation == "complete_task" else "reopen task"
+        if not confirmed:
+            return HTTPStatus.OK, {"ok": True, "status": "confirmation_required", "text": f"To {phrase} {task.get('title')}, say: confirm {phrase} {q}.", "task": task, "operation": operation}
+        if operation == "complete_task":
+            status, updated = self.core_proxy("POST", f"/api/v1/tasks/{task['id']}/complete", {}, timeout=120)
+        else:
+            status, updated = self.core_proxy("PATCH", f"/api/v1/tasks/{task['id']}", {"status": "open"}, timeout=120)
+        if status < 400:
+            updated = {"ok": True, "task": updated, "operation": operation}
+        return status, updated
+
+    def core_voice_edit_maintenance(self, q, operation, confirmed):
+        status, data = self.core_proxy("GET", "/api/v1/maintenance")
+        if status >= 400:
+            return status, data
+        def haystack(item):
+            return " ".join(str(item.get(key) or "") for key in ("service_name", "summary", "record_type"))
+        matches = [item for item in data.get("maintenance") or [] if q.casefold() in haystack(item).casefold()]
+        if not matches:
+            return HTTPStatus.NOT_FOUND, {"ok": False, "error": "maintenance_not_found"}
+        if len(matches) > 1:
+            return HTTPStatus.OK, {"ok": True, "status": "ambiguous", "matches": [{"action": {"preview": {"summary": item.get("summary")}, "tool_name": "maintenance.update"}, "id": item.get("id")} for item in matches[:5]]}
+        item = matches[0]
+        phrase = "resolve maintenance" if operation == "resolve_maintenance" else "reopen maintenance"
+        if not confirmed:
+            return HTTPStatus.OK, {"ok": True, "status": "confirmation_required", "text": f"To {phrase} {item.get('summary')}, say: confirm {phrase} {q}.", "maintenance": item, "operation": operation}
+        payload = {"resolved": True} if operation == "resolve_maintenance" else {"status": "open", "resolved": False}
+        status, updated = self.core_proxy("PATCH", f"/api/v1/maintenance/{item['id']}", payload, timeout=120)
+        if status < 400:
+            updated = {"ok": True, "maintenance": updated, "operation": operation}
+        return status, updated
+
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        query = parsed.query
         if path == "/":
             self.write(HTTPStatus.OK, page(), "text/html; charset=utf-8")
+            return
+        if path == "/core":
+            self.write(HTTPStatus.OK, interactive_core_console_page(), "text/html; charset=utf-8")
             return
         if path == "/health":
             status, data = self.proxy("GET", "/health")
@@ -580,6 +1774,54 @@ class Handler(BaseHTTPRequestHandler):
                     "orchestrator": data,
                 },
             )
+            return
+        if path == "/api/core/notifications/summary":
+            suffix = f"?{query}" if query else "?channel=homepage&limit=5"
+            status, data = self.core_proxy("GET", "/api/v1/notifications/summary" + suffix)
+            self.write_json(status, data)
+            return
+        if path == "/api/media/automations/summary":
+            status, data = self.core_proxy("GET", "/api/v1/media/automations/status")
+            if status < 400:
+                data = {"preview": data.get("preview") or "Media automation status unavailable", "count": len(data.get("checks") or []), "items": data.get("checks") or []}
+            self.write_json(status, data)
+            return
+        core_get_routes = {
+            "/api/core/approvals": "/api/v1/approvals",
+            "/api/core/diagnostics": "/api/v1/homelab/diagnostics",
+            "/api/core/media/automations": "/api/v1/media/automations/status",
+            "/api/core/codex/tasks": "/api/v1/codex/tasks",
+            "/api/core/tasks": "/api/v1/tasks",
+            "/api/core/evidence": "/api/v1/evidence",
+            "/api/core/maintenance": "/api/v1/maintenance",
+            "/api/core/daily-brief": "/api/v1/daily-brief",
+            "/api/core/audit": "/api/v1/audit",
+            "/api/core/notifications": "/api/v1/notifications",
+            "/api/core/automations": "/api/v1/automations",
+        }
+        if path in core_get_routes:
+            if not self.authorized():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                return
+            suffix = f"?{query}" if query else ""
+            status, data = self.core_proxy("GET", core_get_routes[path] + suffix)
+            self.write_json(status, data)
+            return
+        if path == "/api/codex/jobs":
+            if not self.authorized():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                return
+            status, data = self.codex_proxy("GET", "/jobs")
+            self.write_json(status, data)
+            return
+        if path.startswith("/api/codex/jobs/"):
+            if not self.authorized():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                return
+            codex_path = path.replace("/api/codex", "", 1)
+            suffix = f"?{query}" if query else ""
+            status, data = self.codex_proxy("GET", codex_path + suffix)
+            self.write_json(status, data)
             return
         if path == "/api/profile":
             if not self.authorized():
@@ -598,6 +1840,70 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/requests":
             status, data = self.proxy("POST", "/requests", self.read_json())
+            self.write_json(status, data)
+            return
+
+        if path.startswith("/api/core/approvals/") and path.endswith("/decision"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/approvals/{parts[4]}/decision", self.read_json(), timeout=240)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/tasks/") and path.endswith("/complete"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/tasks/{parts[4]}/complete", {}, timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path == "/api/core/daily-brief/actions":
+            status, data = self.core_proxy("POST", "/api/v1/daily-brief/actions", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/evidence/packet":
+            status, data = self.core_proxy("POST", "/api/v1/evidence/packet", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/inventory":
+            status, data = self.core_proxy("POST", "/api/v1/drive/inventory", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/migration-plan":
+            status, data = self.core_proxy("POST", "/api/v1/drive/migration-plan", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/folders":
+            status, data = self.core_proxy("POST", "/api/v1/drive/folders", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/children":
+            status, data = self.core_proxy("POST", "/api/v1/drive/children", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/staging-copy/propose":
+            status, data = self.core_proxy("POST", "/api/v1/drive/staging-copy/propose", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/staging-status":
+            status, data = self.core_proxy("POST", "/api/v1/drive/staging-status", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/destinations":
+            status, data = self.core_proxy("POST", "/api/v1/drive/destinations", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/notifications":
+            status, data = self.core_proxy("POST", "/api/v1/notifications", self.read_json(), timeout=120)
             self.write_json(status, data)
             return
 
@@ -660,6 +1966,22 @@ class Handler(BaseHTTPRequestHandler):
             text = str(payload.get("text") or payload.get("request") or "").strip()
             if not text:
                 self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "text_required"})
+                return
+            if wants_core_voice(text):
+                status, data = self.core_voice_request(text)
+                if status >= 400:
+                    self.write_json(status, data)
+                    return
+                self.write_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "text": core_voice_text(data),
+                        "core": data,
+                        "approval_required": bool(data.get("approval_required") or data.get("actions")),
+                        "approval_actions": data.get("actions") or [],
+                    },
+                )
                 return
             request_payload = {
                 "request": text,
@@ -753,6 +2075,28 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             if len(parts) == 5 and parts[4] in {"approve", "execute"}:
                 status, data = self.proxy("POST", f"/actions/{parts[3]}/{parts[4]}", {})
+                self.write_json(status, data)
+                return
+
+        self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+
+    def do_PATCH(self):
+        path = urlparse(self.path).path.rstrip("/") or "/"
+        if not self.authorized():
+            self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+            return
+
+        if path.startswith("/api/core/tasks/"):
+            parts = path.split("/")
+            if len(parts) == 5:
+                status, data = self.core_proxy("PATCH", f"/api/v1/tasks/{parts[4]}", self.read_json(), timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/maintenance/"):
+            parts = path.split("/")
+            if len(parts) == 5:
+                status, data = self.core_proxy("PATCH", f"/api/v1/maintenance/{parts[4]}", self.read_json(), timeout=120)
                 self.write_json(status, data)
                 return
 

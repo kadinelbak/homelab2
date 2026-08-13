@@ -141,7 +141,7 @@ services:
       - ${DATA_PATH}/phase4-ondemand/data/nextcloud/html:/var/www/html
       - ${DATA_PATH}/phase4-ondemand/data/nextcloud/data:/var/www/html/data
     ports:
-      - "8091:80"
+      - "${ONDEMAND_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:8091:80"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -279,7 +279,7 @@ services:
     volumes:
       - ${DATA_PATH}/phase4-ondemand/data/docmost:/app/data/storage
     ports:
-      - "3004:3000"
+      - "${ONDEMAND_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:3004:3000"
     networks:
       - homelab_proxy
       - homelab_internal

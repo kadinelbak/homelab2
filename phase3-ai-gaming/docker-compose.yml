@@ -28,7 +28,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
-    profiles: ["ollama", "open-webui", "ai", "orchestration"]
+    profiles: ["ollama", "open-webui", "ai", "orchestration", "scad-ai"]
     environment:
       OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
     volumes:
@@ -74,6 +74,10 @@ services:
       JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-3-super-120b-a12b}
       JARVIS_DEEP_LLM_BASE_URL: ${JARVIS_DEEP_LLM_BASE_URL:-}
       JARVIS_DEEP_LLM_API_KEY: ${JARVIS_DEEP_LLM_API_KEY:-}
+      JARVIS_VISION_LLM_PROVIDER: ${JARVIS_VISION_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_VISION_LLM_MODEL: ${JARVIS_VISION_LLM_MODEL:-gemma-4-31b-it}
+      JARVIS_VISION_LLM_BASE_URL: ${JARVIS_VISION_LLM_BASE_URL:-}
+      JARVIS_VISION_LLM_API_KEY: ${JARVIS_VISION_LLM_API_KEY:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
     ports:
@@ -109,10 +113,56 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   # ---------------------------------------------------------------------------
-  # MINECRAFT – Game Server (itzg/minecraft-server)
-  # Port 25565 exposed directly (not behind NPM – TCP, not HTTP).
-  # Modpack: Configure MODPACK_URL or TYPE=FORGE and drop mods in /data/mods.
-  # See all env vars: https://github.com/itzg/docker-minecraft-server
+  # SCAD AI GENERATOR - Batch OpenSCAD concept generator and preview renderer
+  # ---------------------------------------------------------------------------
+  scad-ai-generator:
+    build:
+      context: ./scad-ai-generator
+    container_name: scad_ai_generator
+    restart: unless-stopped
+    profiles: ["scad-ai", "ai", "automation"]
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      SCAD_AI_PORT: 8102
+      SCAD_AI_DATA_DIR: /data
+      SCAD_AI_MODEL: ${SCAD_AI_MODEL:-${JARVIS_FAST_LLM_MODEL:-llama-3.1-70b-instruct}}
+      SCAD_AI_MODEL_OPTIONS: ${SCAD_AI_MODEL_OPTIONS:-gemma-3-27b-it,gemma-4-31b-it,medgemma-27b-it}
+      SCAD_AI_OLLAMA_FALLBACK_MODEL: ${SCAD_AI_OLLAMA_FALLBACK_MODEL:-llama3.1:latest}
+      SCAD_AI_PROMPT_MODEL: ${SCAD_AI_PROMPT_MODEL:-${JARVIS_DEEP_LLM_MODEL:-nemotron-3-super-120b-a12b}}
+      SCAD_AI_ITERATION_MODEL: ${SCAD_AI_ITERATION_MODEL:-${JARVIS_FAST_LLM_MODEL:-llama-3.1-70b-instruct}}
+      SCAD_AI_PROMPT_BASE_URL: ${SCAD_AI_PROMPT_BASE_URL:-${JARVIS_DEEP_LLM_BASE_URL:-}}
+      SCAD_AI_PROMPT_API_KEY: ${SCAD_AI_PROMPT_API_KEY:-${JARVIS_DEEP_LLM_API_KEY:-}}
+      SCAD_AI_ITERATION_BASE_URL: ${SCAD_AI_ITERATION_BASE_URL:-${JARVIS_FAST_LLM_BASE_URL:-}}
+      SCAD_AI_VISION_MODEL: ${SCAD_AI_VISION_MODEL:-${JARVIS_VISION_LLM_MODEL:-gemma-4-31b-it}}
+      SCAD_AI_VISION_ENABLED: ${SCAD_AI_VISION_ENABLED:-true}
+      SCAD_AI_ITERATION_API_KEY: ${SCAD_AI_ITERATION_API_KEY:-${JARVIS_FAST_LLM_API_KEY:-}}
+      SCAD_AI_LLM_TIMEOUT: ${SCAD_AI_LLM_TIMEOUT:-${JARVIS_LLM_TIMEOUT_SECONDS:-180}}
+      JARVIS_CORE_URL: http://jarvis_core:8097
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      SCAD_AI_MAX_ITERATIONS: ${SCAD_AI_MAX_ITERATIONS:-25}
+      SCAD_AI_OPENSCAD_TIMEOUT: ${SCAD_AI_OPENSCAD_TIMEOUT:-90}
+      SCAD_AI_OLLAMA_TIMEOUT: ${SCAD_AI_OLLAMA_TIMEOUT:-180}
+      SCAD_AI_TOKEN: ${SCAD_AI_TOKEN:-}
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/scad-ai-generator:/data
+    ports:
+      - "${SCAD_AI_BIND_IP:-0.0.0.0}:${SCAD_AI_HOST_PORT:-18104}:8102"
+    networks:
+      - homelab_internal
+    depends_on:
+      - ollama
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=SCAD AI Generator"
+      - "homepage.icon=mdi-cube-scan"
+      - "homepage.href=http://${DOMAIN}:${SCAD_AI_HOST_PORT:-18104}"
+      - "homepage.description=Batch OpenSCAD generation and preview"
+
+  # ---------------------------------------------------------------------------
+  # MINECRAFT - Game Server (itzg/minecraft-server)
   # ---------------------------------------------------------------------------
   minecraft:
     image: itzg/minecraft-server:java17
@@ -181,6 +231,10 @@ services:
       N8N_USER_MANAGEMENT_JWT_SECRET: ${N8N_USER_MANAGEMENT_JWT_SECRET}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      JARVIS_CORE_URL: http://jarvis-core:8097
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      CODEX_WORKER_URL: http://codex-worker:18300
+      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       OLLAMA_HOST: http://ollama:11434
       EXECUTIONS_DATA_PRUNE: "true"
@@ -265,6 +319,10 @@ services:
       JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-3-super-120b-a12b}
       JARVIS_DEEP_LLM_BASE_URL: ${JARVIS_DEEP_LLM_BASE_URL:-}
       JARVIS_DEEP_LLM_API_KEY: ${JARVIS_DEEP_LLM_API_KEY:-}
+      JARVIS_VISION_LLM_PROVIDER: ${JARVIS_VISION_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_VISION_LLM_MODEL: ${JARVIS_VISION_LLM_MODEL:-gemma-4-31b-it}
+      JARVIS_VISION_LLM_BASE_URL: ${JARVIS_VISION_LLM_BASE_URL:-}
+      JARVIS_VISION_LLM_API_KEY: ${JARVIS_VISION_LLM_API_KEY:-}
     volumes:
       - ./ai-orchestrator/state:/data
     ports:
@@ -283,6 +341,65 @@ services:
       - "homepage.description=Request routing and worker handoff"
 
   # ---------------------------------------------------------------------------
+  # JARVIS CORE - Durable typed request/action/approval/audit API
+  # Keeps ai-orchestrator in place while the stable Core boundary is built.
+  # Internal target: jarvis-core:8097
+  # ---------------------------------------------------------------------------
+  jarvis-core:
+    build:
+      context: ./jarvis-core
+    container_name: jarvis_core
+    restart: unless-stopped
+    profiles: ["orchestration", "automation", "ai"]
+    environment:
+      TZ: ${TZ}
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      JARVIS_CORE_DATABASE_URL: ${JARVIS_CORE_DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/jarvis_core}
+      JARVIS_CORE_REDIS_URL: ${JARVIS_CORE_REDIS_URL:-redis://:${REDIS_PASSWORD}@homelab_redis:6379/4}
+      JARVIS_CORE_PORT: 8097
+      JARVIS_CORE_HOST_PORT: ${JARVIS_CORE_HOST_PORT:-18097}
+      JARVIS_CORE_USER_TIMEZONE: ${JARVIS_CORE_USER_TIMEZONE:-America/New_York}
+      JARVIS_CORE_MEDIA_PIPELINE_URL: ${JARVIS_CORE_MEDIA_PIPELINE_URL:-http://media-creation-api:18110}
+      JARVIS_CORE_GOOGLE_TOOLS_URL: ${JARVIS_CORE_GOOGLE_TOOLS_URL:-http://google-tools-worker:18200}
+      JARVIS_CORE_GOOGLE_TOOLS_TOKEN: ${JARVIS_CORE_GOOGLE_TOOLS_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      JARVIS_CORE_CODEX_WORKER_URL: ${JARVIS_CORE_CODEX_WORKER_URL:-http://codex-worker:18300}
+      JARVIS_CORE_CODEX_WORKER_TOKEN: ${JARVIS_CORE_CODEX_WORKER_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      JARVIS_CORE_HOMELAB_PUBLIC_BASE_URL: ${JARVIS_CORE_HOMELAB_PUBLIC_BASE_URL:-http://${DOMAIN}}
+      JARVIS_CORE_MEDIA_AUTOMATION_INTERNAL_BASE_URL: ${JARVIS_CORE_MEDIA_AUTOMATION_INTERNAL_BASE_URL:-http://gluetun}
+      JARVIS_CORE_CALENDAR_PROVIDER: ${JARVIS_CORE_CALENDAR_PROVIDER:-google}
+      JARVIS_CORE_CALENDAR_ALLOW_SIMULATED_FALLBACK: ${JARVIS_CORE_CALENDAR_ALLOW_SIMULATED_FALLBACK:-false}
+      JARVIS_FAST_LLM_PROVIDER: ${JARVIS_FAST_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_FAST_LLM_MODEL: ${JARVIS_FAST_LLM_MODEL:-llama-3.1-70b-instruct}
+      JARVIS_FAST_LLM_BASE_URL: ${JARVIS_FAST_LLM_BASE_URL:-}
+      JARVIS_FAST_LLM_API_KEY: ${JARVIS_FAST_LLM_API_KEY:-}
+      JARVIS_DEEP_LLM_PROVIDER: ${JARVIS_DEEP_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_DEEP_LLM_MODEL: ${JARVIS_DEEP_LLM_MODEL:-nemotron-3-super-120b-a12b}
+      JARVIS_DEEP_LLM_BASE_URL: ${JARVIS_DEEP_LLM_BASE_URL:-}
+      JARVIS_DEEP_LLM_API_KEY: ${JARVIS_DEEP_LLM_API_KEY:-}
+      JARVIS_VISION_LLM_PROVIDER: ${JARVIS_VISION_LLM_PROVIDER:-external_openai_compatible}
+      JARVIS_VISION_LLM_MODEL: ${JARVIS_VISION_LLM_MODEL:-gemma-4-31b-it}
+      JARVIS_VISION_LLM_BASE_URL: ${JARVIS_VISION_LLM_BASE_URL:-}
+      JARVIS_VISION_LLM_API_KEY: ${JARVIS_VISION_LLM_API_KEY:-}
+      JARVIS_LLM_TIMEOUT_SECONDS: ${JARVIS_LLM_TIMEOUT_SECONDS:-90}
+    ports:
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:${JARVIS_CORE_HOST_PORT:-18097}:8097"
+    networks:
+      - homelab_internal
+      - homelab_proxy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=Jarvis Core"
+      - "homepage.icon=si-openai"
+      - "homepage.href=http://${DOMAIN}:${JARVIS_CORE_HOST_PORT:-18097}/health"
+      - "homepage.description=Durable request, approval, audit, and Personal Ops API"
+
+  # ---------------------------------------------------------------------------
   # JARVIS OPEN WEBUI TOOLS - Internal OpenAPI tool bridge for Open WebUI
   # Internal target for Open WebUI Global Tool Server: jarvis-openwebui-tools:18400
   # ---------------------------------------------------------------------------
@@ -299,10 +416,13 @@ services:
       JARVIS_OPENWEBUI_DEFAULT_COST_USD: ${JARVIS_OPENWEBUI_DEFAULT_COST_USD:-0}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      JARVIS_CORE_URL: http://jarvis-core:8097
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
     networks:
       - homelab_internal
     depends_on:
       - ai-orchestrator
+      - jarvis-core
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
 
@@ -323,21 +443,25 @@ services:
       CODEX_WORKSPACE: /workspace
       CODEX_WORKER_TIMEOUT_SECONDS: ${CODEX_WORKER_TIMEOUT_SECONDS:-1800}
       CODEX_WORKER_MAX_OUTPUT_CHARS: ${CODEX_WORKER_MAX_OUTPUT_CHARS:-12000}
-      CODEX_COMMAND_PREFIX: ${CODEX_COMMAND_PREFIX:-codex exec --json --sandbox workspace-write --ask-for-approval never}
+      CODEX_COMMAND_PREFIX: ${CODEX_COMMAND_PREFIX:-codex exec --json --sandbox workspace-write --approve-for-me}
     volumes:
       - ./ai-orchestrator:/workspace/ai-orchestrator
       - ./codex-worker:/workspace/codex-worker
       - ./google-tools-worker:/workspace/google-tools-worker
+      - ./jarvis-core:/workspace/jarvis-core
       - ./jarvis-chat:/workspace/jarvis-chat
       - ./telegram-bridge:/workspace/telegram-bridge
       - ./whisper-worker:/workspace/whisper-worker
       - ./docker-compose.yml:/workspace/docker-compose.yml
+      - ../.git:/workspace/homelab2.git:ro
       - ${DATA_PATH}/phase3-ai-gaming/data/codex-worker:/data
       - ${DATA_PATH}/phase3-ai-gaming/data/codex-home:/home/appuser/.codex
     ports:
       - "${TAILSCALE_HOST_IP:-127.0.0.1}:18300:18300"
     networks:
-      - homelab_internal
+      homelab_internal:
+        aliases:
+          - codex-worker
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -359,6 +483,10 @@ services:
       TZ: ${TZ}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      JARVIS_CORE_URL: http://jarvis-core:8097
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
+      CODEX_WORKER_URL: http://codex-worker:18300
+      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
       JARVIS_TTS_WORKER_URL: http://tts-worker:8101
@@ -367,11 +495,13 @@ services:
       JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
       JARVIS_CHAT_PORT: 18100
     ports:
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18100:18100"
+      - "${JARVIS_CHAT_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:18100:18100"
     networks:
       - homelab_internal
     depends_on:
       - ai-orchestrator
+      - jarvis-core
+      - codex-worker
       - whisper-worker
       - tts-worker
     labels:
@@ -410,10 +540,14 @@ services:
       PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
       AI_ORCHESTRATOR_URL: http://ai-orchestrator:8095
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      JARVIS_CORE_URL: http://jarvis-core:8097
+      JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
-      JARVIS_TELEGRAM_BRIEFING_ENABLED: ${JARVIS_TELEGRAM_BRIEFING_ENABLED:-false}
+      JARVIS_TELEGRAM_BRIEFING_ENABLED: ${JARVIS_TELEGRAM_BRIEFING_ENABLED:-true}
       JARVIS_TELEGRAM_BRIEFING_CHAT_IDS: ${JARVIS_TELEGRAM_BRIEFING_CHAT_IDS:-}
+      JARVIS_TELEGRAM_NOTIFICATIONS_ENABLED: ${JARVIS_TELEGRAM_NOTIFICATIONS_ENABLED:-true}
+      JARVIS_TELEGRAM_NOTIFICATIONS_POLL_SECONDS: ${JARVIS_TELEGRAM_NOTIFICATIONS_POLL_SECONDS:-30}
       JARVIS_TELEGRAM_MORNING_BRIEF_TIME: ${JARVIS_TELEGRAM_MORNING_BRIEF_TIME:-07:30}
       JARVIS_TELEGRAM_EVENING_BRIEF_TIME: ${JARVIS_TELEGRAM_EVENING_BRIEF_TIME:-20:30}
       JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED: ${JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED:-false}

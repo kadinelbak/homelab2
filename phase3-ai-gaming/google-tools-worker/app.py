@@ -23,6 +23,7 @@ PORT = int(os.environ.get("GOOGLE_TOOLS_PORT", "18200"))
 DATA_DIR = Path(os.environ.get("GOOGLE_TOOLS_DATA_DIR", "/data"))
 TOKEN_PATH = DATA_DIR / "google-token.json"
 PROFILE_DB_PATH = DATA_DIR / "briefing-profile.sqlite3"
+DRIVE_STAGING_DIR = DATA_DIR / "drive-migration" / "staging"
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:18200/oauth/google/callback")
@@ -36,6 +37,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/contacts",
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
 ]
 DEFAULT_TIMEZONE = os.environ.get("TZ", "America/New_York")
 WEATHER_PROXY_URL = os.environ.get("WEATHER_PROXY_URL", "http://weather-proxy:8098").rstrip("/")
@@ -301,6 +304,12 @@ def google_request(method, url, payload=None, timeout=60):
     return urlopen_json(req, timeout=timeout)
 
 
+def google_bytes(method, url, timeout=120):
+    req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {access_token()}"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.read(), response.headers.get_content_type()
+
+
 def gmail_get_message(message_id):
     params = urllib.parse.urlencode({"format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date"]}, doseq=True)
     data = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?{params}")
@@ -328,6 +337,157 @@ def gmail_search(query, max_results=10):
     params = urllib.parse.urlencode({"q": query or "in:inbox newer_than:7d", "maxResults": max_results})
     listed = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}")
     return [gmail_get_message(item["id"]) for item in listed.get("messages", [])]
+
+
+def compact_drive_file(item):
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "mime_type": item.get("mimeType"),
+        "web_view_link": item.get("webViewLink"),
+        "modified_time": item.get("modifiedTime"),
+        "parents": item.get("parents") or [],
+    }
+
+
+def drive_search(query, max_results=10, my_drive_only=True):
+    drive_query = query or "trashed = false"
+    if "trashed" not in drive_query:
+        drive_query = f"({drive_query}) and trashed = false"
+    if my_drive_only and "owners" not in drive_query:
+        drive_query = f"({drive_query}) and 'me' in owners"
+    wanted = max(1, min(int(max_results or 10), 10000))
+    files = []
+    page_token = None
+    while len(files) < wanted:
+        params = {
+            "q": drive_query,
+            "pageSize": min(1000, wanted - len(files)),
+            "orderBy": "folder,name_natural",
+            "fields": "nextPageToken,files(id,name,mimeType,webViewLink,modifiedTime,parents)",
+            "corpora": "user",
+            "supportsAllDrives": "false" if my_drive_only else "true",
+            "includeItemsFromAllDrives": "false" if my_drive_only else "true",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        data = google_request("GET", f"https://www.googleapis.com/drive/v3/files?{urllib.parse.urlencode(params)}")
+        files.extend(compact_drive_file(item) for item in data.get("files", []))
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return files[:wanted]
+
+
+def drive_folders(max_results=50, my_drive_only=True):
+    query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    return drive_search(query, max_results, my_drive_only=my_drive_only)
+
+
+def safe_filename(value, fallback="drive-file"):
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "-", str(value or fallback)).strip(" .-")
+    return cleaned[:160] or fallback
+
+
+GOOGLE_EXPORTS = {
+    "application/vnd.google-apps.document": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"),
+    "application/vnd.google-apps.spreadsheet": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"),
+    "application/vnd.google-apps.presentation": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx"),
+    "application/vnd.google-apps.drawing": ("image/png", ".png"),
+}
+
+
+def drive_file_metadata(file_id):
+    params = urllib.parse.urlencode(
+        {
+            "fields": "id,name,mimeType,webViewLink,modifiedTime",
+            "supportsAllDrives": "true",
+        }
+    )
+    return compact_drive_file(google_request("GET", f"https://www.googleapis.com/drive/v3/files/{urllib.parse.quote(file_id)}?{params}", timeout=60))
+
+
+def drive_copy_to_staging(file_id, category="needs_review", destination="Nextcloud", action_id=None, relative_path=None):
+    meta = drive_file_metadata(file_id)
+    mime = meta.get("mime_type") or ""
+    if "folder" in mime:
+        raise ValueError("drive_folder_copy_requires_child_inventory")
+    category_dir = safe_filename(category, "needs_review").lower().replace(" ", "_")
+    destination_dir = safe_filename(destination, "destination").lower().replace(" ", "_")
+    relative_parts = [safe_filename(part) for part in str(relative_path or "").replace("\\", "/").split("/")[:-1] if part.strip()]
+    target_dir = DRIVE_STAGING_DIR / category_dir / destination_dir
+    for part in relative_parts:
+        target_dir = target_dir / part
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base_name = safe_filename(meta.get("name") or file_id, file_id)
+    if mime in GOOGLE_EXPORTS:
+        export_mime, ext = GOOGLE_EXPORTS[mime]
+        url = f"https://www.googleapis.com/drive/v3/files/{urllib.parse.quote(file_id)}/export?{urllib.parse.urlencode({'mimeType': export_mime})}"
+        content, content_type = google_bytes("GET", url, timeout=180)
+        if not base_name.lower().endswith(ext):
+            base_name += ext
+        export_type = "google_export"
+    else:
+        url = f"https://www.googleapis.com/drive/v3/files/{urllib.parse.quote(file_id)}?alt=media&supportsAllDrives=true"
+        content, content_type = google_bytes("GET", url, timeout=180)
+        export_type = "binary_download"
+    target_path = target_dir / base_name
+    counter = 1
+    while target_path.exists():
+        target_path = target_dir / f"{target_path.stem}-{counter}{target_path.suffix}"
+        counter += 1
+    target_path.write_bytes(content)
+    manifest = {
+        "file_id": file_id,
+        "name": meta.get("name"),
+        "mime_type": mime,
+        "modified_time": meta.get("modified_time"),
+        "web_view_link": meta.get("web_view_link"),
+        "category": category,
+        "destination": destination,
+        "action_id": action_id,
+        "export_type": export_type,
+        "content_type": content_type,
+        "bytes": len(content),
+        "path": str(target_path),
+        "google_drive_path": relative_path,
+    }
+    manifest_path = target_path.with_suffix(target_path.suffix + ".manifest.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    manifest["manifest_path"] = str(manifest_path)
+    return manifest
+
+
+def drive_staging_status(max_results=50):
+    manifests = []
+    total_bytes = 0
+    by_category = {}
+    by_destination = {}
+    if DRIVE_STAGING_DIR.exists():
+        for path in sorted(DRIVE_STAGING_DIR.rglob("*.manifest.json"), key=lambda item: item.stat().st_mtime, reverse=True)[: max(1, min(int(max_results or 50), 200))]:
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                manifest = {"manifest_path": str(path), "error": str(exc)[:240]}
+            manifest["manifest_path"] = str(path)
+            file_path = Path(manifest.get("path") or "")
+            manifest["file_exists"] = file_path.exists()
+            manifest["staged_relative_path"] = str(file_path.relative_to(DRIVE_STAGING_DIR)) if file_path.exists() and file_path.is_relative_to(DRIVE_STAGING_DIR) else ""
+            total_bytes += int(manifest.get("bytes") or 0)
+            category = manifest.get("category") or "needs_review"
+            destination = manifest.get("destination") or "unknown"
+            by_category[category] = by_category.get(category, 0) + 1
+            by_destination[destination] = by_destination.get(destination, 0) + 1
+            manifests.append(manifest)
+    return {
+        "summary": f"{len(manifests)} staged Drive item(s)",
+        "staging_root": str(DRIVE_STAGING_DIR),
+        "total": len(manifests),
+        "total_bytes": total_bytes,
+        "by_category": by_category,
+        "by_destination": by_destination,
+        "manifests": manifests,
+    }
 
 
 def gmail_count(query):
@@ -1877,6 +2037,37 @@ class Handler(BaseHTTPRequestHandler):
                 request_text = payload.get("request", "")
                 messages = gmail_search(infer_gmail_query(request_text), int(payload.get("max_results", 10)))
                 self.write_json(HTTPStatus.OK, {"ok": True, "messages": messages, "text": response_text_for_gmail(messages)})
+                return
+            if path == "/drive/search":
+                files = drive_search(
+                    payload.get("query") or "trashed = false",
+                    int(payload.get("max_results", 10)),
+                    my_drive_only=bool(payload.get("my_drive_only", True)),
+                )
+                text = "Google Drive references: " + ", ".join(item.get("name") or item.get("id") for item in files[:8]) if files else "No Google Drive references found."
+                self.write_json(HTTPStatus.OK, {"ok": True, "files": files, "text": text})
+                return
+            if path == "/drive/folders":
+                folders = drive_folders(int(payload.get("max_results", 50)), my_drive_only=bool(payload.get("my_drive_only", True)))
+                self.write_json(HTTPStatus.OK, {"ok": True, "folders": folders, "text": f"{len(folders)} Drive folders found.", "mode": "metadata_only"})
+                return
+            if path == "/drive/copy-to-staging":
+                file_id = str(payload.get("file_id") or "").strip()
+                if not file_id:
+                    self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "file_id_required"})
+                    return
+                manifest = drive_copy_to_staging(
+                    file_id,
+                    category=str(payload.get("category") or "needs_review"),
+                    destination=str(payload.get("destination") or "Nextcloud"),
+                    action_id=payload.get("action_id"),
+                    relative_path=payload.get("relative_path"),
+                )
+                self.write_json(HTTPStatus.OK, {"ok": True, "status": "completed", "manifest": manifest, "text": f"Copied {manifest['name']} to staging."})
+                return
+            if path == "/drive/staging-status":
+                status = drive_staging_status(int(payload.get("max_results", 50)))
+                self.write_json(HTTPStatus.OK, {"ok": True, **status, "mode": "read_only"})
                 return
             if path == "/gmail/create-draft":
                 draft = create_verified_gmail_draft(payload["to"], payload.get("subject", ""), payload.get("body", ""))

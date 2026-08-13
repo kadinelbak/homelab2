@@ -23,6 +23,8 @@ ALLOWED_CHAT_IDS = {
 }
 ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
+JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
+JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN", ORCHESTRATOR_TOKEN)
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 OPEN_WEBUI_URL = os.environ.get("OPEN_WEBUI_URL", "http://open-webui:8080").rstrip("/")
@@ -58,6 +60,8 @@ BRIEFING_CHAT_IDS = {
 BRIEFING_MORNING_TIME = os.environ.get("JARVIS_TELEGRAM_MORNING_BRIEF_TIME", "07:30")
 BRIEFING_EVENING_TIME = os.environ.get("JARVIS_TELEGRAM_EVENING_BRIEF_TIME", "20:30")
 BRIEFING_VOICE_ENABLED = os.environ.get("JARVIS_TELEGRAM_BRIEFING_VOICE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+NOTIFICATIONS_ENABLED = os.environ.get("JARVIS_TELEGRAM_NOTIFICATIONS_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+NOTIFICATION_POLL_SECONDS = int(os.environ.get("JARVIS_TELEGRAM_NOTIFICATIONS_POLL_SECONDS", "30"))
 TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
 TTS_WORKER_TOKEN = os.environ.get("JARVIS_TTS_TOKEN", "")
 TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
@@ -566,6 +570,53 @@ def get_json(url, headers=None, timeout=60):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def core_headers():
+    headers = {"Content-Type": "application/json"}
+    if JARVIS_CORE_TOKEN:
+        headers["Authorization"] = f"Bearer {JARVIS_CORE_TOKEN}"
+    return headers
+
+
+def core_get(path, timeout=60):
+    return get_json(JARVIS_CORE_URL + path, headers=core_headers(), timeout=timeout)
+
+
+def core_post(path, payload=None, timeout=60):
+    body = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(JARVIS_CORE_URL + path, data=body, method="POST", headers=core_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
+
+
+def notification_text(item):
+    payload = item.get("payload") or {}
+    title = payload.get("title") or "Jarvis notification"
+    body = payload.get("body") or ""
+    severity = payload.get("severity") or "info"
+    return f"Jarvis {severity.upper()}: {title}\n{body}".strip()
+
+
+def deliver_core_notifications():
+    targets = BRIEFING_CHAT_IDS or ALLOWED_CHAT_IDS
+    if not NOTIFICATIONS_ENABLED or not targets:
+        return
+    data = core_get("/api/v1/notifications?channel=telegram&status=pending", timeout=60)
+    for item in data.get("notifications") or []:
+        status = "delivered"
+        for chat_id in targets:
+            try:
+                if allowed(chat_id):
+                    send_message(chat_id, notification_text(item))
+            except Exception as exc:
+                status = "failed"
+                print(f"telegram notification delivery failed: {exc}", flush=True)
+        core_post(
+            f"/api/v1/notifications/{item.get('id')}/delivery",
+            {"status": status, "delivered_by": "telegram-bridge"},
+            timeout=60,
+        )
+
+
 def paperless_headers():
     headers = {"Accept": "application/json"}
     if PAPERLESS_API_TOKEN:
@@ -824,6 +875,13 @@ def approve_and_execute(action_id):
 
 def build_briefing(chat_id, kind="morning"):
     kind = "evening" if str(kind).lower().startswith("even") else "morning"
+    try:
+        data = core_get(f"/api/v1/daily-brief?kind={urllib.parse.quote(kind)}", timeout=240)
+        text = data.get("text") or f"{kind.title()} brief built."
+        remember(chat_id, "assistant", text)
+        return text
+    except Exception as exc:
+        print(f"telegram core briefing fallback: {exc}", flush=True)
     payload = {
         "request": "Build evening recap and tomorrow prep" if kind == "evening" else "Build morning daily briefing",
         "source": "telegram",
@@ -844,6 +902,12 @@ def build_briefing(chat_id, kind="morning"):
     text = result.get("text") or result.get("summary") or "Briefing built."
     remember(chat_id, "assistant", text)
     return text
+
+
+def save_core_briefing(kind="morning"):
+    kind = "evening" if str(kind).lower().startswith("even") else "morning"
+    data = core_get(f"/api/v1/daily-brief?kind={urllib.parse.quote(kind)}&save=true", timeout=240)
+    return data.get("text") or f"{kind.title()} brief saved."
 
 
 def send_briefing(chat_id, kind="morning"):
@@ -904,9 +968,13 @@ def briefing_scheduler():
                 for kind, (hour, minute) in schedule.items():
                     key = (kind, now_local.date().isoformat(), hour, minute)
                     if now_local.hour == hour and now_local.minute == minute and key not in sent:
-                        for chat_id in briefing_targets():
-                            if allowed(chat_id):
-                                send_briefing(chat_id, kind)
+                        try:
+                            save_core_briefing(kind)
+                        except Exception as exc:
+                            print(f"telegram scheduled core briefing fallback: {exc}", flush=True)
+                            for chat_id in briefing_targets():
+                                if allowed(chat_id):
+                                    send_briefing(chat_id, kind)
                         sent.add(key)
                 if len(sent) > 20:
                     today = now_local.date().isoformat()
@@ -1011,6 +1079,15 @@ def queue_worker():
         time.sleep(2)
 
 
+def notification_worker():
+    while True:
+        try:
+            deliver_core_notifications()
+        except Exception as exc:
+            print(f"telegram notification worker error: {exc}", flush=True)
+        time.sleep(max(10, NOTIFICATION_POLL_SECONDS))
+
+
 def handle_command(chat_id, text):
     command, _, rest = text.partition(" ")
     if command in {"/start", "/help"}:
@@ -1019,6 +1096,7 @@ def handle_command(chat_id, text):
             "Send text, including Telegram voice typing.\n"
             "For audio files, use Open WebUI transcription first.\n"
             "For approval-gated actions, I will give you an /approve command.\n"
+            "Use /notifications to read pending Jarvis Core notifications.\n"
             "Use /brief, /brief morning, or /brief evening for Calendar/Gmail/Tasks briefing.\n"
             "Use /city, /setcity, /watchrepo, /unwatchrepo, /briefprefs, /rememberbrief, and /forgetbrief to manage briefing context.\n"
             "Use /forget to clear this chat's memory."
@@ -1026,6 +1104,18 @@ def handle_command(chat_id, text):
     if command == "/health":
         data = get_json(ORCHESTRATOR_URL + "/health", timeout=60)
         return f"Jarvis Core OK: {data.get('ok')} | capabilities: {data.get('capabilities')}"
+    if command == "/notifications":
+        data = core_get("/api/v1/notifications?channel=telegram&status=pending", timeout=60)
+        items = data.get("notifications") or []
+        if not items:
+            return "No pending Jarvis Core notifications."
+        for item in items:
+            core_post(
+                f"/api/v1/notifications/{item.get('id')}/delivery",
+                {"status": "delivered", "delivered_by": "telegram-command"},
+                timeout=60,
+            )
+        return "\n\n".join(notification_text(item) for item in items[:10])
     if command == "/approve":
         action_id = rest.strip()
         if not action_id:
@@ -1132,6 +1222,7 @@ def main():
     print("Jarvis Telegram bridge polling.", flush=True)
     threading.Thread(target=queue_worker, daemon=True).start()
     threading.Thread(target=briefing_scheduler, daemon=True).start()
+    threading.Thread(target=notification_worker, daemon=True).start()
     while True:
         try:
             payload = {"timeout": POLL_TIMEOUT}
