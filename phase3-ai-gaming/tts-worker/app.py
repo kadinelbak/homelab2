@@ -16,6 +16,8 @@ DEFAULT_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
 ENGINE = os.environ.get("JARVIS_TTS_ENGINE", "kokoro").strip().lower()
 PIPER_MODEL_DIR = Path(os.environ.get("JARVIS_PIPER_MODEL_DIR", "/models/piper"))
 PIPER_MODEL = os.environ.get("JARVIS_PIPER_MODEL", "en_US-lessac-high.onnx")
+SPANISH_PIPER_MODEL_DIR = Path(os.environ.get("JARVIS_SPANISH_PIPER_MODEL_DIR", "/spanish-piper"))
+SPANISH_PIPER_MODEL = os.environ.get("JARVIS_SPANISH_PIPER_MODEL", "es_MX-claude-high.onnx")
 KOKORO_MODEL_DIR = Path(os.environ.get("JARVIS_KOKORO_MODEL_DIR", "/models/kokoro"))
 KOKORO_MODEL = os.environ.get("JARVIS_KOKORO_MODEL", "kokoro-v1.0.onnx")
 KOKORO_VOICES = os.environ.get("JARVIS_KOKORO_VOICES", "voices-v1.0.bin")
@@ -57,6 +59,10 @@ def piper_model_path(voice):
         if candidate.exists():
             return candidate
     return PIPER_MODEL_DIR / PIPER_MODEL
+
+
+def spanish_piper_model_path():
+    return SPANISH_PIPER_MODEL_DIR / SPANISH_PIPER_MODEL
 
 
 def kokoro_paths():
@@ -121,6 +127,24 @@ def synthesize_piper(text, voice, tmpdir, output_format="ogg"):
     return audio_bytes(wav_path, ogg_path, output_format)
 
 
+def synthesize_spanish_piper(text, tmpdir, output_format="ogg"):
+    model_path = spanish_piper_model_path()
+    if not model_path.exists():
+        raise FileNotFoundError(f"spanish_piper_model_not_found: {model_path}")
+    wav_path = Path(tmpdir) / "spanish.wav"
+    ogg_path = Path(tmpdir) / "spanish.ogg"
+    subprocess.run(
+        ["piper", "--model", str(model_path), "--output_file", str(wav_path)],
+        input=text,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=240,
+    )
+    return audio_bytes(wav_path, ogg_path, output_format)
+
+
 def synthesize_espeak(text, voice, tmpdir, output_format="ogg", lang=None):
     voice_arg = lang or ("en-us" if voice in {"", "default", "piper", "kokoro"} else voice)
     wav_path = Path(tmpdir) / "briefing.wav"
@@ -150,6 +174,12 @@ def synthesize(text, voice, output_format="ogg", max_chars=None, lang=None):
         raise ValueError("format_must_be_ogg_or_wav")
     lang = str(lang or "").strip() or None
     with tempfile.TemporaryDirectory() as tmpdir:
+        if lang and lang.lower().startswith("es"):
+            try:
+                return synthesize_spanish_piper(text, tmpdir, output_format)
+            except Exception:
+                if os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true").lower() not in {"1", "true", "yes", "on"}:
+                    raise
         if ENGINE == "espeak":
             return synthesize_espeak(text, voice, tmpdir, output_format, lang)
         if ENGINE == "piper":
@@ -207,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
                     "kokoro_model": str(kokoro_paths()[0]),
                     "kokoro_voice": kokoro_voice(DEFAULT_VOICE),
                     "piper_model": str(piper_model_path(DEFAULT_VOICE)),
+                    "spanish_piper_model": str(spanish_piper_model_path()),
+                    "spanish_piper_available": spanish_piper_model_path().exists(),
                     "fallback": os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true"),
                 },
             )

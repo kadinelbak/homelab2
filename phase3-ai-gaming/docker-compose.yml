@@ -659,6 +659,10 @@ services:
       JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-default}
       JARVIS_TTS_MAX_CHARS: ${JARVIS_TTS_MAX_CHARS:-12000}
       JARVIS_TTS_ALLOW_FALLBACK: ${JARVIS_TTS_ALLOW_FALLBACK:-true}
+      JARVIS_SPANISH_PIPER_MODEL_DIR: /spanish-piper
+      JARVIS_SPANISH_PIPER_MODEL: ${JARVIS_SPANISH_PIPER_MODEL:-es_MX-claude-high.onnx}
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/tts/spanish-piper:/spanish-piper:ro
     networks:
       - homelab_internal
     labels:

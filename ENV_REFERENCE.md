@@ -109,6 +109,7 @@ bash scripts/setup.sh --validate-only
 | `JARVIS_TTS_MAX_CHARS` | Optional | Maximum characters sent to local TTS for a briefing voice note. Defaults to `12000`. |
 | `JARVIS_TTS_ALLOW_FALLBACK` | Optional | Allows falling back to `espeak-ng` if Piper fails. Defaults to `true`. |
 | `JARVIS_KOKORO_SPEED` | Optional | Kokoro speech speed multiplier. Defaults to `1.0`. |
+| `JARVIS_SPANISH_PIPER_MODEL` | Optional | Spanish Piper voice used when `/tts/synthesize` receives `lang: es`. Defaults to `es_MX-claude-high.onnx`; place the `.onnx` and `.onnx.json` files in `${DATA_PATH}/phase3-ai-gaming/data/tts/spanish-piper/`. |
 | `WEATHER_PROXY_URL` | Optional | Internal weather summary URL used by Jarvis morning briefing. Defaults to `http://weather-proxy:8098`. |
 | `NEWS_RSS_URLS` | Optional | Comma-separated RSS feed URLs for morning major-news headlines. Defaults to Google News US top stories RSS. |
 | `GITHUB_APP_ID` | Optional for GitHub briefings | GitHub App ID used by the GitHub tools worker. Required for GitHub App auth unless `GITHUB_TOKEN` is supplied temporarily. |
