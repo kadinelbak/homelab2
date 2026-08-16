@@ -28,6 +28,7 @@ document.querySelectorAll("nav button").forEach((button) => {
     document.querySelectorAll("nav button, .tab").forEach((el) => el.classList.remove("active"));
     button.classList.add("active");
     $(button.dataset.tab).classList.add("active");
+    window.scrollTo({top: 0, behavior: "smooth"});
   });
 });
 
@@ -40,9 +41,11 @@ $("tokenInput").addEventListener("change", () => {
 async function refreshHealth() {
   try {
     const data = await (await api("/health")).json();
-    $("health").textContent = data.ok ? "Ready" : "Degraded";
+    $("health").textContent = data.ok ? "● Ready" : "● Degraded";
+    $("health").className = data.ok ? "ready" : "warn";
   } catch {
-    $("health").textContent = "Offline";
+    $("health").textContent = "● Offline";
+    $("health").className = "offline";
   }
 }
 
@@ -61,7 +64,9 @@ $("sendChat").addEventListener("click", async () => {
 $("recordBtn").addEventListener("click", async () => {
   if (recorder && recorder.state === "recording") {
     recorder.stop();
-    $("recordBtn").textContent = "Record";
+    $("recordBtn").innerHTML = '<span aria-hidden="true">●</span>';
+    $("recordBtn").classList.remove("recording");
+    $("recordBtn").setAttribute("aria-label", "Record");
     return;
   }
   const stream = await navigator.mediaDevices.getUserMedia({audio: true});
@@ -77,7 +82,9 @@ $("recordBtn").addEventListener("click", async () => {
     stream.getTracks().forEach((track) => track.stop());
   };
   recorder.start();
-  $("recordBtn").textContent = "Stop";
+  $("recordBtn").innerHTML = '<span aria-hidden="true">■</span>';
+  $("recordBtn").classList.add("recording");
+  $("recordBtn").setAttribute("aria-label", "Stop recording");
 });
 
 $("makeStory").addEventListener("click", async () => {
@@ -148,7 +155,11 @@ function renderCard(item) {
   const el = card(`<strong class="spanish">${item.spanish}</strong><p>${item.english}</p><p class="muted">${item.example_sentence || ""}</p>`);
   ["again", "hard", "good", "easy"].forEach((rating) => {
     const b = document.createElement("button");
-    b.textContent = rating;
+    const symbols = {again: "↺", hard: "−", good: "✓", easy: "★"};
+    b.textContent = symbols[rating];
+    b.title = rating;
+    b.setAttribute("aria-label", rating);
+    b.className = "review-button";
     b.addEventListener("click", async () => {
       await api(`/api/vocab/${item.id}/review`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({rating})});
       el.remove();
@@ -172,9 +183,9 @@ function renderStory(story) {
     <p class="muted">Use these after listening to check understanding and practice answering out loud.</p>
     <ol>${questions}</ol>
     <div class="actions">
-      <button data-play-mode="sentence">Clause Loop</button>
-      <button data-play-mode="full">Full Story</button>
-      <button data-play-mode="shadow">Clause Shadowing</button>
+      <button data-play-mode="sentence" class="primary icon-button" title="Clause loop" aria-label="Clause loop">▶</button>
+      <button data-play-mode="full" class="icon-button" title="Full story" aria-label="Full story">▸▸</button>
+      <button data-play-mode="shadow" class="icon-button" title="Shadowing" aria-label="Shadowing">◌</button>
     </div>`;
   $("storyOutput").querySelectorAll("[data-play-mode]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -237,3 +248,7 @@ function speakInBrowser(text, lang) {
 }
 
 refreshHealth();
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+}

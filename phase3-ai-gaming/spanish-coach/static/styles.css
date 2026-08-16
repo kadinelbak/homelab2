@@ -23,7 +23,7 @@ body {
 main {
   width: min(1120px, calc(100vw - 28px));
   margin: 0 auto;
-  padding: 24px 0 40px;
+  padding: 20px 0 40px;
 }
 
 header {
@@ -38,6 +38,7 @@ h1 { margin: 0; font-size: 34px; letter-spacing: 0; }
 h2 { margin: 6px 0 12px; }
 h3 { margin: 14px 0 0; font-size: 18px; }
 p { margin: 7px 0 0; color: var(--muted); }
+.tagline { max-width: 22rem; }
 
 #health {
   border: 1px solid var(--line);
@@ -47,15 +48,45 @@ p { margin: 7px 0 0; color: var(--muted); }
   white-space: nowrap;
 }
 
-.topbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+#health.ready { color: var(--accent); }
+#health.warn { color: var(--accent2); }
+#health.offline { color: #ff8c7a; }
+
+.settings {
+  position: relative;
+}
+
+.settings summary {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings summary::-webkit-details-marker { display: none; }
+
+.settings-panel {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 230px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121810;
+  padding: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.36);
 }
 
 #tokenInput {
-  width: 180px;
+  width: 100%;
   margin-top: 0;
+  margin-bottom: 8px;
 }
 
 nav {
@@ -74,11 +105,32 @@ button {
   padding: 9px 13px;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 button:hover, button.active {
   border-color: var(--accent);
   background: #263b22;
+}
+
+.primary {
+  background: #2f4c28;
+  border-color: #6fbf61;
+}
+
+.icon-button, .review-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.recording {
+  border-color: #ff8c7a;
+  color: #ffb3a8;
 }
 
 .tab { display: none; }
@@ -121,6 +173,10 @@ textarea { resize: vertical; }
   margin-top: 10px;
 }
 
+.actions .primary:first-child {
+  min-width: 56px;
+}
+
 .stack {
   display: grid;
   gap: 10px;
@@ -151,9 +207,55 @@ ol { padding-left: 22px; color: var(--muted); }
 li { margin-bottom: 6px; }
 
 @media (max-width: 640px) {
-  header { display: block; }
-  .topbar { margin-top: 12px; align-items: stretch; }
-  #tokenInput { width: min(220px, 100%); }
-  #health { display: inline-block; margin-top: 12px; }
+  body { padding-bottom: 78px; }
+  main {
+    width: min(100vw - 20px, 640px);
+    padding-top: 14px;
+  }
+  header {
+    align-items: start;
+    margin-bottom: 12px;
+  }
   h1 { font-size: 28px; }
+  .tagline { display: none; }
+  .settings-panel {
+    right: 0;
+    min-width: min(88vw, 260px);
+  }
+  nav {
+    position: fixed;
+    z-index: 20;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin: 0;
+    padding: 7px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(16, 21, 15, 0.94);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  }
+  nav button {
+    min-width: 0;
+    min-height: 50px;
+    padding: 7px;
+    font-size: 22px;
+  }
+  .nav-label { display: none; }
+  .grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  label { font-size: 12px; }
+  textarea, input, select {
+    min-height: 44px;
+    padding: 10px;
+  }
+  #chatInput { min-height: 136px; }
+  .panel, .card { padding: 12px; }
+  .spanish, .english { line-height: 1.55; }
 }

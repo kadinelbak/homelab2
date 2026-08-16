@@ -3,35 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111510">
   <title>Spanish Coach</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 </head>
 <body>
   <main>
     <header>
       <div>
-        <h1>Spanish Coach</h1>
-        <p>Speak, listen, review, and learn through short bilingual stories.</p>
+        <h1>Español</h1>
+        <p class="tagline">Speak, listen, review.</p>
       </div>
-      <div class="topbar">
-        <input id="tokenInput" type="password" placeholder="Token if set">
-        <span id="health">Checking...</span>
-      </div>
+      <details class="settings">
+        <summary title="Settings" aria-label="Settings">⚙</summary>
+        <div class="settings-panel">
+          <input id="tokenInput" type="password" placeholder="Token if set" autocomplete="off">
+          <span id="health">Checking...</span>
+        </div>
+      </details>
     </header>
 
-    <nav>
-      <button data-tab="coach" class="active">Coach</button>
-      <button data-tab="stories">Stories</button>
-      <button data-tab="vocab">Vocab</button>
-      <button data-tab="loops">Loops</button>
+    <nav aria-label="Practice modes">
+      <button data-tab="coach" class="active" title="Coach" aria-label="Coach"><span aria-hidden="true">◉</span><span class="nav-label">Coach</span></button>
+      <button data-tab="stories" title="Stories" aria-label="Stories"><span aria-hidden="true">▤</span><span class="nav-label">Stories</span></button>
+      <button data-tab="vocab" title="Vocab" aria-label="Vocab"><span aria-hidden="true">◇</span><span class="nav-label">Vocab</span></button>
+      <button data-tab="loops" title="Loops" aria-label="Loops"><span aria-hidden="true">↻</span><span class="nav-label">Loops</span></button>
     </nav>
 
     <section id="coach" class="tab active">
       <div class="panel">
-        <textarea id="chatInput" rows="4" placeholder="Type or speak naturally. Example: I want to order coffee in Spanish."></textarea>
+        <textarea id="chatInput" rows="4" placeholder="Talk or type..."></textarea>
         <div class="actions">
-          <button id="sendChat">Send</button>
-          <button id="recordBtn">Record</button>
+          <button id="sendChat" class="primary icon-button" title="Send" aria-label="Send"><span aria-hidden="true">→</span></button>
+          <button id="recordBtn" class="icon-button" title="Record" aria-label="Record"><span aria-hidden="true">●</span></button>
         </div>
       </div>
       <div id="chatOutput" class="stack"></div>
@@ -44,10 +50,10 @@
         <label>Length <select id="storyLength"><option>short</option><option>medium</option></select></label>
         <label>Tense <input id="storyTense" placeholder="present, past, future"></label>
       </div>
-      <textarea id="storyVocab" rows="2" placeholder="Optional vocab focus"></textarea>
+      <textarea id="storyVocab" rows="2" placeholder="Vocab focus"></textarea>
       <div class="actions">
-        <button id="makeStory">Generate Story</button>
-        <button id="playStory">Play Spanish-English-Spanish</button>
+        <button id="makeStory" class="primary icon-button" title="Generate story" aria-label="Generate story"><span aria-hidden="true">✦</span></button>
+        <button id="playStory" class="icon-button" title="Play clause loop" aria-label="Play clause loop"><span aria-hidden="true">▶</span></button>
       </div>
       <article id="storyOutput" class="panel"></article>
     </section>
@@ -58,13 +64,16 @@
         <input id="vocabEnglish" placeholder="English">
       </div>
       <input id="vocabExample" placeholder="Example sentence">
-      <div class="actions"><button id="addVocab">Add Card</button><button id="loadDue">Load Due Cards</button></div>
+      <div class="actions">
+        <button id="addVocab" class="primary icon-button" title="Add card" aria-label="Add card"><span aria-hidden="true">＋</span></button>
+        <button id="loadDue" class="icon-button" title="Load due cards" aria-label="Load due cards"><span aria-hidden="true">↻</span></button>
+      </div>
       <div id="vocabOutput" class="stack"></div>
     </section>
 
     <section id="loops" class="tab">
       <textarea id="loopText" rows="5" placeholder="Line 1 Spanish&#10;Line 2 English&#10;Line 3 Spanish"></textarea>
-      <div class="actions"><button id="playLoop">Play Loop</button></div>
+      <div class="actions"><button id="playLoop" class="primary icon-button" title="Play loop" aria-label="Play loop"><span aria-hidden="true">▶</span></button></div>
       <audio id="audio" controls></audio>
     </section>
   </main>
