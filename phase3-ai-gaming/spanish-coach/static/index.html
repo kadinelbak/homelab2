@@ -26,13 +26,54 @@
     </header>
 
     <nav aria-label="Practice modes">
-      <button data-tab="coach" class="active" title="Coach" aria-label="Coach"><span aria-hidden="true">◉</span><span class="nav-label">Coach</span></button>
+      <button data-tab="daily" class="active" title="Daily" aria-label="Daily"><span aria-hidden="true">☀</span><span class="nav-label">Daily</span></button>
+      <button data-tab="coach" title="Coach" aria-label="Coach"><span aria-hidden="true">◉</span><span class="nav-label">Coach</span></button>
       <button data-tab="stories" title="Stories" aria-label="Stories"><span aria-hidden="true">▤</span><span class="nav-label">Stories</span></button>
       <button data-tab="vocab" title="Vocab" aria-label="Vocab"><span aria-hidden="true">◇</span><span class="nav-label">Vocab</span></button>
       <button data-tab="loops" title="Loops" aria-label="Loops"><span aria-hidden="true">↻</span><span class="nav-label">Loops</span></button>
     </nav>
 
-    <section id="coach" class="tab active">
+    <div class="player panel">
+      <div>
+        <strong id="queueTitle">Ready</strong>
+        <p id="queueNow">Pick a practice mode.</p>
+      </div>
+      <div class="player-controls">
+        <button id="replaySegment" class="icon-button" title="Replay" aria-label="Replay"><span aria-hidden="true">↺</span></button>
+        <select id="speedSelect" title="Speed" aria-label="Speed">
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.15">1.15x</option>
+        </select>
+        <select id="pauseSelect" title="Pause" aria-label="Pause">
+          <option value="0.4">short</option>
+          <option value="0.9" selected>pause</option>
+          <option value="1.6">long</option>
+        </select>
+      </div>
+      <audio id="audio" controls></audio>
+    </div>
+
+    <section id="daily" class="tab active">
+      <div id="stats" class="stats"></div>
+      <div class="panel daily-hero">
+        <div>
+          <h2>Morning Spanish</h2>
+          <p>One tap: listen, speak, review.</p>
+        </div>
+        <button id="startDaily" class="primary icon-button hero-play" title="Start daily session" aria-label="Start daily session"><span aria-hidden="true">▶</span></button>
+      </div>
+      <div class="topic-row" aria-label="Story topics">
+        <button data-topic="travel">travel</button>
+        <button data-topic="food">food</button>
+        <button data-topic="family">family</button>
+        <button data-topic="work">work</button>
+        <button data-topic="survival Spanish">survival</button>
+      </div>
+      <div id="dailyOutput" class="stack"></div>
+    </section>
+
+    <section id="coach" class="tab">
       <div class="panel">
         <textarea id="chatInput" rows="4" placeholder="Talk or type..."></textarea>
         <div class="actions">
@@ -47,13 +88,14 @@
       <div class="grid">
         <label>Level <select id="storyLevel"><option>beginner</option><option>intermediate</option></select></label>
         <label>Topic <input id="storyTopic" placeholder="market, travel, cafe, family"></label>
-        <label>Length <select id="storyLength"><option>short</option><option>medium</option></select></label>
+        <label>Length <select id="storyLength"><option>short</option><option>medium</option><option>long</option></select></label>
         <label>Tense <input id="storyTense" placeholder="present, past, future"></label>
       </div>
       <textarea id="storyVocab" rows="2" placeholder="Vocab focus"></textarea>
       <div class="actions">
         <button id="makeStory" class="primary icon-button" title="Generate story" aria-label="Generate story"><span aria-hidden="true">✦</span></button>
         <button id="playStory" class="icon-button" title="Play clause loop" aria-label="Play clause loop"><span aria-hidden="true">▶</span></button>
+        <button id="favoriteStory" class="icon-button" title="Favorite story" aria-label="Favorite story"><span aria-hidden="true">★</span></button>
       </div>
       <article id="storyOutput" class="panel"></article>
     </section>
@@ -74,7 +116,6 @@
     <section id="loops" class="tab">
       <textarea id="loopText" rows="5" placeholder="Line 1 Spanish&#10;Line 2 English&#10;Line 3 Spanish"></textarea>
       <div class="actions"><button id="playLoop" class="primary icon-button" title="Play loop" aria-label="Play loop"><span aria-hidden="true">▶</span></button></div>
-      <audio id="audio" controls></audio>
     </section>
   </main>
   <script src="/static/app.js"></script>

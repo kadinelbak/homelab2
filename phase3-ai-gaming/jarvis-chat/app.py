@@ -24,6 +24,8 @@ WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
 TTS_WORKER_TOKEN = os.environ.get("JARVIS_TTS_TOKEN", "")
 TTS_VOICE = os.environ.get("JARVIS_TTS_VOICE", "default")
+SPANISH_COACH_URL = os.environ.get("SPANISH_COACH_URL", "http://spanish-coach:8120").rstrip("/")
+SPANISH_COACH_TOKEN = os.environ.get("SPANISH_COACH_TOKEN", "")
 CHAT_TOKEN = os.environ.get("JARVIS_CHAT_TOKEN", "")
 USER_TIMEZONE = os.environ.get("JARVIS_USER_TIMEZONE", "America/New_York")
 
@@ -105,6 +107,12 @@ def wants_core_voice(text):
         "what notifications",
         "approve ",
     )
+    return any(term in lowered for term in terms)
+
+
+def wants_spanish_voice(text):
+    lowered = str(text or "").lower()
+    terms = ("spanish practice", "morning spanish", "spanish follow up", "spanish follow-up", "learn spanish")
     return any(term in lowered for term in terms)
 
 
@@ -1751,6 +1759,25 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
 
+    def spanish_proxy(self, method, path, payload=None, timeout=180):
+        body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
+        headers = {"Content-Type": "application/json"}
+        if SPANISH_COACH_TOKEN and not SPANISH_COACH_TOKEN.startswith("CHANGE_ME"):
+            headers["Authorization"] = f"Bearer {SPANISH_COACH_TOKEN}"
+        req = urllib.request.Request(SPANISH_COACH_URL + path, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.status, json.loads(response.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            try:
+                data = json.loads(exc.read().decode("utf-8") or "{}")
+            except Exception:
+                data = {"error": str(exc)}
+            return exc.code, data
+        except Exception as exc:
+            return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
+
+
     def codex_proxy(self, method, path, payload=None, timeout=120):
         body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
         headers = {"Content-Type": "application/json"}
@@ -2126,6 +2153,13 @@ class Handler(BaseHTTPRequestHandler):
             text = str(payload.get("text") or payload.get("request") or "").strip()
             if not text:
                 self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "text_required"})
+                return
+            if wants_spanish_voice(text):
+                status, data = self.spanish_proxy("GET", "/api/jarvis/morning-spanish", timeout=240)
+                if status >= 400:
+                    self.write_json(status, data)
+                    return
+                self.write_json(HTTPStatus.OK, {"ok": True, "text": data.get("text") or "Spanish practice is ready.", "spanish": data})
                 return
             if wants_core_voice(text):
                 status, data = self.core_voice_request(text)

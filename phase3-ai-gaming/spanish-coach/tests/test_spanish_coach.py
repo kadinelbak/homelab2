@@ -106,6 +106,39 @@ def test_vocab_deduplicates_across_sources(tmp_path):
     assert cleaned[0]["spanish"] == "español"
 
 
+def test_daily_session_returns_story_vocab_and_progress(tmp_path):
+    _, client = load_app(tmp_path)
+    response = client.post("/api/daily-session", headers=auth(), json={"topic": "food", "level": "beginner", "length": "short"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["kind"] == "morning_spanish"
+    assert data["story"]["spanish_text"]
+    assert data["due_cards"]
+    assert data["stats"]["today_events"] >= 1
+    assert "Spanish follow-up is ready" in data["summary"]
+
+
+def test_favorites_progress_and_pronunciation_feedback(tmp_path):
+    _, client = load_app(tmp_path)
+    favorite = client.post("/api/favorites", headers=auth(), json={"item_type": "phrase", "item_id": "hola", "label": "hola"}).json()
+    assert favorite["label"] == "hola"
+    score = client.post("/api/pronunciation", headers=auth(), json={"target": "mañana voy al mercado", "spoken": "manana voy mercado"}).json()
+    assert score["score"] < 100
+    progress = client.get("/api/progress", headers=auth()).json()
+    assert progress["favorites"] == 1
+    assert progress["today_events"] >= 1
+
+
+def test_jarvis_morning_spanish_summary(tmp_path):
+    _, client = load_app(tmp_path)
+    response = client.get("/api/jarvis/morning-spanish", headers=auth())
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["text"]
+    assert data["session"]["story_id"]
+
+
 def test_tts_posts_segments_to_worker(tmp_path, monkeypatch):
     module, client = load_app(tmp_path)
 

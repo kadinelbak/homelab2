@@ -1,10 +1,9 @@
-import base64
 import json
 import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +86,29 @@ class Story(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    item_type: Mapped[str] = mapped_column(String(32), index=True)
+    item_id: Mapped[str] = mapped_column(String(80), index=True)
+    label: Mapped[str] = mapped_column(String(240), default="")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class PracticeEvent(Base):
+    __tablename__ = "practice_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type: Mapped[str] = mapped_column(String(40), index=True)
+    item_type: Mapped[str] = mapped_column(String(32), default="")
+    item_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    seconds: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 def init_db() -> None:
     if DATABASE_URL.startswith("sqlite"):
         path = DATABASE_URL.removeprefix("sqlite:///")
@@ -123,6 +145,10 @@ def require_auth(authorization: str | None = Header(default=None)) -> None:
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def day_start(value: date) -> datetime:
+    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
 
 
 def parse_json_object(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -442,6 +468,85 @@ def schedule_review(card: VocabCard, rating: str) -> None:
     card.review_history = history
 
 
+def normalize_words(value: str) -> list[str]:
+    cleaned = re.sub(r"[^0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", " ", value.lower())
+    return [word for word in cleaned.split() if word]
+
+
+def pronunciation_feedback(target: str, spoken: str) -> dict[str, Any]:
+    target_words = normalize_words(target)
+    spoken_words = normalize_words(spoken)
+    spoken_remaining = spoken_words[:]
+    matched = 0
+    missing = []
+    for word in target_words:
+        if word in spoken_remaining:
+            matched += 1
+            spoken_remaining.remove(word)
+        else:
+            missing.append(word)
+    score = round((matched / max(len(target_words), 1)) * 100)
+    tips = []
+    if any("ñ" in word for word in missing + target_words):
+        tips.append("Lean into ñ like canyon: mañana, pequeño, español.")
+    if missing:
+        tips.append("Repeat the missing words slowly, then say the full clause again.")
+    else:
+        tips.append("Nice match. Try it once more a little faster.")
+    return {
+        "score": score,
+        "matched": matched,
+        "target_words": target_words,
+        "spoken_words": spoken_words,
+        "missing": missing[:8],
+        "extra": spoken_remaining[:8],
+        "tips": tips[:3],
+    }
+
+
+def record_event(db: Session, event_type: str, item_type: str = "", item_id: str = "", seconds: int = 0, payload: dict[str, Any] | None = None) -> PracticeEvent:
+    event = PracticeEvent(event_type=event_type, item_type=item_type, item_id=item_id, seconds=max(0, int(seconds or 0)), payload=payload or {})
+    db.add(event)
+    return event
+
+
+def progress_stats(db: Session) -> dict[str, Any]:
+    now = now_utc()
+    start = day_start(now.date())
+    due_count = db.scalar(select(text("count(*)")).select_from(VocabCard).where(VocabCard.due_at <= now)) or 0
+    story_count = db.scalar(select(text("count(*)")).select_from(Story)) or 0
+    favorite_count = db.scalar(select(text("count(*)")).select_from(Favorite)) or 0
+    today_events = db.scalars(select(PracticeEvent).where(PracticeEvent.created_at >= start)).all()
+    today_minutes = round(sum(event.seconds or 0 for event in today_events) / 60, 1)
+    active_dates = {
+        event.created_at.date()
+        for event in db.scalars(select(PracticeEvent).order_by(PracticeEvent.created_at.desc()).limit(400)).all()
+    }
+    streak = 0
+    cursor = now.date()
+    while cursor in active_dates:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+    return {
+        "streak_days": streak,
+        "today_minutes": today_minutes,
+        "today_events": len(today_events),
+        "due_cards": int(due_count),
+        "stories": int(story_count),
+        "favorites": int(favorite_count),
+        "next_best_action": "daily" if len(today_events) == 0 else ("vocab" if due_count else "story"),
+    }
+
+
+def session_summary_text(story: Story, due_cards: list[VocabCard], stats: dict[str, Any]) -> str:
+    card_line = f"{len(due_cards)} vocab cards due" if due_cards else "no vocab cards due"
+    return (
+        "Spanish follow-up is ready. "
+        f"Start with the story '{story.title}', then do {card_line}. "
+        f"Today's Spanish practice is at {stats['today_minutes']} minutes with a {stats['streak_days']}-day streak."
+    )
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     save_vocab: bool = True
@@ -473,6 +578,33 @@ class StoryCreate(BaseModel):
     tense: str = ""
     vocab_focus: str = ""
     save_vocab: bool = True
+
+
+class FavoriteCreate(BaseModel):
+    item_type: str
+    item_id: str
+    label: str = ""
+    payload: dict[str, Any] = {}
+
+
+class PracticeEventCreate(BaseModel):
+    event_type: str
+    item_type: str = ""
+    item_id: str = ""
+    seconds: int = 0
+    payload: dict[str, Any] = {}
+
+
+class PronunciationRequest(BaseModel):
+    target: str
+    spoken: str
+
+
+class DailySessionRequest(BaseModel):
+    topic: str = "daily life"
+    level: str = "beginner"
+    length: str = "short"
+    tense: str = "present"
 
 
 @app.get("/")
@@ -508,6 +640,7 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)) -> dict[str, Any
     vocab = clean_vocab(data.get("vocab"))
     session = PracticeSession(user_text=req.message, tutor_text=str(data.get("reply") or ""), corrections=data.get("corrections") or [], extracted_vocab=vocab)
     db.add(session)
+    record_event(db, "chat", "session", session.id, seconds=60, payload={"message_words": len(req.message.split())})
     if req.save_vocab:
         upsert_vocab(db, vocab)
     db.commit()
@@ -586,6 +719,7 @@ def review_vocab(card_id: str, req: ReviewRequest, db: Session = Depends(get_db)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
     schedule_review(card, req.rating)
+    record_event(db, "vocab_review", "vocab", card.id, seconds=20, payload={"rating": req.rating})
     db.commit()
     return card_dict(card)
 
@@ -615,6 +749,7 @@ async def create_story(req: StoryCreate, db: Session = Depends(get_db)) -> dict[
         listening_plan=listening_plan(str(data.get("spanish_text") or ""), str(data.get("english_text") or "")),
     )
     db.add(story)
+    record_event(db, "story_generated", "story", story.id, seconds=0, payload={"level": req.level, "length": req.length, "topic": req.topic})
     if req.save_vocab:
         upsert_vocab(db, vocab)
     db.commit()
@@ -623,6 +758,104 @@ async def create_story(req: StoryCreate, db: Session = Depends(get_db)) -> dict[
     if generation_error:
         result["generation_error"] = generation_error
     return result
+
+
+@app.post("/api/daily-session", dependencies=[Depends(require_auth)])
+async def daily_session(req: DailySessionRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    story_req = StoryCreate(level=req.level, topic=req.topic or "daily life", length=req.length, tense=req.tense, vocab_focus="useful morning phrases, errands, food, plans")
+    source = "llm"
+    try:
+        raw = await call_llm(story_prompt(story_req))
+        data = parse_json_object(raw, fallback_story(story_req))
+        if data.get("source") == "fallback":
+            source = "fallback_parse"
+    except Exception:
+        data = fallback_story(story_req)
+        source = "fallback"
+    vocab = clean_vocab(data.get("vocabulary"))
+    story = Story(
+        title=str(data.get("title") or "Morning Spanish"),
+        level=story_req.level,
+        topic=story_req.topic,
+        spanish_text=str(data.get("spanish_text") or ""),
+        english_text=str(data.get("english_text") or ""),
+        vocabulary=vocab,
+        questions=[str(q) for q in (data.get("questions") or [])],
+        listening_plan=listening_plan(str(data.get("spanish_text") or ""), str(data.get("english_text") or "")),
+    )
+    db.add(story)
+    upsert_vocab(db, vocab)
+    due_cards = db.scalars(select(VocabCard).where(VocabCard.due_at <= now_utc()).order_by(VocabCard.due_at).limit(5)).all()
+    record_event(db, "daily_session_started", "story", story.id, seconds=30, payload={"topic": story_req.topic, "source": source})
+    db.commit()
+    stats = progress_stats(db)
+    return {
+        "kind": "morning_spanish",
+        "coach_prompt": "Say one sentence about your morning in Spanish. I will correct it.",
+        "story": story_dict(story),
+        "due_cards": [card_dict(card) for card in due_cards],
+        "stats": stats,
+        "summary": session_summary_text(story, due_cards, stats),
+        "source": source,
+    }
+
+
+@app.get("/api/progress", dependencies=[Depends(require_auth)])
+def progress(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return progress_stats(db)
+
+
+@app.post("/api/events", dependencies=[Depends(require_auth)])
+def create_event(req: PracticeEventCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
+    event = record_event(db, req.event_type, req.item_type, req.item_id, req.seconds, req.payload)
+    db.commit()
+    return {"id": event.id, "stats": progress_stats(db)}
+
+
+@app.get("/api/favorites", dependencies=[Depends(require_auth)])
+def list_favorites(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    items = db.scalars(select(Favorite).order_by(Favorite.created_at.desc()).limit(100)).all()
+    return [favorite_dict(item) for item in items]
+
+
+@app.post("/api/favorites", dependencies=[Depends(require_auth)])
+def save_favorite(req: FavoriteCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
+    item_type = req.item_type.strip().lower()
+    item_id = req.item_id.strip()
+    if not item_type or not item_id:
+        raise HTTPException(status_code=400, detail="item_type and item_id are required")
+    favorite = db.scalar(select(Favorite).where(Favorite.item_type == item_type, Favorite.item_id == item_id))
+    if not favorite:
+        favorite = Favorite(item_type=item_type, item_id=item_id)
+        db.add(favorite)
+    favorite.label = req.label or favorite.label or item_id
+    favorite.payload = req.payload or favorite.payload or {}
+    db.commit()
+    return favorite_dict(favorite)
+
+
+@app.post("/api/pronunciation", dependencies=[Depends(require_auth)])
+def score_pronunciation(req: PronunciationRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    result = pronunciation_feedback(req.target, req.spoken)
+    record_event(db, "pronunciation", "phrase", req.target[:80], seconds=30, payload={"score": result["score"], "spoken": req.spoken})
+    db.commit()
+    return result
+
+
+@app.get("/api/jarvis/morning-spanish", dependencies=[Depends(require_auth)])
+async def jarvis_morning_spanish(db: Session = Depends(get_db)) -> dict[str, Any]:
+    session = await daily_session(DailySessionRequest(topic="daily life", level="beginner", length="short", tense="present"), db)
+    return {
+        "ok": True,
+        "text": session["summary"] + " Open Spanish Coach and press the daily play button when you are ready.",
+        "launch_url": "/",
+        "session": {
+            "story_id": session["story"]["id"],
+            "title": session["story"]["title"],
+            "due_cards": len(session["due_cards"]),
+            "stats": session["stats"],
+        },
+    }
 
 
 @app.get("/api/stories", dependencies=[Depends(require_auth)])
@@ -668,6 +901,17 @@ def card_dict(card: VocabCard) -> dict[str, Any]:
         "repetitions": card.repetitions,
         "lapses": card.lapses,
         "due_at": card.due_at.isoformat(),
+    }
+
+
+def favorite_dict(item: Favorite) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "item_type": item.item_type,
+        "item_id": item.item_id,
+        "label": item.label,
+        "payload": item.payload or {},
+        "created_at": item.created_at.isoformat(),
     }
 
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "spanish-coach-shell-v1";
+const CACHE_NAME = "spanish-coach-shell-v2";
 const SHELL = ["/", "/static/styles.css", "/static/app.js", "/static/icon.svg", "/static/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

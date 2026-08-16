@@ -487,6 +487,8 @@ services:
       JARVIS_TTS_WORKER_URL: http://tts-worker:8101
       JARVIS_TTS_TOKEN: ${JARVIS_TTS_TOKEN:-}
       JARVIS_TTS_VOICE: ${JARVIS_TTS_VOICE:-default}
+      SPANISH_COACH_URL: http://spanish-coach:8120
+      SPANISH_COACH_TOKEN: ${SPANISH_COACH_TOKEN:-}
       JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
       JARVIS_CHAT_PORT: 18100
     ports:
@@ -739,7 +741,7 @@ services:
       - "homepage.name=Spanish Coach"
       - "homepage.icon=mdi-translate"
       - "homepage.href=http://${DOMAIN}:${SPANISH_COACH_HOST_PORT:-18120}"
-      - "homepage.description=Private Spanish speaking, vocab, and listening practice"
+      - "homepage.description=Morning Spanish follow-up with listening, speaking, vocab, and stories"
 
   # ---------------------------------------------------------------------------
   # HOME ASSISTANT – Smart Home Hub

@@ -144,6 +144,79 @@ button:hover, button.active {
   margin-bottom: 12px;
 }
 
+.player {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.player audio {
+  grid-column: 1 / -1;
+}
+
+.player-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.player select {
+  width: auto;
+  min-height: 44px;
+  margin-top: 0;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stats div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(28, 34, 27, 0.8);
+  padding: 10px;
+}
+
+.stats b {
+  display: block;
+  font-size: 22px;
+}
+
+.stats span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.daily-hero, .split-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.hero-play {
+  min-width: 64px;
+  min-height: 64px;
+  font-size: 28px;
+}
+
+.topic-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.topic-row button {
+  min-height: 34px;
+  padding: 7px 10px;
+  color: var(--muted);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -229,7 +302,7 @@ li { margin-bottom: 6px; }
     right: 10px;
     bottom: 10px;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 6px;
     margin: 0;
     padding: 7px;
@@ -244,6 +317,31 @@ li { margin-bottom: 6px; }
     min-height: 50px;
     padding: 7px;
     font-size: 22px;
+  }
+  .player {
+    position: sticky;
+    top: 8px;
+    z-index: 15;
+    grid-template-columns: 1fr;
+  }
+  .player-controls {
+    justify-content: space-between;
+  }
+  .stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .stats div {
+    padding: 8px;
+  }
+  .stats b {
+    font-size: 18px;
+  }
+  .daily-hero {
+    align-items: center;
+  }
+  .hero-play {
+    min-width: 58px;
+    min-height: 58px;
   }
   .nav-label { display: none; }
   .grid {
