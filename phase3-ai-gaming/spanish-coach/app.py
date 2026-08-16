@@ -169,15 +169,16 @@ def parse_json_object(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
 
 def story_shape(level: str, length: str) -> dict[str, int | str]:
     level_key = str(level or "beginner").lower()
-    length_key = str(length or "short").lower()
-    sentence_counts = {"short": 5, "medium": 10, "long": 16}
+    length_key = str(length or "short").lower().replace("-", "_").replace(" ", "_")
+    sentence_counts = {"short": 5, "medium": 10, "long": 16, "ten_minutes": 42, "10_min": 42, "10_minutes": 42}
     base = int(sentence_counts.get(length_key, 5))
-    if level_key in {"intermediate", "advanced"}:
+    if length_key not in {"ten_minutes", "10_min", "10_minutes"} and level_key in {"intermediate", "advanced"}:
         base += 3
-    if level_key == "advanced":
+    if length_key not in {"ten_minutes", "10_min", "10_minutes"} and level_key == "advanced":
         base += 4
     cefr = {"beginner": "A1-A2", "intermediate": "B1-B2", "advanced": "B2-C1"}.get(level_key, "A1-A2")
-    return {"sentences": base, "cefr": cefr}
+    minutes = 10 if length_key in {"ten_minutes", "10_min", "10_minutes"} else ""
+    return {"sentences": base, "cefr": cefr, "minutes": minutes}
 
 
 def tutor_prompt(message: str) -> list[dict[str, str]]:
@@ -193,6 +194,7 @@ def tutor_prompt(message: str) -> list[dict[str, str]]:
 
 def story_prompt(req: "StoryCreate") -> list[dict[str, str]]:
     shape = story_shape(req.level, req.length)
+    long_form = " Aim for about 10 minutes of Spanish-English-Spanish listening playback, organized into 4 short scenes." if shape.get("minutes") == 10 else ""
     system = (
         "You generate varied interactive Spanish learning stories. The target language is Spanish. "
         "Return compact JSON only with keys title, spanish_text, english_text, vocabulary, questions. "
@@ -207,6 +209,7 @@ def story_prompt(req: "StoryCreate") -> list[dict[str, str]]:
         f"Tense focus: {req.tense or 'present and practical past'}. "
         f"Required vocab focus: {req.vocab_focus or 'common useful words'}. "
         "Make the story specific, with a small decision or emotional turn, and include one question that asks the learner what they would say next."
+        f"{long_form}"
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -341,7 +344,38 @@ def fallback_story(req: "StoryCreate") -> dict[str, Any]:
         for es, en in seed
     ]
     count = int(shape["sentences"])
-    selected = seed[: min(count, len(seed))]
+    expanded_seed = list(seed)
+    if count > len(expanded_seed):
+        scene_labels = [
+            ("Primera escena", "First scene"),
+            ("Segunda escena", "Second scene"),
+            ("Tercera escena", "Third scene"),
+            ("Cuarta escena", "Fourth scene"),
+        ]
+        cycle = 0
+        while len(expanded_seed) < count:
+            scene_es, scene_en = scene_labels[cycle % len(scene_labels)]
+            for index, (es, en) in enumerate(seed):
+                if len(expanded_seed) >= count:
+                    break
+                detail = cycle + 2
+                expanded_seed.append(
+                    (
+                        f"{scene_es} {detail}: {es}",
+                        f"{scene_en} {detail}: {en}",
+                    )
+                )
+                if len(expanded_seed) >= count:
+                    break
+                if index % 4 == 3:
+                    expanded_seed.append(
+                        (
+                            f"Antes de continuar, repite esta idea en voz alta: «Puedo practicar paso a paso».",
+                            "Before continuing, repeat this idea out loud: \"I can practice step by step.\"",
+                        )
+                    )
+            cycle += 1
+    selected = expanded_seed[: min(count, len(expanded_seed))]
     if tense.startswith("past") or tense.startswith("pretérito") or tense.startswith("preter"):
         selected = [(es.replace("Esta mañana", "Ayer").replace("encuentra", "encontró").replace("prepara", "preparó"), en) for es, en in selected]
     spanish_text = " ".join(es for es, _ in selected)

@@ -74,6 +74,22 @@ def test_story_length_and_level_change_fallback_size(tmp_path):
     assert "mañana" in long["spanish_text"]
 
 
+def test_ten_minute_story_length_expands_fallback_and_prompt(tmp_path):
+    module, client = load_app(tmp_path)
+    shape = module.story_shape("beginner", "ten_minutes")
+    assert shape["sentences"] >= 40
+    assert shape["minutes"] == 10
+    prompt = module.story_prompt(module.StoryCreate(topic="travel", length="ten_minutes"))
+    assert "10 minutes" in prompt[1]["content"]
+    story = module.fallback_story(module.StoryCreate(topic="travel", length="ten_minutes"))
+    assert len(module.split_sentences(story["spanish_text"])) >= 40
+    response = client.post("/api/stories", headers=auth(), json={"topic": "travel", "level": "beginner", "length": "ten_minutes"})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(module.split_sentences(data["spanish_text"])) >= 40
+    assert len(data["listening_plan"]["sentence_loop"]) >= 40
+
+
 def test_listening_plan_uses_clause_sized_story_chunks(tmp_path):
     module, _ = load_app(tmp_path)
     plan = module.listening_plan(
