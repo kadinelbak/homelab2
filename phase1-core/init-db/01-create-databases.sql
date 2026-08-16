@@ -15,6 +15,7 @@ CREATE DATABASE paperless;
 -- Automation & Utility
 CREATE DATABASE n8n;
 CREATE DATABASE jarvis_core;
+CREATE DATABASE spanish_coach;
 
 -- On-Demand Services
 CREATE DATABASE gitea;

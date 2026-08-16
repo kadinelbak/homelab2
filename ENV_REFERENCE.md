@@ -118,6 +118,13 @@ bash scripts/setup.sh --validate-only
 | `JARVIS_FAST_LLM_*` | Optional | External 70B-style model profile for general assistant drafting, summaries, and normal planning. Requires provider base URL and API key. |
 | `JARVIS_DEEP_LLM_*` | Optional | External larger reasoning model profile for architecture, coding plans, decomposition, and complex work. Requires provider base URL and API key. |
 | `WHISPER_*` | Optional | Whisper worker settings for speech-to-text. Defaults to CPU `base` with `int8` compute. |
+| `SPANISH_COACH_DATABASE_URL` | Yes for Spanish Coach | SQLAlchemy database URL for the private Spanish learning app. Defaults to central Postgres database `spanish_coach`. |
+| `SPANISH_COACH_REDIS_URL` | Optional | Reserved Redis URL for Spanish Coach short-lived session/job state. Defaults to Redis DB 5. |
+| `SPANISH_COACH_TOKEN` | Optional | Optional bearer token for Spanish Coach API/browser access. Leave blank only when private tailnet access is sufficient. |
+| `SPANISH_COACH_HOST_PORT` | Optional | Host port for Spanish Coach. Defaults to `18120`. |
+| `SPANISH_COACH_LLM_*` | Optional | Spanish Coach OpenAI-compatible tutor/story model settings. Defaults to the existing `JARVIS_FAST_LLM_*` values. |
+| `SPANISH_COACH_TTS_URL` | Optional | Internal TTS worker URL for Spanish-English listening loops. Defaults to `http://tts-worker:8101`. |
+| `SPANISH_COACH_WHISPER_URL` | Optional | Internal Whisper worker URL for speech-to-text. Defaults to `http://whisper-worker:8099`. |
 | `TOOLS_PUBLIC_SCHEME` | Optional | Protocol used by Docker-discovered Tools dashboard links. Use `http` for direct tailnet ports or `https` after TLS/reverse proxy access is ready. |
 | `ACTUAL_PUBLIC_SCHEME` | Optional | Protocol for Actual Budget dashboard links. Defaults to `https` because Actual requires HTTPS for SharedArrayBuffer outside localhost. |
 | `ACTUAL_LOGIN_METHOD` | Optional | Actual Budget login method. Defaults to `password`; keep password enabled unless OpenID has been fully configured in Actual. |

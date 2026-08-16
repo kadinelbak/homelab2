@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spanish Coach</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Spanish Coach</h1>
+        <p>Speak, listen, review, and learn through short bilingual stories.</p>
+      </div>
+      <div class="topbar">
+        <input id="tokenInput" type="password" placeholder="Token">
+        <span id="health">Checking...</span>
+      </div>
+    </header>
+
+    <nav>
+      <button data-tab="coach" class="active">Coach</button>
+      <button data-tab="stories">Stories</button>
+      <button data-tab="vocab">Vocab</button>
+      <button data-tab="loops">Loops</button>
+    </nav>
+
+    <section id="coach" class="tab active">
+      <div class="panel">
+        <textarea id="chatInput" rows="4" placeholder="Type or speak naturally. Example: I want to order coffee in Spanish."></textarea>
+        <div class="actions">
+          <button id="sendChat">Send</button>
+          <button id="recordBtn">Record</button>
+        </div>
+      </div>
+      <div id="chatOutput" class="stack"></div>
+    </section>
+
+    <section id="stories" class="tab">
+      <div class="grid">
+        <label>Level <select id="storyLevel"><option>beginner</option><option>intermediate</option></select></label>
+        <label>Topic <input id="storyTopic" placeholder="market, travel, cafe, family"></label>
+        <label>Length <select id="storyLength"><option>short</option><option>medium</option></select></label>
+        <label>Tense <input id="storyTense" placeholder="present, past, future"></label>
+      </div>
+      <textarea id="storyVocab" rows="2" placeholder="Optional vocab focus"></textarea>
+      <div class="actions">
+        <button id="makeStory">Generate Story</button>
+        <button id="playStory">Play Spanish-English-Spanish</button>
+      </div>
+      <article id="storyOutput" class="panel"></article>
+    </section>
+
+    <section id="vocab" class="tab">
+      <div class="grid">
+        <input id="vocabSpanish" placeholder="Spanish">
+        <input id="vocabEnglish" placeholder="English">
+      </div>
+      <input id="vocabExample" placeholder="Example sentence">
+      <div class="actions"><button id="addVocab">Add Card</button><button id="loadDue">Load Due Cards</button></div>
+      <div id="vocabOutput" class="stack"></div>
+    </section>
+
+    <section id="loops" class="tab">
+      <textarea id="loopText" rows="5" placeholder="Line 1 Spanish&#10;Line 2 English&#10;Line 3 Spanish"></textarea>
+      <div class="actions"><button id="playLoop">Play Loop</button></div>
+      <audio id="audio" controls></audio>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
