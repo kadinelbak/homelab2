@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import tempfile
 import time
@@ -24,6 +25,15 @@ DATA_DIR = Path(os.environ.get("GOOGLE_TOOLS_DATA_DIR", "/data"))
 TOKEN_PATH = DATA_DIR / "google-token.json"
 PROFILE_DB_PATH = DATA_DIR / "briefing-profile.sqlite3"
 DRIVE_STAGING_DIR = DATA_DIR / "drive-migration" / "staging"
+NEXTCLOUD_IMPORT_DIR = Path(os.environ.get("NEXTCLOUD_IMPORT_DIR", DATA_DIR / "drive-migration" / "nextcloud-import"))
+NEXTCLOUD_WEBDAV_URL = os.environ.get("NEXTCLOUD_WEBDAV_URL", "http://nextcloud/remote.php/dav/files")
+NEXTCLOUD_WEBDAV_HOST = os.environ.get("NEXTCLOUD_WEBDAV_HOST", "100.79.132.39")
+NEXTCLOUD_WEBDAV_USER = os.environ.get("NEXTCLOUD_WEBDAV_USER", os.environ.get("NEXTCLOUD_ADMIN_USER", ""))
+NEXTCLOUD_WEBDAV_PASSWORD = os.environ.get("NEXTCLOUD_WEBDAV_PASSWORD", os.environ.get("NEXTCLOUD_ADMIN_PASSWORD", ""))
+NEXTCLOUD_WEBDAV_ROOT = os.environ.get("NEXTCLOUD_WEBDAV_ROOT", "Jarvis/Drive Migration")
+PAPERLESS_CONSUME_DIR = Path(os.environ.get("PAPERLESS_CONSUME_DIR", DATA_DIR / "paperless-consume"))
+PAPERLESS_IMPORT_DIR = Path(os.environ.get("PAPERLESS_IMPORT_DIR", DATA_DIR / "drive-migration" / "paperless-import"))
+PAPERLESS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "http://100.79.132.39:8000").rstrip("/")
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:18200/oauth/google/callback")
@@ -339,6 +349,58 @@ def gmail_search(query, max_results=10):
     return [gmail_get_message(item["id"]) for item in listed.get("messages", [])]
 
 
+def email_domain(sender):
+    match = re.search(r"@([^>\s]+)", sender or "")
+    return (match.group(1).lower().strip(">") if match else sender.lower()).strip()
+
+
+def gmail_cleanup_summary(max_results=50):
+    sample = gmail_search("in:inbox newer_than:180d", max_results)
+    sender_counts = {}
+    for msg in sample:
+        sender = email_domain(msg.get("from", ""))
+        if sender:
+            sender_counts[sender] = sender_counts.get(sender, 0) + 1
+    top_senders = [
+        {"sender": sender, "sample_count": count}
+        for sender, count in sorted(sender_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+    ]
+    old_unread = gmail_search("in:inbox is:unread older_than:30d", min(max_results, 20))
+    newsletters = gmail_search("in:inbox (category:promotions OR list:*) older_than:14d", min(max_results, 20))
+    needs_reply = gmail_search("in:inbox -from:me newer_than:30d", min(max_results, 20))
+    medical_school = gmail_search('in:inbox ("medical school" OR "med school" OR enmed OR mcat OR aacom OR aamc OR osteopathic)', min(max_results, 20))
+    admissions = gmail_search("in:inbox (admissions OR interview OR application OR supplemental OR applicant)", min(max_results, 20))
+    finance_receipts = gmail_search("in:inbox (receipt OR invoice OR statement OR payment OR tax OR bill OR tuition)", min(max_results, 20))
+    likely_needs_reply = [
+        msg for msg in needs_reply
+        if "UNREAD" in (msg.get("labels") or [])
+        or "IMPORTANT" in (msg.get("labels") or [])
+        or "?" in (msg.get("subject") or msg.get("snippet") or "")
+    ][:10]
+    return {
+        "status": "completed",
+        "mode": "read_only",
+        "sample_size": len(sample),
+        "top_senders": top_senders,
+        "old_unread": old_unread[:10],
+        "likely_newsletters": newsletters[:10],
+        "needs_reply": likely_needs_reply,
+        "medical_school": medical_school[:10],
+        "admissions": admissions[:10],
+        "finance_receipts": finance_receipts[:10],
+        "counts": {
+            "inbox_sample": len(sample),
+            "old_unread": gmail_count("in:inbox is:unread older_than:30d"),
+            "likely_newsletters": gmail_count("in:inbox (category:promotions OR list:*) older_than:14d"),
+            "needs_reply_candidates": gmail_count("in:inbox -from:me newer_than:30d"),
+            "medical_school": gmail_count('in:inbox ("medical school" OR "med school" OR enmed OR mcat OR aacom OR aamc OR osteopathic)'),
+            "admissions": gmail_count("in:inbox (admissions OR interview OR application OR supplemental OR applicant)"),
+            "finance_receipts": gmail_count("in:inbox (receipt OR invoice OR statement OR payment OR tax OR bill OR tuition)"),
+        },
+        "text": "Gmail cleanup summary built read-only. Archive/label changes require a Jarvis Core approval.",
+    }
+
+
 def compact_drive_file(item):
     return {
         "id": item.get("id"),
@@ -490,6 +552,217 @@ def drive_staging_status(max_results=50):
     }
 
 
+def nextcloud_auth_header():
+    if not NEXTCLOUD_WEBDAV_USER or not NEXTCLOUD_WEBDAV_PASSWORD:
+        raise ValueError("nextcloud_webdav_credentials_missing")
+    token = base64.b64encode(f"{NEXTCLOUD_WEBDAV_USER}:{NEXTCLOUD_WEBDAV_PASSWORD}".encode("utf-8")).decode("ascii")
+    headers = {"Authorization": f"Basic {token}"}
+    if NEXTCLOUD_WEBDAV_HOST:
+        headers["Host"] = NEXTCLOUD_WEBDAV_HOST
+    return headers
+
+
+def nextcloud_webdav_url(relative_path=""):
+    user = urllib.parse.quote(NEXTCLOUD_WEBDAV_USER.strip("/"), safe="")
+    parts = [urllib.parse.quote(part, safe="") for part in str(relative_path or "").replace("\\", "/").split("/") if part.strip()]
+    suffix = "/".join(parts)
+    return f"{NEXTCLOUD_WEBDAV_URL.rstrip('/')}/{user}" + (f"/{suffix}" if suffix else "")
+
+
+def nextcloud_mkcol(relative_path):
+    current = ""
+    for part in [item for item in str(relative_path or "").replace("\\", "/").split("/") if item.strip()]:
+        current = f"{current}/{part}" if current else part
+        request = urllib.request.Request(nextcloud_webdav_url(current), method="MKCOL", headers=nextcloud_auth_header())
+        try:
+            with urllib.request.urlopen(request, timeout=60):
+                pass
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (405, 409):
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"nextcloud_mkcol_http_{exc.code}: {detail[:240]}") from exc
+
+
+def nextcloud_put_file(source_path, relative_path):
+    parent = str(Path(relative_path).parent).replace("\\", "/")
+    if parent and parent != ".":
+        nextcloud_mkcol(parent)
+    content = Path(source_path).read_bytes()
+    headers = {**nextcloud_auth_header(), "Content-Type": "application/octet-stream"}
+    request = urllib.request.Request(nextcloud_webdav_url(relative_path), data=content, method="PUT", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            return {"status": response.status, "webdav_path": relative_path, "bytes": len(content)}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"nextcloud_put_http_{exc.code}: {detail[:240]}") from exc
+
+
+def nextcloud_propfind(relative_path):
+    body = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>'
+    headers = {**nextcloud_auth_header(), "Depth": "0", "Content-Type": "application/xml"}
+    request = urllib.request.Request(nextcloud_webdav_url(relative_path), data=body, method="PROPFIND", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return {"ok": response.status in (200, 207), "status": response.status, "webdav_path": relative_path}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {"ok": False, "status": exc.code, "webdav_path": relative_path, "error": detail[:240]}
+    except Exception as exc:
+        return {"ok": False, "webdav_path": relative_path, "error": str(exc)[:240]}
+
+
+def nextcloud_webdav_status():
+    status = {
+        "configured": bool(NEXTCLOUD_WEBDAV_URL and NEXTCLOUD_WEBDAV_USER),
+        "user": NEXTCLOUD_WEBDAV_USER,
+        "root": NEXTCLOUD_WEBDAV_ROOT,
+        "host": NEXTCLOUD_WEBDAV_HOST,
+        "password_set": bool(NEXTCLOUD_WEBDAV_PASSWORD),
+    }
+    if not status["configured"] or not status["password_set"]:
+        return {**status, "ok": False, "error": "nextcloud_webdav_not_configured"}
+    body = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>'
+    headers = {**nextcloud_auth_header(), "Depth": "0", "Content-Type": "application/xml"}
+    request = urllib.request.Request(nextcloud_webdav_url(), data=body, method="PROPFIND", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return {**status, "ok": response.status in (200, 207), "status": response.status}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {**status, "ok": False, "status": exc.code, "error": detail[:500]}
+    except Exception as exc:
+        return {**status, "ok": False, "error": str(exc)[:500]}
+
+
+def drive_import_to_nextcloud(manifest_paths=None, max_results=50, action_id=None):
+    wanted = {str(item) for item in (manifest_paths or []) if str(item).strip()}
+    staging = drive_staging_status(max_results=max_results)
+    manifests = staging.get("manifests") or []
+    if wanted:
+        manifests = [item for item in manifests if str(item.get("manifest_path") or "") in wanted]
+    if not manifests:
+        raise ValueError("no_staged_drive_items_for_nextcloud_import")
+
+    imports = []
+    failures = []
+    NEXTCLOUD_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    for manifest in manifests:
+        try:
+            source_path = Path(manifest.get("path") or "")
+            if not source_path.exists() or not source_path.is_file():
+                raise ValueError("staged_file_missing")
+            try:
+                relative_path = source_path.relative_to(DRIVE_STAGING_DIR)
+            except ValueError as exc:
+                raise ValueError("staged_file_outside_drive_staging") from exc
+            target_path = NEXTCLOUD_IMPORT_DIR / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                target_path = target_path.parent / f"{target_path.stem}-{int(time.time())}{target_path.suffix}"
+            shutil.copy2(source_path, target_path)
+            import_manifest = {
+                **manifest,
+                "nextcloud_import_path": str(target_path),
+                "nextcloud_import_relative_path": str(target_path.relative_to(NEXTCLOUD_IMPORT_DIR)),
+                "nextcloud_import_action_id": action_id,
+                "imported_at": datetime.now(timezone.utc).isoformat(),
+                "mode": "copy_only_no_google_modifications",
+            }
+            import_manifest_path = target_path.with_suffix(target_path.suffix + ".nextcloud-import.json")
+            import_manifest_path.write_text(json.dumps(import_manifest, indent=2, sort_keys=True), encoding="utf-8")
+            import_manifest["nextcloud_import_manifest_path"] = str(import_manifest_path)
+            webdav_relative = "/".join([NEXTCLOUD_WEBDAV_ROOT.strip("/"), import_manifest["nextcloud_import_relative_path"]])
+            import_manifest["nextcloud_webdav"] = nextcloud_put_file(target_path, webdav_relative)
+            import_manifest["nextcloud_visible"] = nextcloud_propfind(webdav_relative)
+            imports.append(import_manifest)
+        except Exception as exc:
+            failures.append({"name": manifest.get("name"), "manifest_path": manifest.get("manifest_path"), "error": str(exc)[:500]})
+    if failures:
+        raise RuntimeError(f"nextcloud_import_failures={json.dumps(failures[:3])}")
+    return {
+        "status": "completed",
+        "imports": imports,
+        "import_root": str(NEXTCLOUD_IMPORT_DIR),
+        "nextcloud_folder": NEXTCLOUD_WEBDAV_ROOT,
+        "text": f"Copied {len(imports)} staged Drive item(s) into visible Nextcloud Files.",
+        "mode": "copy_only_no_google_modifications",
+    }
+
+
+PAPERLESS_CATEGORY_TAGS = {
+    "professional_education": ["education"],
+    "professional_work": ["work"],
+    "research": ["research"],
+    "hobbies": ["hobbies"],
+    "personal_lifeadmin": ["lifeadmin"],
+    "medical": ["medical"],
+    "finance": ["finance"],
+}
+
+
+def paperless_tags_for_manifest(manifest):
+    category = str(manifest.get("category") or "needs_review").lower()
+    tags = list(PAPERLESS_CATEGORY_TAGS.get(category, [category.replace("_", "-")]))
+    text = " ".join(str(manifest.get(key, "")) for key in ("name", "google_drive_path", "destination")).lower()
+    if any(word in text for word in ("medical", "health", "clinic", "doctor", "insurance")):
+        tags.append("medical")
+    if any(word in text for word in ("tax", "bank", "invoice", "receipt", "finance")):
+        tags.append("finance")
+    tags.append("drive-migration")
+    return sorted({tag for tag in tags if tag})
+
+
+def paperless_import_from_staging(manifest_paths=None, max_results=50, action_id=None):
+    wanted = {str(item) for item in (manifest_paths or []) if str(item).strip()}
+    manifests = drive_staging_status(max_results=max_results).get("manifests") or []
+    if wanted:
+        manifests = [item for item in manifests if str(item.get("manifest_path") or "") in wanted]
+    if not manifests:
+        raise ValueError("no_staged_drive_items_for_paperless_import")
+
+    PAPERLESS_CONSUME_DIR.mkdir(parents=True, exist_ok=True)
+    PAPERLESS_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    imports = []
+    failures = []
+    for manifest in manifests[:max_results]:
+        try:
+            source_path = Path(manifest.get("path") or "")
+            if not source_path.exists() or not source_path.is_file():
+                raise ValueError("staged_file_missing")
+            tags = paperless_tags_for_manifest(manifest)
+            queued_name = f"jarvis-{int(time.time())}-{safe_filename(source_path.name)}"
+            queued_path = PAPERLESS_CONSUME_DIR / queued_name
+            shutil.copy2(source_path, queued_path)
+            record = {
+                **manifest,
+                "paperless_consume_path": str(queued_path),
+                "paperless_import_action_id": action_id,
+                "paperless_public_url": PAPERLESS_PUBLIC_URL,
+                "paperless_tags": tags,
+                "paperless_correspondent": "Google Drive",
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "mode": "copy_only_no_google_modifications",
+                "status": "queued",
+            }
+            manifest_path = PAPERLESS_IMPORT_DIR / f"{queued_name}.paperless-import.json"
+            manifest_path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+            record["paperless_import_manifest_path"] = str(manifest_path)
+            imports.append(record)
+        except Exception as exc:
+            failures.append({"name": manifest.get("name"), "manifest_path": manifest.get("manifest_path"), "error": str(exc)[:500]})
+    if failures:
+        raise RuntimeError(f"paperless_import_failures={json.dumps(failures[:3])}")
+    return {
+        "status": "queued",
+        "imports": imports,
+        "consume_dir": str(PAPERLESS_CONSUME_DIR),
+        "paperless_url": PAPERLESS_PUBLIC_URL,
+        "text": f"Queued {len(imports)} staged Drive item(s) for Paperless import.",
+        "mode": "copy_only_no_google_modifications",
+    }
+
+
 def gmail_count(query):
     params = urllib.parse.urlencode({"q": query or "in:inbox newer_than:1d", "maxResults": 1})
     listed = google_request("GET", f"https://gmail.googleapis.com/gmail/v1/users/me/messages?{params}", timeout=60)
@@ -598,18 +871,39 @@ def gmail_modify_labels(message_id, add_labels, remove_labels):
     )
 
 
+def gmail_list_labels():
+    data = google_request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/labels", timeout=60)
+    return data.get("labels") or []
+
+
+def gmail_ensure_label(name):
+    wanted = str(name or "").strip()
+    if not wanted:
+        raise ValueError("gmail_label_name_required")
+    for label in gmail_list_labels():
+        if str(label.get("name") or "").lower() == wanted.lower():
+            return label.get("id")
+    created = google_request(
+        "POST",
+        "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        {"name": wanted, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+        timeout=60,
+    )
+    return created.get("id")
+
+
 def validate_executable_gmail_contract(contract):
     if not isinstance(contract, dict):
         raise ValueError("gmail_contract_must_be_object")
     allowed = {
         "version", "operation", "query", "max_results", "draft_id", "message_ids", "thread_id",
-        "to", "cc", "bcc", "subject", "body", "label_ids", "remove_label_ids",
+        "to", "cc", "bcc", "subject", "body", "label_ids", "label_names", "remove_label_ids", "batches",
         "requires_clarification", "clarification",
     }
     if set(contract) - allowed:
         raise ValueError("gmail_contract_unknown_fields")
     operation = contract.get("operation")
-    if operation not in {"search_messages", "summarize_messages", "create_draft", "update_draft", "send_draft", "send_message", "label_messages"}:
+    if operation not in {"search_messages", "summarize_messages", "create_draft", "update_draft", "send_draft", "send_message", "label_messages", "label_batches"}:
         raise ValueError("gmail_contract_operation_invalid")
     if contract.get("requires_clarification"):
         raise ValueError("gmail_contract_not_executable")
@@ -626,8 +920,11 @@ def validate_executable_gmail_contract(contract):
     if operation == "label_messages":
         if not contract.get("message_ids"):
             raise ValueError("gmail_message_ids_required")
-        if not contract.get("label_ids") and not contract.get("remove_label_ids"):
+        if not contract.get("label_ids") and not contract.get("label_names") and not contract.get("remove_label_ids"):
             raise ValueError("gmail_label_ids_required")
+    if operation == "label_batches":
+        if not isinstance(contract.get("batches"), list) or not contract.get("batches"):
+            raise ValueError("gmail_label_batches_required")
 
 
 def execute_gmail_contract(contract, approved=False):
@@ -715,7 +1012,8 @@ def execute_gmail_contract(contract, approved=False):
         if not approved:
             raise PermissionError("gmail_label_requires_approval")
         messages = []
-        add_labels = contract.get("label_ids") or []
+        add_labels = list(contract.get("label_ids") or [])
+        add_labels.extend(gmail_ensure_label(name) for name in contract.get("label_names") or [])
         remove_labels = contract.get("remove_label_ids") or []
         for message_id in contract.get("message_ids") or []:
             gmail_modify_labels(message_id, add_labels, remove_labels)
@@ -725,6 +1023,24 @@ def execute_gmail_contract(contract, approved=False):
                 raise RuntimeError("gmail_label_verification_failed")
             messages.append(verified)
         return {"status": "completed", "messages": messages, "text": f"Verified label update on {len(messages)} Gmail message(s)."}
+
+    if operation == "label_batches":
+        if not approved:
+            raise PermissionError("gmail_label_requires_approval")
+        messages = []
+        for batch in contract.get("batches") or []:
+            add_labels = list(batch.get("label_ids") or [])
+            add_labels.extend(gmail_ensure_label(name) for name in batch.get("label_names") or [])
+            remove_labels = batch.get("remove_label_ids") or []
+            for message_id in batch.get("message_ids") or []:
+                gmail_modify_labels(message_id, add_labels, remove_labels)
+                verified = gmail_get_message(message_id)
+                labels = set(verified.get("labels") or [])
+                if not set(add_labels).issubset(labels) or set(remove_labels).intersection(labels):
+                    raise RuntimeError("gmail_label_verification_failed")
+                verified["jarvis_applied_labels"] = batch.get("label_names") or add_labels
+                messages.append(verified)
+        return {"status": "completed", "messages": messages, "text": f"Verified categorized Gmail labels on {len(messages)} message(s)."}
 
     raise ValueError("gmail_contract_operation_unsupported")
 
@@ -2038,6 +2354,10 @@ class Handler(BaseHTTPRequestHandler):
                 messages = gmail_search(infer_gmail_query(request_text), int(payload.get("max_results", 10)))
                 self.write_json(HTTPStatus.OK, {"ok": True, "messages": messages, "text": response_text_for_gmail(messages)})
                 return
+            if path == "/gmail/cleanup-summary":
+                result = gmail_cleanup_summary(int(payload.get("max_results", 50)))
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
             if path == "/drive/search":
                 files = drive_search(
                     payload.get("query") or "trashed = false",
@@ -2068,6 +2388,25 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/drive/staging-status":
                 status = drive_staging_status(int(payload.get("max_results", 50)))
                 self.write_json(HTTPStatus.OK, {"ok": True, **status, "mode": "read_only"})
+                return
+            if path == "/drive/nextcloud-status":
+                self.write_json(HTTPStatus.OK, {"ok": True, "nextcloud": nextcloud_webdav_status(), "mode": "read_only"})
+                return
+            if path == "/drive/import-to-nextcloud":
+                result = drive_import_to_nextcloud(
+                    manifest_paths=payload.get("manifest_paths") or [],
+                    max_results=int(payload.get("max_results", 50)),
+                    action_id=payload.get("action_id"),
+                )
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
+                return
+            if path == "/drive/import-to-paperless":
+                result = paperless_import_from_staging(
+                    manifest_paths=payload.get("manifest_paths") or [],
+                    max_results=int(payload.get("max_results", 50)),
+                    action_id=payload.get("action_id"),
+                )
+                self.write_json(HTTPStatus.OK, {"ok": True, **result})
                 return
             if path == "/gmail/create-draft":
                 draft = create_verified_gmail_draft(payload["to"], payload.get("subject", ""), payload.get("body", ""))

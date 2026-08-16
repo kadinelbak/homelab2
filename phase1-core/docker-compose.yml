@@ -274,6 +274,42 @@ services:
       homepage.href: http://${DOMAIN}:3000
       homepage.description: Service launcher
 
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_UPSTREAMS:-185.228.168.10;185.228.169.11}
+      FTLCONF_dns_listeningMode: all
+      FTLCONF_dns_dnssec: ${PIHOLE_DNSSEC:-true}
+      FTLCONF_dns_domainNeeded: "true"
+      FTLCONF_dns_bogusPriv: "true"
+      FTLCONF_webserver_api_password: ${PIHOLE_WEB_PASSWORD}
+      FTLCONF_webserver_port: "80"
+      FTLCONF_webserver_interface_theme: default-dark
+    volumes:
+      - ${DATA_PATH}/phase1-core/data/pihole/etc-pihole:/etc/pihole
+      - ${DATA_PATH}/phase1-core/data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+    ports:
+      - "${PIHOLE_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:53:53/tcp"
+      - "${PIHOLE_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:53:53/udp"
+      - "${PIHOLE_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:${PIHOLE_WEB_PORT:-8053}:80/tcp"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - homelab_proxy
+      - homelab_internal
+    labels:
+      <<: [*common-labels, *important]
+      homelab.service: pihole
+      homelab.depends_on: none
+      homepage.group: Core
+      homepage.name: Pi-hole
+      homepage.icon: pi-hole
+      homepage.href: http://${DOMAIN}:${PIHOLE_WEB_PORT:-8053}/admin
+      homepage.description: Private DNS, ad blocking, and adult-content filtering
+
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer

@@ -28,7 +28,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
-    profiles: ["ollama", "open-webui", "ai", "orchestration", "scad-ai"]
+    profiles: ["ollama", "local-llm"]
     environment:
       OLLAMA_KEEP_ALIVE: 5m        # Unload model after 5 min idle to free VRAM
     volumes:
@@ -57,7 +57,7 @@ services:
     restart: unless-stopped
     profiles: ["open-webui", "ai"]
     environment:
-      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       WEBUI_SECRET_KEY: ${N8N_ENCRYPTION_KEY}   # Reuse a strong secret for session signing
       ENABLE_API_KEYS: "true"
       ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS: "true"
@@ -85,15 +85,13 @@ services:
     networks:
       - homelab_proxy
       - homelab_internal
-    depends_on:
-      - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=AI Automations"
       - "homepage.name=Open WebUI"
       - "homepage.icon=open-webui"
       - "homepage.href=http://${DOMAIN}:8080"
-      - "homepage.description=Chat interface for Ollama"
+      - "homepage.description=Chat interface for API models; optional Ollama local runtime"
 
   openwebui-tailscale-router:
     image: nginx:1.27-alpine
@@ -144,15 +142,13 @@ services:
       SCAD_AI_OPENSCAD_TIMEOUT: ${SCAD_AI_OPENSCAD_TIMEOUT:-90}
       SCAD_AI_OLLAMA_TIMEOUT: ${SCAD_AI_OLLAMA_TIMEOUT:-180}
       SCAD_AI_TOKEN: ${SCAD_AI_TOKEN:-}
-      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/scad-ai-generator:/data
     ports:
       - "${SCAD_AI_BIND_IP:-0.0.0.0}:${SCAD_AI_HOST_PORT:-18104}:8102"
     networks:
       - homelab_internal
-    depends_on:
-      - ollama
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=AI Automations"
@@ -300,13 +296,13 @@ services:
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       AI_ORCHESTRATOR_PORT: 8095
       AI_ORCHESTRATOR_DATA_DIR: /data
-      AI_ORCHESTRATOR_USE_OLLAMA_ROUTER: ${AI_ORCHESTRATOR_USE_OLLAMA_ROUTER:-true}
+      AI_ORCHESTRATOR_USE_OLLAMA_ROUTER: ${AI_ORCHESTRATOR_USE_OLLAMA_ROUTER:-false}
       AI_ORCHESTRATOR_ROUTER_MODEL: ${AI_ORCHESTRATOR_ROUTER_MODEL:-llama3.1:latest}
       AI_ORCHESTRATOR_ROUTER_PROFILE: ${AI_ORCHESTRATOR_ROUTER_PROFILE:-deep_120b}
       AI_ORCHESTRATOR_ROUTER_TIMEOUT: ${AI_ORCHESTRATOR_ROUTER_TIMEOUT:-30}
       AI_ORCHESTRATOR_LLM_TIMEOUT: ${AI_ORCHESTRATOR_LLM_TIMEOUT:-120}
       CALENDAR_CONTRACT_CACHE_TTL: ${CALENDAR_CONTRACT_CACHE_TTL:-120}
-      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
       GOOGLE_TOOLS_URL: http://google-tools-worker:18200
       GOOGLE_TOOLS_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       CODEX_WORKER_URL: http://codex-worker:18300
@@ -330,7 +326,6 @@ services:
     networks:
       - homelab_internal
     depends_on:
-      - ollama
       - codex-worker
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
@@ -495,7 +490,7 @@ services:
       JARVIS_CHAT_TOKEN: ${JARVIS_CHAT_TOKEN:-}
       JARVIS_CHAT_PORT: 18100
     ports:
-      - "${JARVIS_CHAT_BIND_IP:-${TAILSCALE_HOST_IP:-127.0.0.1}}:18100:18100"
+      - "${JARVIS_CHAT_BIND_IP:-100.79.132.39}:18100:18100"
     networks:
       - homelab_internal
     depends_on:
@@ -565,6 +560,9 @@ services:
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/telegram-bridge:/data
       - ${DATA_PATH}/phase2-media/data/paperless/consume:/paperless-consume
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     networks:
       - homelab_internal
     depends_on:
@@ -600,10 +598,21 @@ services:
       NEWS_RSS_URLS: ${NEWS_RSS_URLS:-https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en}
       GITHUB_WORKER_URL: http://github-tools-worker:18400
       GITHUB_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
+      NEXTCLOUD_WEBDAV_URL: ${NEXTCLOUD_WEBDAV_URL:-http://nextcloud/remote.php/dav/files}
+      NEXTCLOUD_WEBDAV_HOST: ${NEXTCLOUD_WEBDAV_HOST:-100.79.132.39}
+      NEXTCLOUD_WEBDAV_USER: ${NEXTCLOUD_WEBDAV_USER:-admin}
+      NEXTCLOUD_WEBDAV_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_WEBDAV_ROOT: ${NEXTCLOUD_WEBDAV_ROOT:-Jarvis/Drive Migration}
+      PAPERLESS_CONSUME_DIR: /paperless-consume
+      PAPERLESS_PUBLIC_URL: http://${DOMAIN}:8000
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/google-tools:/data
+      - ${DATA_PATH}/phase2-media/data/paperless/consume:/paperless-consume
     ports:
       - "${TAILSCALE_HOST_IP:-127.0.0.1}:18200:18200"
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     networks:
       - homelab_internal
     labels:

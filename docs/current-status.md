@@ -19,6 +19,7 @@
 - Current live response: `{"ok":true,"service":"jarvis-core"}`
 - Jarvis Core has the real Google Tools worker URL/token configured and can resolve `google-tools-worker:18200`.
 - Jarvis Core has the Navigator/OpenAI-compatible fast and deep model env vars copied from `open_webui`.
+- Ollama is now optional and is no longer part of the default Jarvis dependency chain. Normal Jarvis deploys use Navigator/OpenAI-compatible API model profiles and should use `--no-deps` for targeted restarts.
 - Jarvis Chat is intended to bind to the homelab Tailscale IP through `JARVIS_CHAT_BIND_IP`, so Homepage can open `/core` from tailnet clients without exposing the service on all host interfaces.
 
 ## Real Service Checks
@@ -49,7 +50,13 @@
   - Homelab maintenance records are stored in `personal_ops_maintenance_records`.
   - Daily briefs combine real Google briefing data with Jarvis Core tasks, pending approvals, recent evidence, and open maintenance records.
   - Saved daily brief snapshots are stored in `personal_ops_daily_briefs`.
-  - Live DB migration is at `0002_personal_ops_phase4`.
+  - Live DB migration is at `0003_automation_runs`.
+- Jarvis Core automation run history is deployed:
+  - Automation runs are stored in `personal_ops_automation_runs`.
+  - Core owns a conservative in-process runner for daily briefs, Gmail inbox organization, homelab health, Pi-hole/DNS health, and Drive migration scan status.
+  - Automation cards show last run, next run, last status, and safe output.
+  - Manual "run now" is available from the automation detail drawer.
+  - Gmail inbox organization is automatic and safe-scoped: it applies Jarvis labels, stars likely reply/interview items, and archives newsletter/promotional mail by removing `INBOX`. It never applies spam/junk/trash labels.
 - Local `Hey Jarvis` compatibility is wired through Jarvis Chat:
   - The laptop voice client still only needs the existing Jarvis Chat tunnel on `127.0.0.1:18100`.
   - Jarvis Chat routes Phase 4 voice requests to Jarvis Core internally.
@@ -64,8 +71,30 @@
   - Approvals, executions, and audit search
   - Daily brief recommendation actions
 - Read-only homelab diagnostics are live at `/api/v1/homelab/diagnostics`.
-  - Current check set includes Postgres, Redis, Jarvis Core, Google Tools, Codex Worker, Open WebUI, Ollama, Whisper, TTS, Homepage, and container-local storage paths.
-  - Media automation reachability is now included for Prowlarr, Bazarr, Sonarr, Radarr, Lidarr, Readarr, and qBittorrent without changing Gluetun bindings.
+  - Current check set includes Postgres, Redis, Jarvis Core, Google Tools, Codex Worker, Open WebUI, Ollama, Whisper, TTS, Homepage, Pi-hole, Paperless, Nextcloud, media automations, and container-local storage paths.
+  - Ollama is reported as optional/offline when it is not running; it does not make overall diagnostics fail.
+  - Media automation reachability is now included for Prowlarr, Bazarr, Sonarr, Radarr, Lidarr, Readarr, and qBittorrent without changing Gluetun bindings. These checks are optional until the media pipeline is ready.
+- Private DNS and ad blocking are live through Pi-hole:
+  - DNS listens on the homelab Tailscale IP at `100.79.132.39:53`.
+  - Admin UI is available at `http://100.79.132.39:8053/admin`.
+  - Upstream DNS uses CleanBrowsing Adult Filter (`185.228.168.10`, `185.228.169.11`) as a second layer for explicit adult-content filtering while avoiding the broader overblocking of family/kids presets.
+  - Validation: `google.com`, `nih.gov`, `mayoclinic.org`, and `plannedparenthood.org` resolve; an explicit adult-domain test returns no usable answer.
+  - The service is in Phase 1 core infrastructure and appears in Homepage/Core diagnostics.
+  - It is not bound as a public resolver and does not change Gluetun.
+- Telegram brief delivery was repaired:
+  - The Telegram bridge now uses stable external DNS resolvers.
+  - Notification delivery only marks an item delivered if at least one allowed chat ID was actually sent to.
+  - Live validation delivered a generated evening brief notification and Gmail organizer notification.
+- Drive migration destination workflow is live:
+  - Nextcloud WebDAV visibility is verified after approved imports.
+  - Paperless import proposals queue staged Drive documents into the Paperless consume folder after approval.
+  - Paperless suggested tags include education, medical, finance, lifeadmin, and drive-migration.
+  - Google Drive originals are not moved, archived, deleted, or modified.
+- Gmail cleanup workflow is live:
+  - Read-only summary reports top senders, old unread mail, likely newsletters, and likely needs-reply messages.
+  - Approval-gated classification can create/apply sensible labels under `Jarvis/...`, including `Jarvis/Needs Reply`, `Jarvis/Newsletters`, `Jarvis/Needs Review`, `Jarvis/Finance`, `Jarvis/Education`, and `Jarvis/Work`.
+  - No Gmail archive, read-state, star, label, send, or delete action runs without a Core approval.
+- Automation cards now include daily briefs, Gmail needs-reply scan, homelab health check, Drive migration scan, and Pi-hole/DNS health check with last run, next run, summary, and last output fields where available.
 - Media automation status is live:
   - Core endpoint: `/api/v1/media/automations/status`
   - Jarvis Chat/Homepage summary proxy: `/api/media/automations/summary`

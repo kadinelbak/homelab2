@@ -602,17 +602,20 @@ def deliver_core_notifications():
         return
     data = core_get("/api/v1/notifications?channel=telegram&status=pending", timeout=60)
     for item in data.get("notifications") or []:
-        status = "delivered"
+        sent_count = 0
+        failed_count = 0
         for chat_id in targets:
             try:
                 if allowed(chat_id):
                     send_message(chat_id, notification_text(item))
+                    sent_count += 1
             except Exception as exc:
-                status = "failed"
+                failed_count += 1
                 print(f"telegram notification delivery failed: {exc}", flush=True)
+        status = "delivered" if sent_count else "failed"
         core_post(
             f"/api/v1/notifications/{item.get('id')}/delivery",
-            {"status": status, "delivered_by": "telegram-bridge"},
+            {"status": status, "delivered_by": f"telegram-bridge sent={sent_count} failed={failed_count}"},
             timeout=60,
         )
 

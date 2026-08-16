@@ -853,6 +853,7 @@ def interactive_core_console_page():
     .brief-section b { display:block; margin-bottom:7px; }
     .brief-section button { width:100%; text-align:left; border:0; border-top:1px solid rgba(43,57,72,.54); border-radius:0; background:transparent; padding:8px 0; }
     .brief-section button:first-of-type { border-top:0; }
+    .brief-section .quick-action { width:30px; height:30px; padding:0; text-align:center; border:1px solid var(--line); border-radius:999px; background:var(--panel2); }
     .count { color:var(--muted); font-size:12px; white-space:nowrap; }
     .item { border-top:1px solid var(--line); padding:9px 0; }
     .item:first-child { border-top:0; }
@@ -862,6 +863,10 @@ def interactive_core_console_page():
     .compact-line { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
     .compact-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
     .compact-sub { color:var(--muted); font-size:12px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .quick-actions { display:flex; align-items:center; gap:6px; margin-left:8px; flex:0 0 auto; }
+    .quick-action { width:30px; height:30px; padding:0; display:inline-grid; place-items:center; border-radius:999px; font-size:15px; line-height:1; }
+    .quick-action.approve { border-color:rgba(94,234,212,.75); color:var(--accent); }
+    .quick-action.reject { border-color:rgba(251,113,133,.72); color:var(--danger); }
     .muted { color:var(--muted); }
     .ok { color:var(--accent); }
     .bad { color:var(--danger); }
@@ -876,6 +881,17 @@ def interactive_core_console_page():
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
     .field { border-top:1px solid var(--line); padding:10px 0; }
     .field b { display:block; margin-bottom:4px; }
+    .hub-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px,1fr)); gap:10px; }
+    .hub-card { border:1px solid rgba(43,57,72,.72); background:rgba(15,23,32,.55); border-radius:8px; padding:10px; min-width:0; }
+    .hub-card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+    .hub-card h3 { margin:0; font-size:13px; }
+    .mail-row { border-top:1px solid rgba(43,57,72,.56); padding:8px 0; min-width:0; }
+    .mail-row:first-of-type { border-top:0; }
+    .mail-from, .mail-subject { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mail-from { color:var(--muted); font-size:12px; margin-top:2px; }
+    .automation-card { display:grid; gap:8px; border:1px solid rgba(43,57,72,.72); background:rgba(15,23,32,.55); border-radius:8px; padding:10px; }
+    .automation-meta { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:7px; color:var(--muted); font-size:12px; }
+    .automation-output { color:#d8dee9; font-size:12px; line-height:1.4; max-height:4.2em; overflow:hidden; }
     .drive-shell { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#0f1720; }
     .drive-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); background:#151f2a; }
     .drive-crumbs { display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap; }
@@ -931,13 +947,13 @@ def interactive_core_console_page():
       <h2 id="drawerTitle">Details</h2>
       <div class="muted" id="drawerSubtitle"></div>
     </div>
-    <button class="ghost" onclick="closeDrawer()">Close</button>
+    <button class="icon-button" title="Close" aria-label="Close" onclick="closeDrawer()">&#215;</button>
   </div>
   <div class="actions" id="drawerActions"></div>
   <div id="drawerBody"></div>
 </aside>
 <script>
-const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
+const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], gmailCleanup: {}, drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
 async function get(path) {
   const res = await fetch(path);
   const data = await res.json();
@@ -965,6 +981,23 @@ function setCount(id, value) {
 }
 function compactButton(kind, idx, title, subtitle = '', badge = '') {
   return itemButton(kind, idx, `<div class="compact-line"><span class="compact-title">${esc(title)}</span>${badge ? `<span class="pill">${esc(badge)}</span>` : ''}</div>${subtitle ? `<div class="compact-sub">${esc(subtitle)}</div>` : ''}`);
+}
+function approvalButton(a, idx) {
+  const action = a.action || {};
+  const title = displayTitle(action.preview?.summary || action.tool_name || a.id);
+  const subtitle = a.reason || action.tool_name || '';
+  const badge = action.risk_level || a.status || '';
+  return `<div class="item-button approval-row" role="button" tabindex="0" onclick="openApprovalById('${esc(a.id)}')">
+    <div class="compact-line">
+      <span class="compact-title">${esc(title)}</span>
+      <span class="quick-actions">
+        ${badge ? `<span class="pill">${esc(badge)}</span>` : ''}
+        <button class="quick-action approve" title="Approve" aria-label="Approve" onclick="approveApproval(event, '${esc(a.id)}')">&#10003;</button>
+        <button class="quick-action reject" title="Reject" aria-label="Reject" onclick="rejectApproval(event, '${esc(a.id)}')">&#215;</button>
+      </span>
+    </div>
+    ${subtitle ? `<div class="compact-sub">${esc(subtitle)}</div>` : ''}
+  </div>`;
 }
 function emptyState(text) {
   return `<span class="muted">${esc(text)}</span>`;
@@ -1007,23 +1040,29 @@ function usefulRows(key, rows) {
   return rows;
 }
 function renderOverview(data) {
-  const failed = (data.diag.checks || []).filter(c => !c.ok).length;
+  const failed = (data.diag.checks || []).filter(c => !c.ok && !c.optional).length;
   const running = (data.cx.codex_tasks || []).filter(t => ['proposed','running','queued'].includes(String(t.status || '').toLowerCase())).length;
   const due = (data.task.tasks || []).length;
   const maintenance = (data.maint.maintenance || []).filter(m => m.status !== 'resolved').length;
   const approvals = (data.ap.approvals || []).length;
   const notifications = (data.notif.notifications || []).length;
   const automations = (data.auto.automations || []).filter(a => ['scheduled_or_on_demand','continuous','event_driven'].includes(String(a.mode || ''))).length;
+  const gmail = (data.gm.needs_reply || []).length + (data.gm.likely_newsletters || []).length;
   const selectedDrive = state.selectedDriveFolders.length;
   overview.innerHTML = [
     metric('AP', approvals, 'approvals', approvals ? 'attn' : '', 'openApprovalsHub()'),
     metric('DX', failed, 'diagnostics', failed ? 'bad' : '', 'openDiagnosticsHub()'),
     metric('CX', running, 'codex', running ? 'attn' : '', 'openCodexHub()'),
+    metric('CA', briefEventCount(data.br), 'calendar', '', 'openCalendarHub()'),
     metric('DR', selectedDrive, 'drive', selectedDrive ? 'attn' : '', 'openDrive()'),
+    metric('GM', gmail, 'gmail', gmail ? 'attn' : '', 'openGmailCleanupHub()'),
     metric('AT', automations, 'automations', automations ? '' : '', 'openAutomationsHub()'),
     metric('MT', maintenance, 'maintenance', maintenance ? 'attn' : '', 'openMaintenanceHub()'),
     metric('IN', notifications, 'inbox', notifications ? 'attn' : '', 'openNotificationsHub()')
   ].join('');
+}
+function briefEventCount(br) {
+  return (br?.google?.calendar?.events || br?.calendar_events || []).length || 0;
 }
 function metric(code, value, label, tone = '', action = '') {
   return `<button class="metric ${tone}" onclick="${action}" title="${esc(label)}"><span>${esc(code)}</span><b>${esc(value)}</b><span>${esc(label)}</span></button>`;
@@ -1048,6 +1087,19 @@ async function guarded(label, fn, warning = '') {
   } catch (err) {
     status.textContent = err.message;
   }
+}
+async function approveApproval(event, approvalId) {
+  if (event) event.stopPropagation();
+  const approval = state.approvals.find(item => item.id === approvalId);
+  const risk = approval?.action?.risk_level || '';
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase()) || approval?.action?.tool_name === 'codex.run_task'
+    ? 'This can run code or perform a high-risk action.'
+    : '';
+  await guarded('Approve this action', () => send('POST', `/api/core/approvals/${approvalId}/decision`, {approved:true, decided_by:'jarvis-core-console'}), warning);
+}
+async function rejectApproval(event, approvalId) {
+  if (event) event.stopPropagation();
+  await guarded('Reject this action', () => send('POST', `/api/core/approvals/${approvalId}/decision`, {approved:false, decided_by:'jarvis-core-console'}));
 }
 function renderApprovals(data) {
   state.approvals = data.approvals || [];
@@ -1086,19 +1138,16 @@ function renderBrief(data) {
   setCount('briefCount', data.kind || 'brief');
   const actions = (data.recommended_actions || []).slice(0,4).map((title, idx) => `<button onclick="makeBriefTaskFromRecommendation(${idx})"><span class="compact-title">${esc(displayTitle(title))}</span></button>`).join('') || `<span class="muted">No recommendations yet.</span>`;
   const taskRows = (data.tasks_due_soon || []).slice(0,5).map((task) => `<button onclick="openTaskById('${esc(task.id)}')"><span class="compact-title">${esc(displayTitle(task.title))}</span><span class="compact-sub">${esc(task.due_at || task.status || '')}</span></button>`).join('') || `<span class="muted">No task pressure.</span>`;
-  const approvalRows = (data.pending_approvals || []).slice(0,4).map((approval) => {
-    const action = approval.action || {};
-    return `<button onclick="openApprovalById('${esc(approval.id)}')"><span class="compact-title">${esc(displayTitle(action.preview?.summary || action.tool_name || 'Approval'))}</span><span class="compact-sub">${esc(approval.reason || action.risk_level || '')}</span></button>`;
-  }).join('') || `<span class="muted">No pending approvals.</span>`;
+  const approvalRows = (data.pending_approvals || []).slice(0,4).map((approval) => approvalButton(approval)).join('') || `<span class="muted">No pending approvals.</span>`;
   const maintenanceRows = (data.open_maintenance || []).slice(0,4).map((m) => `<button onclick="openMaintenanceById('${esc(m.id)}')"><span class="compact-title">${esc(maintenanceTitle(m))}</span><span class="compact-sub">${esc(m.service_name || m.status || '')}</span></button>`).join('') || `<span class="muted">No open maintenance.</span>`;
-  brief.innerHTML = `<div><span class="pill">${taskCount} tasks</span><span class="pill">${approvalsCount} approvals</span><span class="pill">${maintCount} maint</span><button class="ghost" onclick="openBrief()">Details</button></div><div class="brief-layout"><pre class="brief-text">${esc(data.text || 'No brief text yet.')}</pre><div class="brief-stack"><div class="brief-section"><b>Next</b>${actions}</div><div class="brief-section"><b>Tasks</b>${taskRows}</div><div class="brief-section"><b>Approvals</b>${approvalRows}</div><div class="brief-section"><b>Maintenance</b>${maintenanceRows}</div></div></div>`;
+  brief.innerHTML = `<div><span class="pill">${taskCount} tasks</span><span class="pill">${approvalsCount} approvals</span><span class="pill">${maintCount} maint</span><button class="quick-action" title="Brief details" aria-label="Brief details" onclick="openBrief()">&#8942;</button></div><div class="brief-layout"><pre class="brief-text">${esc(data.text || 'No brief text yet.')}</pre><div class="brief-stack"><div class="brief-section"><b>Next</b>${actions}</div><div class="brief-section"><b>Tasks</b>${taskRows}</div><div class="brief-section"><b>Approvals</b>${approvalRows}</div><div class="brief-section"><b>Maintenance</b>${maintenanceRows}</div></div></div>`;
 }
 function renderDrive(data) {
   state.drive = data || {};
   const rows = data.items || [];
   setCount('driveCount', `${state.selectedDriveFolders.length} selected`);
   const staged = state.driveStaging?.total || 0;
-  drive.innerHTML = `<div class="actions"><button class="primary" onclick="openDrive()">Open</button><button title="Propose copy batch" onclick="proposeDriveStagingCopy()">+ Copy</button><button title="Load metadata inventory" onclick="loadFullDriveInventory()">Scan</button></div>` +
+  drive.innerHTML = `<div class="actions"><button class="quick-action approve" title="Open Drive browser" aria-label="Open Drive browser" onclick="openDrive()">&#128193;</button><button class="quick-action" title="Propose staging copy" aria-label="Propose staging copy" onclick="proposeDriveStagingCopy()">&#8681;</button><button class="quick-action" title="Scan metadata inventory" aria-label="Scan metadata inventory" onclick="loadFullDriveInventory()">&#128269;</button></div>` +
     `<button class="item-button" onclick="openItem('drive', 0)"><div class="compact-line"><span class="compact-title">${esc(data.summary || 'Drive ready')}</span><span class="pill">${staged} staged</span></div><div class="compact-sub">Browse root folders, select directories, then propose an approval-gated copy batch.</div></button>` +
     (rows.length ? rows.slice(0,4).map((item, idx) => compactButton('driveItem', idx, item.name, `${item.life_category_label || item.life_category || 'Needs Review'} / ${item.migration_action || item.suggested_action || 'needs_review'}`)).join('') : '');
 }
@@ -1117,10 +1166,10 @@ function renderDriveDestinations(data) {
     (staged.length ? staged.slice(0,6).map((item, idx) => itemButton('smartDestinationItem', idx, `<b>${esc(item.name)}</b><br><span class="muted">${esc(item.destination)} &middot; ${item.ready ? 'ready' : 'waiting'}</span>`)).join('') : '<span class="muted">No staged destination decisions yet.</span>');
 }
 function approvalActions(a) {
-  const risk = a.action?.risk_level || '';
-  const warning = ['destructive', 'sensitive'].includes(risk) || a.action?.tool_name === 'codex.run_task' ? 'This can run code or perform a high-risk action.' : '';
-  return `<button class="primary" onclick="guarded('Approve this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:true,decided_by:'jarvis-core-console'}), '${esc(warning)}')">Approve</button>
-    <button class="danger" onclick="guarded('Reject this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:false,decided_by:'jarvis-core-console'}))">Reject</button>`;
+  const risk = String(a.action?.risk_level || '').toUpperCase();
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(risk) || a.action?.tool_name === 'codex.run_task' ? 'This can run code or perform a high-risk action.' : '';
+  return `<button class="quick-action approve" title="Approve" aria-label="Approve" onclick="guarded('Approve this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:true,decided_by:'jarvis-core-console'}), '${esc(warning)}')">&#10003;</button>
+    <button class="quick-action reject" title="Reject" aria-label="Reject" onclick="guarded('Reject this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:false,decided_by:'jarvis-core-console'}))">&#215;</button>`;
 }
 function openApproval(a) {
   const action = a.action || {};
@@ -1132,8 +1181,8 @@ function openApproval(a) {
 }
 function openTask(t) {
   const actions = t.status === 'completed'
-    ? `<button class="primary" onclick="guarded('Reopen task', () => send('PATCH','/api/core/tasks/${esc(t.id)}',{status:'open'}))">Reopen</button>`
-    : `<button class="primary" onclick="guarded('Complete task', () => send('POST','/api/core/tasks/${esc(t.id)}/complete'))">Complete</button>`;
+    ? `<button class="quick-action approve" title="Reopen task" aria-label="Reopen task" onclick="guarded('Reopen task', () => send('PATCH','/api/core/tasks/${esc(t.id)}',{status:'open'}))">&#8634;</button>`
+    : `<button class="quick-action approve" title="Complete task" aria-label="Complete task" onclick="guarded('Complete task', () => send('POST','/api/core/tasks/${esc(t.id)}/complete'))">&#10003;</button>`;
   openDrawer(t.title || t.id, `Task ${t.status || ''}`, [
     row('Priority', t.priority), row('Due', t.due_at), row('Estimated minutes', t.estimated_minutes),
     row('Effort', t.effort_level), row('Project id', t.project_id), row('Source', t.source),
@@ -1150,8 +1199,8 @@ function openEvidence(e) {
 }
 function openMaintenance(m) {
   const actions = m.status === 'resolved'
-    ? `<button class="primary" onclick="guarded('Reopen maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{status:'open',resolved:false}))">Reopen</button>`
-    : `<button class="primary" onclick="guarded('Resolve maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{resolved:true}))">Resolve</button>`;
+    ? `<button class="quick-action approve" title="Reopen maintenance" aria-label="Reopen maintenance" onclick="guarded('Reopen maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{status:'open',resolved:false}))">&#8634;</button>`
+    : `<button class="quick-action approve" title="Resolve maintenance" aria-label="Resolve maintenance" onclick="guarded('Resolve maintenance record', () => send('PATCH','/api/core/maintenance/${esc(m.id)}',{resolved:true}))">&#10003;</button>`;
   openDrawer(m.summary || m.service_name || m.id, `Maintenance ${m.status || ''}`, [
     row('Service', m.service_name), row('Type', m.record_type), row('Details', m.details),
     row('Next check', m.next_check_at), row('Resolved', m.resolved_at), row('Created', m.created_at),
@@ -1164,13 +1213,11 @@ function openMaintenanceHub() {
 }
 function openApprovalsHub() {
   openDrawer('Approvals', `${state.approvals.length} pending`, state.approvals.length ? state.approvals.slice(0,12).map((a, idx) => {
-    const action = a.action || {};
-    const title = action.preview?.summary || action.tool_name || a.id;
-    return compactButton('approval', idx, displayTitle(title), a.reason || action.tool_name || '', action.risk_level || a.status);
+    return approvalButton(a, idx);
   }).join('') : emptyState('No pending approvals.'));
 }
 function openDiagnosticsHub() {
-  const failed = state.diagnostics.filter(c => !c.ok);
+  const failed = state.diagnostics.filter(c => !c.ok && !c.optional);
   const rows = failed.length ? failed : state.diagnostics;
   const maintenance = state.maintenance.filter(m => m.status !== 'resolved');
   const body = (maintenance.length ? compactButton('maintenanceHub', 0, 'Maintenance', `${maintenance.length} open records`, 'open') : '') +
@@ -1188,6 +1235,13 @@ function openCodexHub() {
   }).join('');
   openDrawer('Codex', `${state.codexTasks.length} core / ${state.codexJobs.length} worker`, coreRows + workerRows || emptyState('No Codex activity yet.'));
 }
+function openCalendarHub() {
+  const br = state.brief || {};
+  const calendar = br.google?.calendar || {};
+  const events = calendar.events || br.calendar_events || [];
+  const rows = events.length ? events.slice(0,12).map((event) => `<div class="mail-row"><div class="mail-subject">${esc(displayTitle(event.summary || event.title || event.name || 'Calendar event'))}</div><div class="mail-from">${esc(event.start || event.starts_at || event.when || '')}</div></div>`).join('') : emptyState('No calendar events surfaced in the current brief.');
+  openDrawer('Calendar', br.kind || 'current brief', `<div class="hub-card">${rows}</div>${row('Summary', calendar.text || br.google?.text || '')}`);
+}
 function openNotificationsHub() {
   const rows = usefulRows('notifications', state.notifications);
   openDrawer('Inbox', `${rows.length} items`, rows.length ? rows.slice(0,12).map((n) => compactButton('notifications', state.notifications.indexOf(n), notificationTitle(n), notificationSubtitle(n), n.status || '')).join('') : emptyState('No notifications.'));
@@ -1201,14 +1255,66 @@ function automationSubtitle(a) {
 function openAutomationsHub() {
   const rows = state.automations || [];
   const active = rows.filter(a => a.status !== 'disabled').length;
-  openDrawer('Automations', `${active} available`, rows.length ? rows.map((a, idx) => compactButton('automation', idx, automationTitle(a), automationSubtitle(a), a.status || '')).join('') : emptyState('No automation inventory available.'));
+  const body = rows.length ? `<div class="hub-grid">${rows.map((a, idx) => automationCard(a, idx)).join('')}</div>` : emptyState('No automation inventory available.');
+  openDrawer('Automations', `${active} available`, body);
+}
+function automationCard(a, idx) {
+  const visibleStatus = a.last_status || a.status || 'available';
+  const statusClass = String(visibleStatus).includes('fail') || String(visibleStatus).includes('error') ? 'bad' : a.status === 'attention' ? 'warn' : 'ok';
+  const output = typeof a.last_output === 'object' ? JSON.stringify(a.last_output) : (a.last_output || a.summary || '');
+  return `<button class="automation-card" onclick="openItem('automation', ${idx})">
+    <div class="compact-line"><span class="compact-title">${esc(automationTitle(a))}</span><span class="pill ${statusClass}">${esc(visibleStatus)}</span></div>
+    <div class="automation-meta"><span title="${esc(a.last_run || '')}">last ${esc(shortWhen(a.last_run))}</span><span title="${esc(a.next_run || '')}">next ${esc(shortWhen(a.next_run))}</span></div>
+    <div class="compact-sub">${esc(a.schedule || a.mode || '')}</div>
+    <div class="automation-output">${esc(output || 'No output yet.')}</div>
+  </button>`;
+}
+function shortWhen(value) {
+  if (!value) return 'not recorded';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+}
+function openGmailCleanupHub() {
+  const data = state.gmailCleanup || {};
+  const counts = data.counts || {};
+  const actions = `<button class="icon-button" title="Refresh" onclick="loadAll().then(openGmailCleanupHub)">&#8635;</button><button class="quick-action approve" title="Classify with Jarvis labels" onclick="proposeGmailCleanup('label_classifications')" aria-label="Classify">&#9873;</button><button class="quick-action" title="Archive newsletters" onclick="proposeGmailCleanup('archive_newsletters')" aria-label="Archive newsletters">&#128230;</button><button class="quick-action" title="Mark old unread read" onclick="proposeGmailCleanup('mark_old_unread_read')" aria-label="Mark read">&#10003;</button><button class="quick-action" title="Star needs-reply" onclick="proposeGmailCleanup('star_needs_reply')" aria-label="Star needs-reply">&#9733;</button>`;
+  const summary = `<div class="actions"><span class="pill">${esc(counts.needs_reply_candidates || 0)} reply candidates</span><span class="pill">${esc(counts.medical_school || 0)} medical school</span><span class="pill">${esc(counts.admissions || 0)} admissions</span><span class="pill">${esc(counts.likely_newsletters || 0)} newsletters</span><span class="pill">${esc(counts.old_unread || 0)} old unread</span></div>`;
+  const senders = (data.top_senders || []).slice(0,8).map(s => `<span class="pill">${esc(s.sender)} ${esc(s.sample_count)}</span>`).join('') || emptyState('No senders sampled.');
+  const body = summary + `<div class="hub-grid">
+    ${gmailBucketSection('Medical school', data.medical_school, 'medical_school')}
+    ${gmailBucketSection('Admissions', data.admissions, 'admissions')}
+    ${gmailBucketSection('Needs reply', data.needs_reply, 'needs_reply')}
+    ${gmailBucketSection('Newsletters', data.likely_newsletters, 'likely_newsletters')}
+    ${gmailBucketSection('Finance / receipts', data.finance_receipts, 'finance_receipts')}
+    ${gmailBucketSection('Old unread', data.old_unread, 'old_unread')}
+    <div class="hub-card"><div class="hub-card-head"><h3>Top senders</h3></div>${senders}</div>
+  </div>`;
+  openDrawer('Gmail', 'Read-only scan; changes require approval', body, actions);
+}
+function gmailBucketSection(title, rows, key) {
+  const items = (rows || []).slice(0,5).map(mailPreview).join('') || emptyState('No matches.');
+  const count = (rows || []).length;
+  return `<div class="hub-card"><div class="hub-card-head"><h3>${esc(title)}</h3><span class="pill">${count}</span></div>${items}</div>`;
+}
+function mailPreview(item) {
+  return `<div class="mail-row"><div class="mail-subject">${esc(displayTitle(item.subject || item.snippet || 'Message'))}</div><div class="mail-from">${esc(item.from || '')}</div></div>`;
+}
+async function proposeGmailCleanup(actionType, maxResults = 25) {
+  await send('POST', '/api/core/gmail/cleanup/propose', {action_type: actionType, max_results: maxResults, idempotency_key: `gmail-cleanup-${actionType}-${Date.now()}`});
+  await loadAll();
+  status.textContent = 'Gmail cleanup proposed for approval.';
 }
 function openAutomation(a) {
+  const actions = a.key ? `<button class="quick-action approve" title="Run now" aria-label="Run now" onclick="runAutomation('${esc(a.key)}')">&#9654;</button>` : '';
   openDrawer(automationTitle(a), a.status || 'Automation', [
     row('Category', a.category), row('Mode', a.mode), row('Schedule', a.schedule),
     row('Last run', a.last_run || 'Not recorded'), row('Next run', a.next_run || 'Not scheduled by Core'),
-    row('Channels', a.channels), row('Source', a.source), row('Summary', a.summary)
-  ].join(''));
+    row('Last status', a.last_status), row('Channels', a.channels), row('Source', a.source), row('Summary', a.summary), row('Last output', a.last_output)
+  ].join(''), actions);
+}
+async function runAutomation(key) {
+  await guarded('Run automation now', () => send('POST', `/api/core/automations/${encodeURIComponent(key)}/run`, {}));
 }
 function openDiagnostic(d) {
   const name = String(d.name || '').toLowerCase();
@@ -1275,7 +1381,7 @@ function openMaintenanceById(id) {
 }
 function openBrief() {
   const br = state.brief || {};
-  const actions = `<button class="primary" onclick="makeBriefAction('task')">Create Task</button><button onclick="makeBriefAction('calendar_hold')">Create Calendar Hold</button>`;
+  const actions = `<button class="quick-action approve" title="Create task" aria-label="Create task" onclick="makeBriefAction('task')">+</button><button class="quick-action" title="Create calendar hold" aria-label="Create calendar hold" onclick="makeBriefAction('calendar_hold')">&#128197;</button>`;
   const google = br.google || {};
   const googleSummary = google.text || [
     google.calendar?.events ? `${google.calendar.events.length} calendar events` : '',
@@ -1350,7 +1456,7 @@ function driveBrowserActions(current) {
   const selected = state.selectedDriveFolders.length;
   const back = current ? `<button title="Back" onclick="driveBack()">&#8592;</button>` : '';
   const select = current ? `<button title="Select current folder" onclick="toggleDriveFolder('${esc(current.id)}')">${state.selectedDriveFolders.includes(current.id) ? '&#9745;' : '&#9744;'}</button>` : '';
-  return `${back}${select}<button title="Refresh" onclick="refreshDriveFolders()">&#8635;</button><button class="primary" title="Propose copy batch" onclick="proposeDriveStagingCopy()">+ Copy</button><span class="pill">${selected}</span>`;
+  return `${back}${select}<button title="Refresh" aria-label="Refresh" onclick="refreshDriveFolders()">&#8635;</button><button class="quick-action approve" title="Propose staging copy" aria-label="Propose staging copy" onclick="proposeDriveStagingCopy()">&#8681;</button><button class="quick-action" title="Propose Nextcloud import" aria-label="Propose Nextcloud import" onclick="proposeNextcloudImport()">&#8680;</button><button class="quick-action" title="Propose Paperless import" aria-label="Propose Paperless import" onclick="proposePaperlessImport()">&#128196;</button><span class="pill">${selected}</span>`;
 }
 async function openDriveFolderAt(idx) {
   const current = currentDriveFolder();
@@ -1386,7 +1492,7 @@ function driveFolderRow(folder, idx) {
   return `<div class="drive-row ${selected ? 'selected' : ''}"><div class="drive-name"><span class="drive-icon">DIR</span><button title="Open folder" onclick="openDriveFolderAt(${idx})"><span class="drive-title">${esc(folder.name)}</span><span class="drive-subtitle">Folder</span></button></div><button class="drive-check" title="Select folder" onclick="toggleDriveFolder('${esc(folder.id)}')">${checked}</button></div>`;
 }
 function driveFileRow(file, idx, folderId) {
-  return `<div class="drive-row"><div class="drive-name"><span class="drive-icon file">${esc(driveFileIcon(file))}</span><button title="Open file details" onclick="openDriveChildFile('${esc(folderId)}', ${idx})"><span class="drive-title">${esc(file.name)}</span><span class="drive-subtitle">${esc(file.life_category_label || file.life_category || 'Needs Review')} · ${esc(file.migration_action || 'needs_review')}</span></button></div><span></span></div>`;
+  return `<div class="drive-row"><div class="drive-name"><span class="drive-icon file">${esc(driveFileIcon(file))}</span><button title="Open file details" onclick="openDriveChildFile('${esc(folderId)}', ${idx})"><span class="drive-title">${esc(file.name)}</span><span class="drive-subtitle">${esc(file.life_category_label || file.life_category || 'Needs Review')} &middot; ${esc(file.migration_action || 'needs_review')}</span></button></div><span></span></div>`;
 }
 function driveFileIcon(file) {
   const mime = String(file.mime_type || '').toLowerCase();
@@ -1417,13 +1523,39 @@ async function loadFullDriveInventory() {
   status.textContent = 'Full Drive inventory loaded.';
 }
 async function proposeDriveStagingCopy() {
-  const category = prompt('Category to stage, or blank for all copy-ready items', 'professional_education') || '';
-  const maxResults = Number(prompt('Maximum files to propose', '3') || 3);
+  const category = '';
+  const maxResults = 20;
   const payload = {max_results: maxResults, migration_action: 'copy_to_homelab', include_folder_ids: state.selectedDriveFolders, exclude_names: ['griproot', 'grip', 'assistive device', 'hands team'], my_drive_only: true, idempotency_key: `drive-stage-${Date.now()}`};
   if (category.trim()) payload.category = category.trim();
   await send('POST', '/api/core/drive/staging-copy/propose', payload);
   await loadAll();
   status.textContent = 'Drive staging copy proposed for approval.';
+}
+async function proposeNextcloudImport() {
+  const nextcloudItems = (state.driveDestinations.staged_items || []).filter(item => item.local_path || item.manifest_path);
+  const count = Math.min(Math.max(nextcloudItems.length, 0), 50);
+  if (!count) return;
+  const payload = {
+    max_results: count,
+    manifest_paths: nextcloudItems.slice(0, count).map(item => item.manifest_path).filter(Boolean),
+    idempotency_key: `drive-nextcloud-${Date.now()}`
+  };
+  await send('POST', '/api/core/drive/nextcloud-import/propose', payload);
+  await loadAll();
+  status.textContent = 'Nextcloud import proposed for approval.';
+}
+async function proposePaperlessImport() {
+  const paperlessItems = (state.driveDestinations.staged_items || []).filter(item => item.service === 'paperless' && (item.local_path || item.manifest_path));
+  const count = Math.min(Math.max(paperlessItems.length, 0), 50);
+  if (!count) return;
+  const payload = {
+    max_results: count,
+    manifest_paths: paperlessItems.slice(0, count).map(item => item.manifest_path).filter(Boolean),
+    idempotency_key: `drive-paperless-${Date.now()}`
+  };
+  await send('POST', '/api/core/drive/paperless-import/propose', payload);
+  await loadAll();
+  status.textContent = 'Paperless import proposed for approval.';
 }
 function openDriveItem(item) {
   const link = item.web_view_link ? `<a href="${esc(item.web_view_link)}" target="_blank" rel="noreferrer">${esc(item.web_view_link)}</a>` : '';
@@ -1455,9 +1587,10 @@ function openStagedDriveItem(item) {
 }
 function openDriveDestinations() {
   const data = state.driveDestinations || {};
+  const actions = `<button title="Refresh" onclick="loadAll().then(openDriveDestinations)">&#8635;</button><button class="primary" title="Propose Nextcloud import" onclick="proposeNextcloudImport()">&#8680;</button>`;
   openDrawer('Smart Destinations', data.summary || 'Destination readiness', [
     row('Services', data.services), row('Pathway', data.pathway), row('Staged items', data.staged_items)
-  ].join(''));
+  ].join(''), actions);
 }
 function openSmartDestinationItem(item) {
   openDrawer(item.name || 'Destination item', item.ready ? 'Destination ready' : 'Destination waiting', [
@@ -1505,7 +1638,7 @@ function currentBriefKind() {
 async function loadAll() {
   status.textContent = 'Refreshing...';
   const briefKind = currentBriefKind();
-  const [ap, diag, cx, jobs, task, ev, maint, br, notif, auto, ds, dd] = await Promise.all([
+  const [ap, diag, cx, jobs, task, ev, maint, br, notif, auto, gm, ds, dd] = await Promise.all([
     get('/api/core/approvals?status=pending'),
     get('/api/core/diagnostics'),
     get('/api/core/codex/tasks'),
@@ -1516,6 +1649,7 @@ async function loadAll() {
     get(`/api/core/daily-brief?kind=${briefKind}`),
     get('/api/core/notifications'),
     get('/api/core/automations'),
+    get('/api/core/gmail/cleanup-summary?max_results=50').catch(err => ({ok:false, error:err.message, text:'Gmail cleanup summary unavailable.'})),
     send('POST', '/api/core/drive/staging-status', {max_results: 20}),
     send('POST', '/api/core/drive/destinations', {max_results: 20})
   ]);
@@ -1526,9 +1660,10 @@ async function loadAll() {
   state.maintenance = maint.maintenance || [];
   state.notifications = notif.notifications || [];
   state.automations = auto.automations || [];
+  state.gmailCleanup = gm || {};
   state.driveStaging = ds || {};
   state.driveDestinations = dd || {};
-  renderOverview({ap, diag, cx, task, maint, notif, auto});
+  renderOverview({ap, diag, cx, task, maint, notif, auto, gm, br});
   renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
   state.tasks = task.tasks || [];
   setCount('tasksCount', `${state.tasks.length}`);
@@ -1796,8 +1931,11 @@ class Handler(BaseHTTPRequestHandler):
             "/api/core/maintenance": "/api/v1/maintenance",
             "/api/core/daily-brief": "/api/v1/daily-brief",
             "/api/core/audit": "/api/v1/audit",
+            "/api/core/executions": "/api/v1/executions",
             "/api/core/notifications": "/api/v1/notifications",
             "/api/core/automations": "/api/v1/automations",
+            "/api/core/gmail/cleanup-summary": "/api/v1/gmail/cleanup-summary",
+            "/api/core/drive/nextcloud-status": "/api/v1/drive/nextcloud-status",
         }
         if path in core_get_routes:
             if not self.authorized():
@@ -1862,6 +2000,13 @@ class Handler(BaseHTTPRequestHandler):
             self.write_json(status, data)
             return
 
+        if path.startswith("/api/core/automations/") and path.endswith("/run"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/automations/{parts[4]}/run", self.read_json(), timeout=240)
+                self.write_json(status, data)
+                return
+
         if path == "/api/core/evidence/packet":
             status, data = self.core_proxy("POST", "/api/v1/evidence/packet", self.read_json(), timeout=240)
             self.write_json(status, data)
@@ -1889,6 +2034,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/core/drive/staging-copy/propose":
             status, data = self.core_proxy("POST", "/api/v1/drive/staging-copy/propose", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/nextcloud-import/propose":
+            status, data = self.core_proxy("POST", "/api/v1/drive/nextcloud-import/propose", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/drive/paperless-import/propose":
+            status, data = self.core_proxy("POST", "/api/v1/drive/paperless-import/propose", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/gmail/cleanup/propose":
+            status, data = self.core_proxy("POST", "/api/v1/gmail/cleanup/propose", self.read_json(), timeout=120)
             self.write_json(status, data)
             return
 

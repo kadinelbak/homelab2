@@ -110,7 +110,7 @@ services:
       - ${DATA_PATH}/phase2-media/data/paperless/export:/usr/src/paperless/export
       - ${DATA_PATH}/phase2-media/data/paperless/consume:/usr/src/paperless/consume
     ports:
-      - "8000:8000"
+      - "${TAILSCALE_HOST_IP:-100.79.132.39}:8000:8000"
     networks:
       - homelab_proxy
       - homelab_internal

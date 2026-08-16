@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     codex_worker_token: str = ""
     homelab_public_base_url: str = "http://kadin-main-sys.tail00cf0e.ts.net"
     media_automation_internal_base_url: str = "http://gluetun"
+    pihole_url: str = "http://100.79.132.39:8053/admin/"
     calendar_provider: str = "google"
     calendar_allow_simulated_fallback: bool = False
     dev_auth_user: str = "local-user"
@@ -32,6 +33,8 @@ class Settings(BaseSettings):
     vision_llm_base_url: str = os.environ.get("JARVIS_VISION_LLM_BASE_URL", "")
     vision_llm_api_key: str = os.environ.get("JARVIS_VISION_LLM_API_KEY", "")
     llm_timeout_seconds: int = int(os.environ.get("JARVIS_LLM_TIMEOUT_SECONDS", "90"))
+    automation_runner_enabled: bool = True
+    automation_runner_interval_seconds: int = 60
 
     class Config:
         env_prefix = "JARVIS_CORE_"

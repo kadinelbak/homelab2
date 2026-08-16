@@ -205,4 +205,28 @@ REGISTERED_TOOLS = (
         required_permissions=("drive:read", "storage:write:staging"),
         reversible=True,
     ),
+    ToolDefinition(
+        name="drive.import_to_nextcloud",
+        version="0.1",
+        description="Copy approved staged Google Drive files into the Nextcloud import queue without modifying Google originals.",
+        risk_level=RiskLevel.EXTERNAL_WRITE,
+        required_permissions=("storage:read:staging", "nextcloud:write:import_queue"),
+        reversible=True,
+    ),
+    ToolDefinition(
+        name="drive.import_to_paperless",
+        version="0.1",
+        description="Queue approved staged Google Drive documents into Paperless consume with suggested tags.",
+        risk_level=RiskLevel.EXTERNAL_WRITE,
+        required_permissions=("storage:read:staging", "paperless:write:consume"),
+        reversible=True,
+    ),
+    ToolDefinition(
+        name="gmail.apply_cleanup",
+        version="0.1",
+        description="Apply approved Gmail cleanup label/archive changes after a read-only cleanup summary.",
+        risk_level=RiskLevel.EXTERNAL_WRITE,
+        required_permissions=("gmail:modify",),
+        reversible=True,
+    ),
 )

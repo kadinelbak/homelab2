@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -16,9 +18,11 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .contracts import ActionStatus, REGISTERED_TOOLS, RiskLevel, parse_calendar_request, redact, requires_approval
 from .database import get_db
+from .database import SessionLocal
 from .models import (
     ApprovalRequestRecord,
     AuditEventRecord,
+    AutomationRunRecord,
     Base,
     CalendarEventRecord,
     DailyBriefRecord,
@@ -94,6 +98,7 @@ DEFAULT_DRIVE_EXCLUDE_FOLDER_IDS = {
     "1AlGtNUOchkS90Xj-njcWnLKFmZdfzxv8",
     "10HgRs3i7x0dndZ2V2wBW188cVMesql_X",
 }
+AUTOMATION_RUNNER_STARTED = False
 
 
 def default_drive_exclude_names():
@@ -251,6 +256,25 @@ class DriveStagingCopyRequest(BaseModel):
     idempotency_key: str | None = None
 
 
+class DriveNextcloudImportRequest(BaseModel):
+    manifest_paths: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=20, ge=1, le=100)
+    idempotency_key: str | None = None
+
+
+class DrivePaperlessImportRequest(BaseModel):
+    manifest_paths: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=20, ge=1, le=100)
+    idempotency_key: str | None = None
+
+
+class GmailCleanupProposal(BaseModel):
+    action_type: str = Field(default="label_classifications", pattern="^(label_classifications|archive_newsletters|mark_old_unread_read|star_needs_reply)$")
+    message_ids: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=10, ge=1, le=50)
+    idempotency_key: str | None = None
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -270,6 +294,7 @@ def authorize(authorization: str | None = Header(default=None)):
 
 @app.on_event("startup")
 def startup():
+    global AUTOMATION_RUNNER_STARTED
     if settings.database_url.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
     db = next(get_db())
@@ -290,6 +315,10 @@ def startup():
         db.commit()
     finally:
         db.close()
+    if settings.automation_runner_enabled and not AUTOMATION_RUNNER_STARTED:
+        AUTOMATION_RUNNER_STARTED = True
+        thread = threading.Thread(target=automation_runner_loop, name="jarvis-automation-runner", daemon=True)
+        thread.start()
 
 
 @app.middleware("http")
@@ -673,6 +702,12 @@ def drive_staging_status(payload: DriveInventoryRequest, actor: str = Depends(au
     return {"ok": True, **status}
 
 
+@app.get("/api/v1/drive/nextcloud-status")
+def drive_nextcloud_status(actor: str = Depends(authorize)):
+    status = call_google_tools("/drive/nextcloud-status", {}, timeout=60)
+    return {"ok": True, **status}
+
+
 @app.post("/api/v1/drive/destinations")
 def drive_destinations(payload: DriveInventoryRequest, actor: str = Depends(authorize)):
     staging = call_google_tools("/drive/staging-status", {"max_results": payload.max_results}, timeout=60)
@@ -712,23 +747,244 @@ def drive_destinations(payload: DriveInventoryRequest, actor: str = Depends(auth
     }
 
 
+@app.post("/api/v1/drive/nextcloud-import/propose")
+def propose_drive_nextcloud_import(payload: DriveNextcloudImportRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+
+    staging = call_google_tools("/drive/staging-status", {"max_results": payload.max_results}, timeout=60)
+    manifests = staging.get("manifests") or []
+    if payload.manifest_paths:
+        wanted = set(payload.manifest_paths)
+        manifests = [item for item in manifests if item.get("manifest_path") in wanted]
+    manifests = [item for item in manifests if item.get("file_exists") is True][: payload.max_results]
+    if not manifests:
+        raise HTTPException(status_code=400, detail={"error": "no_nextcloud_ready_staged_items", "hint": "Stage Drive files first, then review Smart Destinations."})
+
+    request_id = new_id("req")
+    correlation_id = new_id("corr")
+    record = RequestRecord(
+        id=request_id,
+        user_id=actor,
+        source="drive-migration",
+        raw_text=f"Copy {len(manifests)} staged Google Drive item(s) to the Nextcloud import queue.",
+        status="awaiting_approval",
+        idempotency_key=payload.idempotency_key,
+        correlation_id=correlation_id,
+    )
+    db.add(record)
+    db.flush()
+    action = ProposedActionRecord(
+        id=new_id("act"),
+        request_id=request_id,
+        tool_name="drive.import_to_nextcloud",
+        tool_version="0.1",
+        risk_level=RiskLevel.EXTERNAL_WRITE.value,
+        status=ActionStatus.AWAITING_APPROVAL.value,
+        arguments={
+            "manifest_paths": [item.get("manifest_path") for item in manifests],
+            "max_results": payload.max_results,
+            "mode": "copy_only_no_google_modifications",
+        },
+        preview={
+            "summary": f"Copy {len(manifests)} staged Drive item(s) into the Nextcloud import queue.",
+            "changes": [
+                "Reads files already copied into homelab Drive staging.",
+                "Writes duplicate copies into the Nextcloud import queue.",
+                "Google Drive originals and staging copies are not moved, modified, archived, or deleted.",
+            ],
+            "sample_items": [{"name": item.get("name"), "category": item.get("category"), "path": item.get("staged_relative_path")} for item in manifests[:5]],
+            "reversible": True,
+            "provider": "google-tools-worker",
+        },
+        requires_approval=True,
+    )
+    db.add(action)
+    db.flush()
+    db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Nextcloud imports write data to local storage and require explicit approval."))
+    audit(db, "request.received", actor, correlation_id, request_id, {"request_id": request_id, "source": "drive-migration"})
+    audit(db, "action.proposed", actor, correlation_id, action.id, {"tool": action.tool_name, "risk_level": action.risk_level, "item_count": len(manifests)})
+    audit(db, "approval.requested", actor, correlation_id, action.id, {"reason": "drive_import_to_nextcloud"})
+    notify_many(db, actor, ("homepage", "telegram", "voice"), "Approval needed", f"Nextcloud import: {len(manifests)} staged Drive item(s)", "warning", {"action_id": action.id, "tool": action.tool_name})
+    db.commit()
+    db.refresh(record)
+    return request_response(db, record)
+
+
+@app.post("/api/v1/drive/paperless-import/propose")
+def propose_drive_paperless_import(payload: DrivePaperlessImportRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+
+    staging = call_google_tools("/drive/staging-status", {"max_results": payload.max_results}, timeout=60)
+    manifests = staging.get("manifests") or []
+    if payload.manifest_paths:
+        wanted = set(payload.manifest_paths)
+        manifests = [item for item in manifests if item.get("manifest_path") in wanted]
+    else:
+        manifests = [item for item in manifests if destination_service_key(item.get("destination") or "") == "paperless"]
+    manifests = [item for item in manifests if item.get("file_exists") is True][: payload.max_results]
+    if not manifests:
+        raise HTTPException(status_code=400, detail={"error": "no_paperless_ready_staged_items", "hint": "Stage Drive documents first, then review Smart Destinations."})
+
+    request_id = new_id("req")
+    correlation_id = new_id("corr")
+    record = RequestRecord(
+        id=request_id,
+        user_id=actor,
+        source="drive-migration",
+        raw_text=f"Queue {len(manifests)} staged Google Drive document(s) for Paperless.",
+        status="awaiting_approval",
+        idempotency_key=payload.idempotency_key,
+        correlation_id=correlation_id,
+    )
+    db.add(record)
+    db.flush()
+    action = ProposedActionRecord(
+        id=new_id("act"),
+        request_id=request_id,
+        tool_name="drive.import_to_paperless",
+        tool_version="0.1",
+        risk_level=RiskLevel.EXTERNAL_WRITE.value,
+        status=ActionStatus.AWAITING_APPROVAL.value,
+        arguments={"manifest_paths": [item.get("manifest_path") for item in manifests], "max_results": payload.max_results, "mode": "copy_only_no_google_modifications"},
+        preview={
+            "summary": f"Queue {len(manifests)} staged Drive document(s) for Paperless import.",
+            "changes": [
+                "Reads files already copied into homelab Drive staging.",
+                "Writes duplicate copies into the Paperless consume folder.",
+                "Google Drive originals and staging copies are not moved, modified, archived, or deleted.",
+            ],
+            "suggested_tags": ["education", "medical", "finance", "lifeadmin", "drive-migration"],
+            "sample_items": [{"name": item.get("name"), "category": item.get("category"), "path": item.get("staged_relative_path")} for item in manifests[:5]],
+            "reversible": True,
+            "provider": "google-tools-worker",
+        },
+        requires_approval=True,
+    )
+    db.add(action)
+    db.flush()
+    db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Paperless imports write documents into local document storage and require explicit approval."))
+    audit(db, "request.received", actor, correlation_id, request_id, {"request_id": request_id, "source": "drive-migration"})
+    audit(db, "action.proposed", actor, correlation_id, action.id, {"tool": action.tool_name, "risk_level": action.risk_level, "item_count": len(manifests)})
+    audit(db, "approval.requested", actor, correlation_id, action.id, {"reason": "drive_import_to_paperless"})
+    notify_many(db, actor, ("homepage", "telegram", "voice"), "Approval needed", f"Paperless import: {len(manifests)} staged Drive document(s)", "warning", {"action_id": action.id, "tool": action.tool_name})
+    db.commit()
+    db.refresh(record)
+    return request_response(db, record)
+
+
+@app.get("/api/v1/gmail/cleanup-summary")
+def gmail_cleanup_summary(max_results: int = 50, actor: str = Depends(authorize)):
+    result = call_google_tools("/gmail/cleanup-summary", {"max_results": max_results}, timeout=180)
+    return {"ok": True, **result}
+
+
+@app.post("/api/v1/gmail/cleanup/propose")
+def propose_gmail_cleanup(payload: GmailCleanupProposal, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+    summary = call_google_tools("/gmail/cleanup-summary", {"max_results": max(payload.max_results, 20)}, timeout=180)
+    source_key = "likely_newsletters" if payload.action_type == "archive_newsletters" else "old_unread" if payload.action_type == "mark_old_unread_read" else "needs_reply"
+    candidates = summary.get(source_key) or []
+    if payload.action_type == "label_classifications":
+        batches = gmail_classification_batches(summary, payload.max_results)
+        message_ids = [mid for batch in batches for mid in batch.get("message_ids", [])]
+    else:
+        message_ids = payload.message_ids or [item.get("id") for item in candidates[: payload.max_results] if item.get("id")]
+        batches = []
+    if not message_ids:
+        raise HTTPException(status_code=400, detail={"error": "no_matching_gmail_messages", "hint": "Run Gmail cleanup summary first."})
+    if payload.action_type == "label_classifications":
+        contract = {"operation": "label_batches", "batches": batches}
+        title = "Classify Gmail messages with Jarvis labels"
+    elif payload.action_type == "archive_newsletters":
+        contract = {"operation": "label_messages", "message_ids": message_ids, "label_names": ["Jarvis/Newsletters"], "remove_label_ids": ["INBOX"]}
+        title = "Archive and label likely newsletter messages"
+    elif payload.action_type == "mark_old_unread_read":
+        contract = {"operation": "label_messages", "message_ids": message_ids, "label_names": ["Jarvis/Needs Review"], "remove_label_ids": ["UNREAD"]}
+        title = "Mark old unread messages as read and needs-review"
+    else:
+        contract = {"operation": "label_messages", "message_ids": message_ids, "label_ids": ["STARRED"], "label_names": ["Jarvis/Needs Reply"], "remove_label_ids": []}
+        title = "Star and label likely needs-reply messages"
+
+    request_id = new_id("req")
+    correlation_id = new_id("corr")
+    record = RequestRecord(
+        id=request_id,
+        user_id=actor,
+        source="gmail-cleanup",
+        raw_text=f"{title}: {len(message_ids)} Gmail message(s).",
+        status="awaiting_approval",
+        idempotency_key=payload.idempotency_key,
+        correlation_id=correlation_id,
+    )
+    db.add(record)
+    db.flush()
+    action = ProposedActionRecord(
+        id=new_id("act"),
+        request_id=request_id,
+        tool_name="gmail.apply_cleanup",
+        tool_version="0.1",
+        risk_level=RiskLevel.EXTERNAL_WRITE.value,
+        status=ActionStatus.AWAITING_APPROVAL.value,
+        arguments={
+            "contract": contract,
+            "action_type": payload.action_type,
+        },
+        preview={
+            "summary": f"{title} for {len(message_ids)} Gmail message(s).",
+            "changes": ["Applies Gmail label changes only after approval.", "No messages are deleted."],
+            "labels": sorted({label for batch in batches for label in batch.get("label_names", [])}) if batches else contract.get("label_names") or contract.get("label_ids") or [],
+            "sample_messages": [{"from": item.get("from"), "subject": item.get("subject"), "date": item.get("date")} for item in candidates[:5]],
+            "reversible": True,
+            "provider": "google-tools-worker",
+        },
+        requires_approval=True,
+    )
+    db.add(action)
+    db.flush()
+    db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Gmail cleanup modifies mailbox labels and requires explicit approval."))
+    audit(db, "request.received", actor, correlation_id, request_id, {"request_id": request_id, "source": "gmail-cleanup"})
+    audit(db, "action.proposed", actor, correlation_id, action.id, {"tool": action.tool_name, "risk_level": action.risk_level, "message_count": len(message_ids)})
+    audit(db, "approval.requested", actor, correlation_id, action.id, {"reason": "gmail_cleanup"})
+    notify_many(db, actor, ("homepage", "telegram", "voice"), "Approval needed", f"Gmail cleanup: {len(message_ids)} message(s)", "warning", {"action_id": action.id, "tool": action.tool_name})
+    db.commit()
+    db.refresh(record)
+    return request_response(db, record)
+
+
 @app.get("/api/v1/homelab/diagnostics")
 def homelab_diagnostics(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    public_base = settings.homelab_public_base_url.rstrip("/")
+    public_host = urllib.parse.urlparse(public_base).netloc or "100.79.132.39"
     http_checks = [
         ("jarvis-core", "http://127.0.0.1:8097/health"),
         ("google-tools-worker", settings.google_tools_url.rstrip("/") + "/health"),
         ("codex-worker", settings.codex_worker_url.rstrip("/") + "/health"),
         ("open-webui", "http://open-webui:8080/health"),
-        ("ollama", "http://ollama:11434/api/tags"),
         ("whisper-worker", "http://whisper-worker:8099/health"),
         ("tts-worker", "http://tts-worker:8101/health"),
         ("homepage", "http://homepage:3000/"),
+        ("pihole", settings.pihole_url),
+        ("paperless", "http://paperless:8000"),
+        ("nextcloud", "http://nextcloud/status.php", {"Host": public_host}),
+    ]
+    optional_checks = [
+        {**http_health_check("ollama", "http://ollama:11434/api/tags"), "optional": True, "summary": "Optional local LLM runtime; Jarvis uses API/Navigator models by default."},
     ]
     checks = [database_health_check(db), redis_health_check()]
-    checks.extend(http_health_check(name, url) for name, url in http_checks)
+    checks.extend(http_health_check(*item) for item in http_checks)
+    checks.extend(optional_checks)
     checks.extend(media_automation_checks())
     checks.extend(storage_health_checks())
-    return {"ok": all(item.get("ok") for item in checks), "checks": checks, "mode": "read_only"}
+    return {"ok": all(item.get("ok") or item.get("optional") for item in checks), "checks": checks, "mode": "read_only"}
 
 
 @app.post("/api/v1/codex/tasks")
@@ -1076,6 +1332,14 @@ def daily_brief(kind: str = "morning", save: bool = False, db: Session = Depends
 
 @app.get("/api/v1/automations")
 def list_automations(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    def latest_run(key: str):
+        return (
+            db.query(AutomationRunRecord)
+            .filter(AutomationRunRecord.automation_key == key)
+            .order_by(AutomationRunRecord.started_at.desc())
+            .first()
+        )
+
     def latest_brief(kind: str):
         record = (
             db.query(DailyBriefRecord)
@@ -1092,43 +1356,73 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             target += timedelta(days=1)
         return target.isoformat()
 
+    def next_weekday_time(weekday: int, hour: int, minute: int = 0):
+        local_now = datetime.now(ZoneInfo(settings.user_timezone))
+        target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        days_ahead = (weekday - target.weekday()) % 7
+        if days_ahead:
+            target += timedelta(days=days_ahead)
+        if target <= local_now:
+            target += timedelta(days=7)
+        return target.isoformat()
+
     pending_notifications = db.query(NotificationRecord).filter(NotificationRecord.status == "pending").count()
     pending_approvals = db.query(ApprovalRequestRecord).filter(ApprovalRequestRecord.status == "pending").count()
     open_maintenance = db.query(MaintenanceRecord).filter(MaintenanceRecord.status != "resolved").count()
     recent_drive_copy = (
         db.query(ExecutionAttemptRecord)
         .join(ProposedActionRecord, ProposedActionRecord.id == ExecutionAttemptRecord.proposed_action_id)
-        .filter(ProposedActionRecord.tool_name == "drive.copy_to_staging")
+        .filter(ProposedActionRecord.tool_name.in_(("drive.copy_to_staging", "drive.import_to_nextcloud", "drive.import_to_paperless")))
         .order_by(ExecutionAttemptRecord.started_at.desc())
+        .first()
+    )
+    recent_gmail_cleanup = (
+        db.query(ExecutionAttemptRecord)
+        .join(ProposedActionRecord, ProposedActionRecord.id == ExecutionAttemptRecord.proposed_action_id)
+        .filter(ProposedActionRecord.tool_name == "gmail.apply_cleanup")
+        .order_by(ExecutionAttemptRecord.started_at.desc())
+        .first()
+    )
+    latest_diag = (
+        db.query(AuditEventRecord)
+        .filter(AuditEventRecord.event_type.in_(("homelab.diagnostics", "maintenance.created", "maintenance.updated")))
+        .order_by(AuditEventRecord.created_at.desc())
         .first()
     )
 
     automations = [
         {
+            "key": "daily_brief_morning",
             "name": "Morning daily brief",
             "category": "briefing",
             "status": "available",
             "mode": "scheduled_or_on_demand",
             "schedule": f"07:30 daily, {settings.user_timezone}",
-            "last_run": latest_brief("morning"),
+            "last_run": (latest_run("daily_brief_morning").started_at.isoformat() if latest_run("daily_brief_morning") else latest_brief("morning")),
             "next_run": next_local_time(7, 30),
             "source": "telegram-bridge / jarvis-core",
             "channels": ["Homepage", "Telegram", "Voice"],
             "summary": "Scheduled by Telegram bridge, saved by Jarvis Core, then delivered through Core notifications.",
+            "last_status": latest_run("daily_brief_morning").status if latest_run("daily_brief_morning") else None,
+            "last_output": latest_run("daily_brief_morning").safe_summary if latest_run("daily_brief_morning") else None,
         },
         {
+            "key": "daily_brief_evening",
             "name": "Evening daily brief",
             "category": "briefing",
             "status": "available",
             "mode": "scheduled_or_on_demand",
             "schedule": f"20:30 daily, {settings.user_timezone}",
-            "last_run": latest_brief("evening"),
+            "last_run": (latest_run("daily_brief_evening").started_at.isoformat() if latest_run("daily_brief_evening") else latest_brief("evening")),
             "next_run": next_local_time(20, 30),
             "source": "telegram-bridge / jarvis-core",
             "channels": ["Homepage", "Telegram", "Voice"],
             "summary": "Scheduled by Telegram bridge, saved by Jarvis Core, then delivered through Core notifications.",
+            "last_status": latest_run("daily_brief_evening").status if latest_run("daily_brief_evening") else None,
+            "last_output": latest_run("daily_brief_evening").safe_summary if latest_run("daily_brief_evening") else None,
         },
         {
+            "key": "approval_notifications",
             "name": "Approval notifications",
             "category": "notifications",
             "status": "attention" if pending_approvals else "quiet",
@@ -1141,6 +1435,7 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             "summary": f"{pending_approvals} approval(s) currently pending.",
         },
         {
+            "key": "notification_delivery",
             "name": "Notification delivery bridge",
             "category": "notifications",
             "status": "attention" if pending_notifications else "quiet",
@@ -1153,30 +1448,67 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             "summary": f"{pending_notifications} notification(s) waiting for delivery or acknowledgement.",
         },
         {
-            "name": "Homelab diagnostics",
+            "key": "homelab_health",
+            "name": "Homelab health check",
             "category": "maintenance",
             "status": "attention" if open_maintenance else "quiet",
-            "mode": "on_demand",
-            "schedule": "Run from the Core console or tools",
-            "last_run": None,
-            "next_run": None,
+            "mode": "scheduled_or_on_demand",
+            "schedule": f"08:00 daily plus on demand, {settings.user_timezone}",
+            "last_run": latest_run("homelab_health").started_at.isoformat() if latest_run("homelab_health") else (latest_diag.created_at.isoformat() if latest_diag else None),
+            "next_run": next_local_time(8, 0),
             "source": "jarvis-core",
             "channels": ["Homepage"],
             "summary": f"{open_maintenance} open maintenance record(s) are visible to diagnostics.",
+            "last_output": latest_run("homelab_health").safe_summary if latest_run("homelab_health") else (latest_diag.payload if latest_diag else None),
+            "last_status": latest_run("homelab_health").status if latest_run("homelab_health") else None,
         },
         {
-            "name": "Drive migration planner",
+            "key": "drive_migration_scan",
+            "name": "Drive migration scan",
             "category": "migration",
             "status": "available",
-            "mode": "approval_gated",
-            "schedule": "Manual scan and copy proposal",
-            "last_run": recent_drive_copy.started_at.isoformat() if recent_drive_copy and recent_drive_copy.started_at else None,
-            "next_run": None,
+            "mode": "scheduled_or_on_demand",
+            "schedule": f"09:15 weekly Saturday plus manual scan, {settings.user_timezone}",
+            "last_run": latest_run("drive_migration_scan").started_at.isoformat() if latest_run("drive_migration_scan") else (recent_drive_copy.started_at.isoformat() if recent_drive_copy and recent_drive_copy.started_at else None),
+            "next_run": next_weekday_time(5, 9, 15),
             "source": "jarvis-core / google-tools-worker",
             "channels": ["Homepage"],
-            "summary": "Inventories My Drive metadata, hides excluded folders, and stages copy jobs only after approval.",
+            "summary": "Inventories My Drive metadata, hides excluded folders, and stages/imports copy jobs only after approval.",
+            "last_output": latest_run("drive_migration_scan").safe_summary if latest_run("drive_migration_scan") else (recent_drive_copy.safe_summary if recent_drive_copy else None),
+            "last_status": latest_run("drive_migration_scan").status if latest_run("drive_migration_scan") else (recent_drive_copy.status if recent_drive_copy else None),
         },
         {
+            "key": "gmail_needs_reply_scan",
+            "name": "Gmail inbox organizer",
+            "category": "email",
+            "status": "available",
+            "mode": "scheduled_or_on_demand",
+            "schedule": f"08:45 daily plus on demand, {settings.user_timezone}",
+            "last_run": latest_run("gmail_needs_reply_scan").started_at.isoformat() if latest_run("gmail_needs_reply_scan") else (recent_gmail_cleanup.started_at.isoformat() if recent_gmail_cleanup and recent_gmail_cleanup.started_at else None),
+            "next_run": next_local_time(8, 45),
+            "source": "jarvis-core / google-tools-worker",
+            "channels": ["Homepage", "Telegram"],
+            "summary": "Safely labels Gmail, stars reply/interview candidates, and archives newsletter/promotional mail. It never moves Inbox mail to spam, junk, or trash.",
+            "last_output": latest_run("gmail_needs_reply_scan").safe_summary if latest_run("gmail_needs_reply_scan") else (recent_gmail_cleanup.safe_summary if recent_gmail_cleanup else None),
+            "last_status": latest_run("gmail_needs_reply_scan").status if latest_run("gmail_needs_reply_scan") else (recent_gmail_cleanup.status if recent_gmail_cleanup else None),
+        },
+        {
+            "key": "pihole_dns_health",
+            "name": "Pi-hole/DNS health check",
+            "category": "network",
+            "status": "available",
+            "mode": "scheduled_or_on_demand",
+            "schedule": f"08:05 daily plus on demand, {settings.user_timezone}",
+            "last_run": latest_run("pihole_dns_health").started_at.isoformat() if latest_run("pihole_dns_health") else (latest_diag.created_at.isoformat() if latest_diag else None),
+            "next_run": next_local_time(8, 5),
+            "source": "jarvis-core diagnostics",
+            "channels": ["Homepage"],
+            "summary": "Checks Pi-hole reachability through the homelab diagnostics surface; DNS filtering remains hosted by Pi-hole.",
+            "last_output": latest_run("pihole_dns_health").safe_summary if latest_run("pihole_dns_health") else (latest_diag.payload if latest_diag else None),
+            "last_status": latest_run("pihole_dns_health").status if latest_run("pihole_dns_health") else None,
+        },
+        {
+            "key": "media_automations",
             "name": "Media automations",
             "category": "media",
             "status": "available",
@@ -1191,6 +1523,162 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
     ]
     scheduled = [item for item in automations if item["mode"] in {"scheduled_or_on_demand", "continuous", "event_driven"}]
     return {"ok": True, "automations": automations, "total": len(automations), "scheduled": len(scheduled)}
+
+
+@app.post("/api/v1/automations/{automation_key}/run")
+def run_automation(automation_key: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    return run_automation_key(db, automation_key, trigger="manual", actor=actor)
+
+
+def automation_runner_loop():
+    time.sleep(20)
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                for key in due_automation_keys(db):
+                    run_automation_key(db, key, trigger="scheduled", actor="jarvis-automation-runner")
+            finally:
+                db.close()
+        except Exception:
+            pass
+        time.sleep(max(30, settings.automation_runner_interval_seconds))
+
+
+def due_automation_keys(db: Session):
+    local_now = datetime.now(ZoneInfo(settings.user_timezone))
+    due = []
+    daily_specs = [
+        ("daily_brief_morning", 7, 30),
+        ("homelab_health", 8, 0),
+        ("pihole_dns_health", 8, 5),
+        ("gmail_needs_reply_scan", 8, 45),
+        ("daily_brief_evening", 20, 30),
+    ]
+    for key, hour, minute in daily_specs:
+        if local_now.hour > hour or (local_now.hour == hour and local_now.minute >= minute):
+            if not automation_ran_today(db, key, local_now):
+                due.append(key)
+    if local_now.weekday() == 5 and (local_now.hour > 9 or (local_now.hour == 9 and local_now.minute >= 15)):
+        if not automation_ran_today(db, "drive_migration_scan", local_now):
+            due.append("drive_migration_scan")
+    return due
+
+
+def automation_ran_today(db: Session, key: str, local_now: datetime):
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    utc_start = local_start.astimezone(timezone.utc)
+    return (
+        db.query(AutomationRunRecord)
+        .filter(AutomationRunRecord.automation_key == key)
+        .filter(AutomationRunRecord.started_at >= utc_start)
+        .filter(AutomationRunRecord.status.in_(("completed", "running")))
+        .first()
+        is not None
+    )
+
+
+def run_automation_key(db: Session, key: str, trigger: str = "manual", actor: str = "jarvis-core"):
+    allowed = {
+        "daily_brief_morning",
+        "daily_brief_evening",
+        "homelab_health",
+        "pihole_dns_health",
+        "drive_migration_scan",
+        "gmail_needs_reply_scan",
+        "approval_notifications",
+        "notification_delivery",
+        "media_automations",
+    }
+    if key not in allowed:
+        raise HTTPException(status_code=404, detail={"error": "automation_not_found", "key": key})
+    run = AutomationRunRecord(
+        id=new_id("auto"),
+        automation_key=key,
+        status="running",
+        trigger=trigger,
+        scheduled_for=now_utc() if trigger == "scheduled" else None,
+        output={},
+    )
+    db.add(run)
+    db.commit()
+    try:
+        output, summary = execute_automation_key(db, key, actor)
+        run.status = "completed"
+        run.output = json_safe(output)
+        run.safe_summary = summary
+        run.completed_at = now_utc()
+        audit(db, "automation.completed", actor, new_id("corr"), run.id, {"automation_key": key, "trigger": trigger, "summary": summary})
+        db.commit()
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)[:1000]
+        run.safe_summary = f"{key} failed: {str(exc)[:240]}"
+        run.completed_at = now_utc()
+        audit(db, "automation.failed", actor, new_id("corr"), run.id, {"automation_key": key, "trigger": trigger, "error": str(exc)[:240]})
+        db.commit()
+    return automation_run_response(run)
+
+
+def execute_automation_key(db: Session, key: str, actor: str):
+    if key == "daily_brief_morning":
+        payload = daily_brief("morning", True, db, actor)
+        return payload, f"Morning brief saved and queued for delivery: {payload.get('saved_brief_id')}"
+    if key == "daily_brief_evening":
+        payload = daily_brief("evening", True, db, actor)
+        return payload, f"Evening brief saved and queued for delivery: {payload.get('saved_brief_id')}"
+    if key == "gmail_needs_reply_scan":
+        payload = run_safe_gmail_inbox_organizer()
+        counts = payload.get("counts") or {}
+        notify_many(
+            db,
+            actor,
+            ("homepage", "telegram"),
+            "Gmail inbox organized",
+            payload.get("text") or "Safe Gmail labels/stars/archive actions completed.",
+            "info",
+            {"automation_key": key, "counts": counts, "mode": "no_spam_no_trash"},
+        )
+        return payload, payload.get("text") or "Gmail inbox organizer completed."
+    if key == "homelab_health":
+        payload = homelab_diagnostics(db, actor)
+        failed = len([item for item in payload.get("checks") or [] if not item.get("ok")])
+        if failed:
+            notify_many(db, actor, ("homepage", "telegram"), "Homelab health attention", f"{failed} check(s) need attention.", "warning", {"automation_key": key})
+        return payload, f"Homelab health check completed: {failed} issue(s)."
+    if key == "pihole_dns_health":
+        payload = http_health_check("pihole", settings.pihole_url)
+        if not payload.get("ok"):
+            notify_many(db, actor, ("homepage", "telegram"), "Pi-hole/DNS attention", payload.get("summary") or payload.get("error") or "Pi-hole check failed.", "warning", {"automation_key": key})
+        return payload, "Pi-hole/DNS check OK." if payload.get("ok") else "Pi-hole/DNS check needs attention."
+    if key == "drive_migration_scan":
+        payload = call_google_tools("/drive/staging-status", {"max_results": 50}, timeout=60)
+        return payload, f"Drive migration scan completed: {payload.get('total', 0)} staged item(s)."
+    if key == "approval_notifications":
+        pending = db.query(ApprovalRequestRecord).filter(ApprovalRequestRecord.status == "pending").count()
+        return {"pending_approvals": pending}, f"{pending} approval(s) pending."
+    if key == "notification_delivery":
+        pending = db.query(NotificationRecord).filter(NotificationRecord.status == "pending").count()
+        return {"pending_notifications": pending}, f"{pending} notification(s) pending delivery."
+    if key == "media_automations":
+        payload = media_automations_status(actor)
+        return payload, payload.get("preview") or "Media automation status checked."
+    raise ValueError(f"unsupported_automation_key={key}")
+
+
+def automation_run_response(run: AutomationRunRecord):
+    return {
+        "id": run.id,
+        "automation_key": run.automation_key,
+        "status": run.status,
+        "trigger": run.trigger,
+        "scheduled_for": run.scheduled_for.isoformat() if run.scheduled_for else None,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "safe_summary": run.safe_summary,
+        "error": run.error,
+        "output": run.output,
+    }
 
 
 @app.post("/api/v1/daily-brief/actions")
@@ -1317,6 +1805,107 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
             request.status = "failed"
             notify_many(db, actor, ("homepage", "telegram", "voice"), "Drive staging copy failed", str(exc)[:500], "warning", {"action_id": action.id})
             audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "google-drive", "error": str(exc)[:240]})
+            return
+    if action.tool_name == "drive.import_to_nextcloud":
+        try:
+            payload = execute_drive_nextcloud_import_action(action)
+            attempt.status = "completed"
+            attempt.safe_summary = payload.get("text") or f"Copied {len(payload.get('imports') or [])} staged Drive item(s) to the Nextcloud import queue."
+            attempt.completed_at = now_utc()
+            result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success", payload={"nextcloud_import": payload})
+            db.add(result)
+            db.flush()
+            visible_count = sum(1 for item in payload.get("imports") or [] if (item.get("nextcloud_visible") or {}).get("ok") is True)
+            verification = VerificationResultRecord(
+                id=new_id("verify"),
+                execution_result_id=result.id,
+                status="verified" if visible_count == len(payload.get("imports") or []) else "partial",
+                payload={"checked": "nextcloud_webdav_visibility", "import_count": len(payload.get("imports") or []), "visible_count": visible_count, "import_root": payload.get("import_root")},
+            )
+            db.add(verification)
+            db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "nextcloud"}))
+            action.status = ActionStatus.COMPLETED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "completed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Nextcloud import completed", attempt.safe_summary or "", "info", {"action_id": action.id, "count": len(payload.get("imports") or [])})
+            audit_for_action(db, "execution.completed", action, actor, {"execution_id": attempt.id, "provider": "nextcloud", "count": len(payload.get("imports") or [])})
+            audit_for_action(db, "verification.completed", action, actor, {"verification_id": verification.id, "provider": "nextcloud"})
+            return
+        except Exception as exc:
+            attempt.status = "failed"
+            attempt.error_category = "drive_nextcloud_import_failed"
+            attempt.safe_summary = f"Nextcloud import failed: {str(exc)[:240]}"
+            attempt.completed_at = now_utc()
+            action.status = ActionStatus.FAILED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "failed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Nextcloud import failed", str(exc)[:500], "warning", {"action_id": action.id})
+            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "nextcloud", "error": str(exc)[:240]})
+            return
+    if action.tool_name == "drive.import_to_paperless":
+        try:
+            payload = execute_drive_paperless_import_action(action)
+            attempt.status = "completed"
+            attempt.safe_summary = payload.get("text") or f"Queued {len(payload.get('imports') or [])} staged Drive document(s) for Paperless."
+            attempt.completed_at = now_utc()
+            result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success", payload={"paperless_import": payload})
+            db.add(result)
+            db.flush()
+            verification = VerificationResultRecord(
+                id=new_id("verify"),
+                execution_result_id=result.id,
+                status="queued",
+                payload={"checked": "paperless_consume_queue", "import_count": len(payload.get("imports") or []), "consume_dir": payload.get("consume_dir")},
+            )
+            db.add(verification)
+            db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "paperless"}))
+            action.status = ActionStatus.COMPLETED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "completed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Paperless import queued", attempt.safe_summary or "", "info", {"action_id": action.id, "count": len(payload.get("imports") or [])})
+            audit_for_action(db, "execution.completed", action, actor, {"execution_id": attempt.id, "provider": "paperless", "count": len(payload.get("imports") or [])})
+            audit_for_action(db, "verification.completed", action, actor, {"verification_id": verification.id, "provider": "paperless"})
+            return
+        except Exception as exc:
+            attempt.status = "failed"
+            attempt.error_category = "drive_paperless_import_failed"
+            attempt.safe_summary = f"Paperless import failed: {str(exc)[:240]}"
+            attempt.completed_at = now_utc()
+            action.status = ActionStatus.FAILED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "failed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Paperless import failed", str(exc)[:500], "warning", {"action_id": action.id})
+            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "paperless", "error": str(exc)[:240]})
+            return
+    if action.tool_name == "gmail.apply_cleanup":
+        try:
+            payload = execute_gmail_cleanup_action(action)
+            attempt.status = "completed"
+            attempt.safe_summary = payload.get("text") or "Verified Gmail cleanup label update."
+            attempt.completed_at = now_utc()
+            result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success", payload={"gmail_cleanup": payload})
+            db.add(result)
+            db.flush()
+            verification = VerificationResultRecord(id=new_id("verify"), execution_result_id=result.id, status="verified", payload={"checked": "gmail_label_update", "message_count": len(payload.get("messages") or [])})
+            db.add(verification)
+            db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "gmail"}))
+            action.status = ActionStatus.COMPLETED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "completed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Gmail cleanup completed", attempt.safe_summary or "", "info", {"action_id": action.id})
+            audit_for_action(db, "execution.completed", action, actor, {"execution_id": attempt.id, "provider": "gmail", "message_count": len(payload.get("messages") or [])})
+            audit_for_action(db, "verification.completed", action, actor, {"verification_id": verification.id, "provider": "gmail"})
+            return
+        except Exception as exc:
+            attempt.status = "failed"
+            attempt.error_category = "gmail_cleanup_failed"
+            attempt.safe_summary = f"Gmail cleanup failed: {str(exc)[:240]}"
+            attempt.completed_at = now_utc()
+            action.status = ActionStatus.FAILED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "failed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Gmail cleanup failed", str(exc)[:500], "warning", {"action_id": action.id})
+            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "gmail", "error": str(exc)[:240]})
             return
     if action.tool_name in {"calendar.schedule_google_event", "calendar.schedule_simulated_event"}:
         if action.tool_name == "calendar.schedule_google_event":
@@ -1475,6 +2064,121 @@ def execute_drive_staging_copy_action(action: ProposedActionRecord):
         "manifests": manifests,
         "text": f"Copied {len(manifests)} Drive item(s) to homelab staging.",
         "mode": "copy_only_no_google_modifications",
+    }
+
+
+def execute_drive_nextcloud_import_action(action: ProposedActionRecord):
+    result = call_google_tools(
+        "/drive/import-to-nextcloud",
+        {
+            "manifest_paths": action.arguments.get("manifest_paths") or [],
+            "max_results": action.arguments.get("max_results") or 20,
+            "action_id": action.id,
+        },
+        timeout=240,
+    )
+    if result.get("ok") is False:
+        raise RuntimeError(result.get("error") or "nextcloud_import_failed")
+    return result
+
+
+def execute_drive_paperless_import_action(action: ProposedActionRecord):
+    result = call_google_tools(
+        "/drive/import-to-paperless",
+        {
+            "manifest_paths": action.arguments.get("manifest_paths") or [],
+            "max_results": action.arguments.get("max_results") or 20,
+            "action_id": action.id,
+        },
+        timeout=240,
+    )
+    if result.get("ok") is False:
+        raise RuntimeError(result.get("error") or "paperless_import_failed")
+    return result
+
+
+def execute_gmail_cleanup_action(action: ProposedActionRecord):
+    result = call_google_tools(
+        "/gmail/execute-contract",
+        {"contract": action.arguments.get("contract") or {}, "approved": True},
+        timeout=240,
+    )
+    if result.get("ok") is False:
+        raise RuntimeError(result.get("error") or "gmail_cleanup_failed")
+    return result
+
+
+def run_safe_gmail_inbox_organizer():
+    summary = call_google_tools("/gmail/cleanup-summary", {"max_results": 50}, timeout=180)
+    results = []
+
+    classification_batches = gmail_classification_batches(summary, 50)
+    if classification_batches:
+        results.append(
+            call_google_tools(
+                "/gmail/execute-contract",
+                {"contract": {"operation": "label_batches", "batches": classification_batches}, "approved": True},
+                timeout=240,
+            )
+        )
+
+    newsletter_ids = [item.get("id") for item in (summary.get("likely_newsletters") or [])[:25] if item.get("id")]
+    if newsletter_ids:
+        results.append(
+            call_google_tools(
+                "/gmail/execute-contract",
+                {
+                    "contract": {
+                        "operation": "label_messages",
+                        "message_ids": newsletter_ids,
+                        "label_names": ["Jarvis/Newsletters"],
+                        "remove_label_ids": ["INBOX"],
+                    },
+                    "approved": True,
+                },
+                timeout=240,
+            )
+        )
+
+    needs_reply_ids = [item.get("id") for item in (summary.get("needs_reply") or [])[:25] if item.get("id")]
+    interview_ids = []
+    for item in (summary.get("admissions") or []) + (summary.get("medical_school") or []):
+        text_value = " ".join(str(item.get(key, "")) for key in ("from", "subject", "snippet")).lower()
+        if item.get("id") and "interview" in text_value:
+            interview_ids.append(item.get("id"))
+    star_ids = sorted(set(needs_reply_ids + interview_ids))
+    if star_ids:
+        results.append(
+            call_google_tools(
+                "/gmail/execute-contract",
+                {
+                    "contract": {
+                        "operation": "label_messages",
+                        "message_ids": star_ids,
+                        "label_ids": ["STARRED"],
+                        "label_names": ["Jarvis/Needs Reply"],
+                        "remove_label_ids": [],
+                    },
+                    "approved": True,
+                },
+                timeout=240,
+            )
+        )
+
+    failures = [item for item in results if item.get("ok") is False]
+    if failures:
+        raise RuntimeError(f"gmail_safe_organizer_failures={len(failures)}")
+    return {
+        "ok": True,
+        "mode": "safe_no_spam_no_trash",
+        "counts": {
+            "classified_batches": len(classification_batches),
+            "archived_newsletters": len(newsletter_ids),
+            "starred_reply_or_interview": len(star_ids),
+            **(summary.get("counts") or {}),
+        },
+        "results": results,
+        "text": f"Gmail organized safely: {len(classification_batches)} label batch(es), {len(newsletter_ids)} newsletter(s) archived, {len(star_ids)} reply/interview item(s) starred. Nothing was moved to spam, junk, or trash.",
     }
 
 
@@ -2319,6 +3023,63 @@ def destination_service_key(destination: str):
     return "needs_review"
 
 
+def gmail_classification_batches(summary: dict, max_results: int):
+    buckets: dict[str, set[str]] = {
+        "Jarvis/Newsletters": set(),
+        "Jarvis/Needs Reply": set(),
+        "Jarvis/Needs Review": set(),
+        "Jarvis/Medical School": set(),
+        "Jarvis/Admissions": set(),
+        "Jarvis/Finance": set(),
+        "Jarvis/Education": set(),
+        "Jarvis/Work": set(),
+    }
+
+    def total_selected():
+        return len({mid for values in buckets.values() for mid in values})
+
+    def add(label: str, message: dict):
+        message_id = message.get("id")
+        if message_id and total_selected() < max_results:
+            buckets.setdefault(label, set()).add(message_id)
+
+    for message in summary.get("likely_newsletters") or []:
+        add("Jarvis/Newsletters", message)
+    for message in summary.get("needs_reply") or []:
+        add("Jarvis/Needs Reply", message)
+    for message in summary.get("old_unread") or []:
+        add("Jarvis/Needs Review", message)
+    for message in summary.get("medical_school") or []:
+        add("Jarvis/Medical School", message)
+        add("Jarvis/Education", message)
+    for message in summary.get("admissions") or []:
+        add("Jarvis/Admissions", message)
+    for message in summary.get("finance_receipts") or []:
+        add("Jarvis/Finance", message)
+
+    keyword_labels = [
+        ("Jarvis/Medical School", ("medical school", "med school", "enmed", "mcat", "aacom", "aamc", "osteopathic", "kcu", "lecom", "pcom")),
+        ("Jarvis/Admissions", ("admissions", "interview", "application", "supplemental", "applicant", "invite")),
+        ("Jarvis/Finance", ("bank", "invoice", "receipt", "statement", "payment", "tax", "tuition", "bill")),
+        ("Jarvis/Education", ("university", "college", "class", "course", "student", "school", "enmed", "ufl", "edu")),
+        ("Jarvis/Work", ("project", "meeting", "interview", "application", "deadline", "team", "work")),
+    ]
+    seen_messages = []
+    for key in ("needs_reply", "old_unread", "likely_newsletters", "medical_school", "admissions", "finance_receipts"):
+        seen_messages.extend(summary.get(key) or [])
+    for message in seen_messages:
+        text_value = " ".join(str(message.get(key, "")) for key in ("from", "subject", "snippet")).lower()
+        for label, keywords in keyword_labels:
+            if any(word in text_value for word in keywords):
+                add(label, message)
+
+    return [
+        {"label_names": [label], "message_ids": sorted(message_ids), "remove_label_ids": []}
+        for label, message_ids in buckets.items()
+        if message_ids
+    ]
+
+
 def smart_destination_next_action(manifest: dict, service: dict):
     if not service.get("ready"):
         return f"Review or initialize {service.get('label', 'the destination')} before import."
@@ -2359,11 +3120,11 @@ def media_automation_checks():
         try:
             request = urllib.request.Request(check_url, method="GET")
             with urllib.request.urlopen(request, timeout=8) as response:
-                checks.append({"name": name, "label": label, "ok": response.status < 500, "status": response.status, "url": display_url, "summary": "reachable"})
+                checks.append({"name": name, "label": label, "ok": response.status < 500, "optional": True, "status": response.status, "url": display_url, "summary": "reachable"})
         except urllib.error.HTTPError as exc:
-            checks.append({"name": name, "label": label, "ok": exc.code < 500, "status": exc.code, "url": display_url, "summary": "reachable_auth_required" if exc.code in {401, 403} else "http_error"})
+            checks.append({"name": name, "label": label, "ok": exc.code < 500, "optional": True, "status": exc.code, "url": display_url, "summary": "reachable_auth_required" if exc.code in {401, 403} else "http_error"})
         except Exception as exc:
-            checks.append({"name": name, "label": label, "ok": False, "status": None, "url": display_url, "check_url": check_url, "error": str(exc)[:240]})
+            checks.append({"name": name, "label": label, "ok": False, "optional": True, "status": None, "url": display_url, "check_url": check_url, "error": str(exc)[:240], "summary": "Optional media automation service is not reachable yet."})
     return checks
 
 
