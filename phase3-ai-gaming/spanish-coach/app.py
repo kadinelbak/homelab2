@@ -362,7 +362,8 @@ def clean_vocab(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def split_sentences(text_value: str) -> list[str]:
-    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text_value) if s.strip()]
+    pattern = r"[^.!?]+(?:[.!?]+[\"'»”]?|$)"
+    return [match.group(0).strip() for match in re.finditer(pattern, text_value) if match.group(0).strip()]
 
 
 def split_clauses(sentence: str, lang: str) -> list[str]:
@@ -378,21 +379,7 @@ def split_clauses(sentence: str, lang: str) -> list[str]:
     parts = [part.strip(" ,;:") for part in re.split(pattern, sentence, flags=re.I) if part.strip(" ,;:")]
     if len(parts) <= 1:
         return [sentence]
-    clauses: list[str] = []
-    buffer = ""
-    for part in parts:
-        candidate = f"{buffer} {part}".strip() if buffer else part
-        if len(candidate.split()) < 4:
-            buffer = candidate
-            continue
-        clauses.append(candidate)
-        buffer = ""
-    if buffer:
-        if clauses:
-            clauses[-1] = f"{clauses[-1]} {buffer}".strip()
-        else:
-            clauses.append(buffer)
-    return clauses or [sentence]
+    return parts
 
 
 def listening_plan(spanish_text: str, english_text: str) -> dict[str, Any]:

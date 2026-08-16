@@ -83,9 +83,16 @@ def test_listening_plan_uses_clause_sized_story_chunks(tmp_path):
     assert len(plan["sentence_loop"]) == 2
     assert plan["sentence_loop"][0]["spanish"] == "La abuela quiere visitar el mercado"
     assert plan["sentence_loop"][1]["spanish"].startswith("pero el hermano menor")
+    assert plan["sentence_loop"][0]["english"] == "The grandmother wants to visit the market"
     assert plan["sentence_loop"][0]["sequence"][0]["lang"] == "es"
     assert plan["sentence_loop"][0]["sequence"][1]["lang"] == "en-us"
     assert plan["shadowing"][0]["pause_seconds"] == 2.2
+
+
+def test_sentence_split_handles_closing_quotes(tmp_path):
+    module, _ = load_app(tmp_path)
+    sentences = module.split_sentences('Her dad says, "First we buy fruit." The mom smiles.')
+    assert sentences == ['Her dad says, "First we buy fruit."', "The mom smiles."]
 
 
 def test_vocab_deduplicates_across_sources(tmp_path):
