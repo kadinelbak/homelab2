@@ -225,6 +225,12 @@ def fallback_tutor(message: str) -> dict[str, Any]:
     }
 
 
+def replace_words(text_value: str, replacements: dict[str, str]) -> str:
+    for source, target in replacements.items():
+        text_value = text_value.replace(source, target)
+    return text_value
+
+
 def fallback_story(req: "StoryCreate") -> dict[str, Any]:
     topic = (req.topic or "la familia").strip()
     level = str(req.level or "beginner").lower()
@@ -284,6 +290,30 @@ def fallback_story(req: "StoryCreate") -> dict[str, Any]:
             {"spanish": "enseñar", "english": "to teach", "example_sentence": "Promete enseñar una frase nueva.", "tags": ["story", "ñ"]},
             {"spanish": "pronunciación", "english": "pronunciation", "example_sentence": "La pronunciación mejora.", "tags": ["story", "accent"]},
         ]
+    variant = uuid.uuid4().int % 3
+    if "famil" in topic_lower:
+        variants = [
+            {"Rivera": "Rivera", "Sofía": "Sofía", "papá": "papá", "mamá": "mamá", "mercado": "mercado", "parque": "parque"},
+            {"Rivera": "Morales", "Sofía": "Camila", "papá": "tío", "mamá": "tía", "mercado": "panadería", "parque": "plaza"},
+            {"Rivera": "Cruz", "Sofía": "Valeria", "papá": "abuelo", "mamá": "abuela", "mercado": "tienda", "parque": "jardín"},
+        ]
+        replacements = variants[variant]
+        title = f"La decisión de la familia {replacements['Rivera']}"
+    else:
+        variants = [
+            {"Lucía": "Lucía", "señor": "señor", "teléfono": "teléfono"},
+            {"Lucía": "Marisol", "señor": "vecino", "teléfono": "cuaderno"},
+            {"Lucía": "Elena", "señor": "profesor", "teléfono": "diario"},
+        ]
+        replacements = variants[variant]
+        title = f"{title}: versión {variant + 1}"
+    seed = [
+        (
+            replace_words(es, replacements),
+            replace_words(en, replacements),
+        )
+        for es, en in seed
+    ]
     count = int(shape["sentences"])
     selected = seed[: min(count, len(seed))]
     if tense.startswith("past") or tense.startswith("pretérito") or tense.startswith("preter"):
