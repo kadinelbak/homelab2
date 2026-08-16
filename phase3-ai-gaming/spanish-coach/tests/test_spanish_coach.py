@@ -58,7 +58,8 @@ def test_story_generation_fallback_has_listening_plan_and_vocab(tmp_path):
     assert response.status_code == 200
     data = response.json()
     assert data["spanish_text"]
-    assert data["listening_plan"]["sentence_loop"][0]["sequence"][0]
+    assert data["listening_plan"]["sentence_loop"][0]["sequence"][0]["lang"] == "es"
+    assert data["listening_plan"]["sentence_loop"][0]["sequence"][1]["lang"] == "en-us"
     assert data["vocabulary"]
 
 
@@ -93,10 +94,11 @@ def test_tts_posts_segments_to_worker(tmp_path, monkeypatch):
             return None
 
         async def post(self, url, headers=None, json=None, files=None, data=None):
-            assert json["text"] == "hola\n\nhello\n\nhola"
+            assert json["text"] == "hola"
+            assert json["lang"] == "es"
             return FakeResponse()
 
     monkeypatch.setattr(module.httpx, "AsyncClient", FakeClient)
-    response = client.post("/api/tts", headers=auth(), json={"segments": ["hola", "hello", "hola"]})
+    response = client.post("/api/tts", headers=auth(), json={"segments": [{"text": "hola", "lang": "es"}]})
     assert response.status_code == 200
     assert response.content == b"audio"

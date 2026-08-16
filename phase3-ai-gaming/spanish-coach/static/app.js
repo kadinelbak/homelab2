@@ -97,14 +97,22 @@ $("makeStory").addEventListener("click", async () => {
 });
 
 async function playSegments(segments) {
-  const res = await api("/api/tts", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({segments})
-  });
-  const blob = await res.blob();
-  audio.src = URL.createObjectURL(blob);
-  await audio.play();
+  for (const segment of normalizeSegments(segments)) {
+    try {
+      const res = await api("/api/tts", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({segments: [segment], lang: segment.lang})
+      });
+      const blob = await res.blob();
+      audio.src = URL.createObjectURL(blob);
+      await audio.play();
+      await waitForAudioEnd(audio);
+    } catch (error) {
+      await speakInBrowser(segment.text, segment.lang);
+    }
+    await delay((segment.pause_seconds || 0.55) * 1000);
+  }
 }
 
 $("playStory").addEventListener("click", async () => {
@@ -115,7 +123,10 @@ $("playStory").addEventListener("click", async () => {
 });
 
 $("playLoop").addEventListener("click", async () => {
-  const segments = $("loopText").value.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const segments = $("loopText").value.split(/\n+/).map((line, index) => {
+    const text = line.trim();
+    return text ? {text, lang: index % 3 === 1 ? "en-us" : "es"} : null;
+  }).filter(Boolean);
   await playSegments(segments);
 });
 
@@ -145,6 +156,45 @@ function renderCard(item) {
     el.appendChild(b);
   });
   return el;
+}
+
+function normalizeSegments(segments) {
+  return (segments || []).map((segment, index) => {
+    if (typeof segment === "string") {
+      return {text: segment, lang: index % 3 === 1 ? "en-us" : "es"};
+    }
+    return {
+      text: segment.text || segment.spanish || segment.english || "",
+      lang: segment.lang || (segment.english ? "en-us" : "es"),
+      pause_seconds: segment.pause_seconds
+    };
+  }).filter((segment) => segment.text);
+}
+
+function waitForAudioEnd(player) {
+  return new Promise((resolve) => {
+    player.onended = resolve;
+    player.onerror = resolve;
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function speakInBrowser(text, lang) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) {
+      resolve();
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang === "es" ? "es-ES" : "en-US";
+    utterance.rate = lang === "es" ? 0.92 : 0.96;
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
 refreshHealth();

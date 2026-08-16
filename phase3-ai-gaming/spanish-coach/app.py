@@ -244,10 +244,24 @@ def listening_plan(spanish_text: str, english_text: str) -> dict[str, Any]:
     paired = []
     for index, spanish in enumerate(spanish_sentences):
         english = english_sentences[index] if index < len(english_sentences) else ""
-        paired.append({"spanish": spanish, "english": english, "sequence": [spanish, english, spanish]})
+        paired.append(
+            {
+                "spanish": spanish,
+                "english": english,
+                "sequence": [
+                    {"text": spanish, "lang": "es"},
+                    {"text": english, "lang": "en-us"},
+                    {"text": spanish, "lang": "es"},
+                ],
+            }
+        )
     return {
         "sentence_loop": paired,
-        "full_loop": [spanish_text, english_text, spanish_text],
+        "full_loop": [
+            {"text": spanish_text, "lang": "es"},
+            {"text": english_text, "lang": "en-us"},
+            {"text": spanish_text, "lang": "es"},
+        ],
         "shadowing": [{"spanish": sentence, "pause_seconds": 3} for sentence in spanish_sentences],
     }
 
@@ -297,9 +311,10 @@ class ReviewRequest(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str | None = None
-    segments: list[str] | None = None
+    segments: list[str | dict[str, Any]] | None = None
     voice: str | None = None
     format: str = "ogg"
+    lang: str | None = None
 
 
 class StoryCreate(BaseModel):
@@ -379,13 +394,19 @@ async def transcribe(file: UploadFile = File(...)) -> dict[str, Any]:
 @app.post("/api/tts", dependencies=[Depends(require_auth)])
 async def tts(req: TTSRequest) -> Response:
     segments = req.segments or ([req.text] if req.text else [])
-    text_value = "\n\n".join(segment.strip() for segment in segments if segment and segment.strip())
+    first = segments[0] if segments else ""
+    if isinstance(first, dict):
+        text_value = str(first.get("text") or "").strip()
+        lang = str(first.get("lang") or req.lang or "").strip() or None
+    else:
+        text_value = str(first or "").strip()
+        lang = req.lang
     if not text_value:
         raise HTTPException(status_code=400, detail="text or segments required")
     headers = {}
     if TTS_TOKEN and not TTS_TOKEN.startswith("CHANGE_ME"):
         headers["Authorization"] = f"Bearer {TTS_TOKEN}"
-    payload = {"text": text_value, "voice": req.voice or TTS_VOICE, "format": req.format, "max_chars": 0}
+    payload = {"text": text_value, "voice": req.voice or TTS_VOICE, "format": req.format, "max_chars": 0, "lang": lang}
     async with httpx.AsyncClient(timeout=240) as client:
         response = await client.post(f"{TTS_URL}/tts/synthesize", headers=headers, json=payload)
         response.raise_for_status()
@@ -516,7 +537,7 @@ def story_audio_payload(story_id: str, mode: str = "sentence_loop", db: Session 
     if mode == "full_loop":
         segments = plan["full_loop"]
     elif mode == "shadowing":
-        segments = [item["spanish"] for item in plan["shadowing"]]
+        segments = [{"text": item["spanish"], "lang": "es", "pause_seconds": item.get("pause_seconds", 3)} for item in plan["shadowing"]]
     else:
         segments = [segment for item in plan["sentence_loop"] for segment in item["sequence"] if segment]
     return {"story_id": story.id, "mode": mode, "segments": segments}

@@ -90,14 +90,14 @@ def audio_bytes(wav_path, ogg_path, output_format):
     return ogg_path.read_bytes(), "audio/ogg"
 
 
-def synthesize_kokoro(text, voice, tmpdir, output_format="ogg"):
+def synthesize_kokoro(text, voice, tmpdir, output_format="ogg", lang=None):
     wav_path = Path(tmpdir) / "briefing.wav"
     ogg_path = Path(tmpdir) / "briefing.ogg"
     samples, sample_rate = get_kokoro().create(
         text,
         voice=kokoro_voice(voice),
         speed=KOKORO_SPEED,
-        lang=KOKORO_LANG,
+        lang=lang or KOKORO_LANG,
     )
     write_float_wav(wav_path, samples, sample_rate)
     return audio_bytes(wav_path, ogg_path, output_format)
@@ -121,8 +121,8 @@ def synthesize_piper(text, voice, tmpdir, output_format="ogg"):
     return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize_espeak(text, voice, tmpdir, output_format="ogg"):
-    voice_arg = "en-us" if voice in {"", "default", "piper"} else voice
+def synthesize_espeak(text, voice, tmpdir, output_format="ogg", lang=None):
+    voice_arg = lang or ("en-us" if voice in {"", "default", "piper", "kokoro"} else voice)
     wav_path = Path(tmpdir) / "briefing.wav"
     ogg_path = Path(tmpdir) / "briefing.ogg"
     subprocess.run(
@@ -136,7 +136,7 @@ def synthesize_espeak(text, voice, tmpdir, output_format="ogg"):
     return audio_bytes(wav_path, ogg_path, output_format)
 
 
-def synthesize(text, voice, output_format="ogg", max_chars=None):
+def synthesize(text, voice, output_format="ogg", max_chars=None, lang=None):
     text = str(text or "").strip()
     if max_chars is None:
         max_chars = MAX_CHARS
@@ -148,24 +148,25 @@ def synthesize(text, voice, output_format="ogg", max_chars=None):
     output_format = str(output_format or "ogg").lower()
     if output_format not in {"ogg", "wav"}:
         raise ValueError("format_must_be_ogg_or_wav")
+    lang = str(lang or "").strip() or None
     with tempfile.TemporaryDirectory() as tmpdir:
         if ENGINE == "espeak":
-            return synthesize_espeak(text, voice, tmpdir, output_format)
+            return synthesize_espeak(text, voice, tmpdir, output_format, lang)
         if ENGINE == "piper":
             try:
                 return synthesize_piper(text, voice, tmpdir, output_format)
             except Exception:
                 if os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}:
-                    return synthesize_espeak(text, "default", tmpdir, output_format)
+                    return synthesize_espeak(text, "default", tmpdir, output_format, lang)
                 raise
         try:
-            return synthesize_kokoro(text, voice, tmpdir, output_format)
+            return synthesize_kokoro(text, voice, tmpdir, output_format, lang)
         except Exception:
             if os.environ.get("JARVIS_TTS_ALLOW_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}:
                 try:
                     return synthesize_piper(text, "default", tmpdir, output_format)
                 except Exception:
-                    return synthesize_espeak(text, "default", tmpdir, output_format)
+                    return synthesize_espeak(text, "default", tmpdir, output_format, lang)
             raise
 
 
@@ -202,6 +203,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "engine": ENGINE,
                     "voice": DEFAULT_VOICE,
+                    "lang": KOKORO_LANG,
                     "kokoro_model": str(kokoro_paths()[0]),
                     "kokoro_voice": kokoro_voice(DEFAULT_VOICE),
                     "piper_model": str(piper_model_path(DEFAULT_VOICE)),
@@ -226,6 +228,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload.get("voice") or DEFAULT_VOICE,
                 payload.get("format") or "ogg",
                 payload.get("max_chars"),
+                payload.get("lang"),
             )
         except Exception as exc:
             self.write_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(exc)})
