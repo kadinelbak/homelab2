@@ -74,6 +74,20 @@ def test_story_length_and_level_change_fallback_size(tmp_path):
     assert "mañana" in long["spanish_text"]
 
 
+def test_listening_plan_uses_clause_sized_story_chunks(tmp_path):
+    module, _ = load_app(tmp_path)
+    plan = module.listening_plan(
+        "La abuela quiere visitar el mercado, pero el hermano menor sueña con ir al parque.",
+        "The grandmother wants to visit the market, but the younger brother dreams of going to the park.",
+    )
+    assert len(plan["sentence_loop"]) == 2
+    assert plan["sentence_loop"][0]["spanish"] == "La abuela quiere visitar el mercado"
+    assert plan["sentence_loop"][1]["spanish"].startswith("pero el hermano menor")
+    assert plan["sentence_loop"][0]["sequence"][0]["lang"] == "es"
+    assert plan["sentence_loop"][0]["sequence"][1]["lang"] == "en-us"
+    assert plan["shadowing"][0]["pause_seconds"] == 2.2
+
+
 def test_vocab_deduplicates_across_sources(tmp_path):
     module, _ = load_app(tmp_path)
     cleaned = module.clean_vocab([

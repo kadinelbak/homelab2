@@ -361,23 +361,62 @@ def clean_vocab(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return cleaned
 
 
+def split_sentences(text_value: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text_value) if s.strip()]
+
+
+def split_clauses(sentence: str, lang: str) -> list[str]:
+    sentence = sentence.strip()
+    if not sentence:
+        return []
+    if len(sentence.split()) <= 7:
+        return [sentence]
+    if lang == "es":
+        pattern = r"(?<=[,;:])\s+|\s+(?=pero\b|porque\b|cuando\b|si\b|aunque\b|después\b)"
+    else:
+        pattern = r"(?<=[,;:])\s+|\s+(?=but\b|because\b|when\b|if\b|although\b|after\b|then\b)"
+    parts = [part.strip(" ,;:") for part in re.split(pattern, sentence, flags=re.I) if part.strip(" ,;:")]
+    if len(parts) <= 1:
+        return [sentence]
+    clauses: list[str] = []
+    buffer = ""
+    for part in parts:
+        candidate = f"{buffer} {part}".strip() if buffer else part
+        if len(candidate.split()) < 4:
+            buffer = candidate
+            continue
+        clauses.append(candidate)
+        buffer = ""
+    if buffer:
+        if clauses:
+            clauses[-1] = f"{clauses[-1]} {buffer}".strip()
+        else:
+            clauses.append(buffer)
+    return clauses or [sentence]
+
+
 def listening_plan(spanish_text: str, english_text: str) -> dict[str, Any]:
-    spanish_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", spanish_text) if s.strip()]
-    english_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", english_text) if s.strip()]
+    spanish_sentences = split_sentences(spanish_text)
+    english_sentences = split_sentences(english_text)
     paired = []
     for index, spanish in enumerate(spanish_sentences):
         english = english_sentences[index] if index < len(english_sentences) else ""
-        paired.append(
-            {
-                "spanish": spanish,
-                "english": english,
-                "sequence": [
-                    {"text": spanish, "lang": "es"},
-                    {"text": english, "lang": "en-us"},
-                    {"text": spanish, "lang": "es"},
-                ],
-            }
-        )
+        spanish_clauses = split_clauses(spanish, "es")
+        english_clauses = split_clauses(english, "en")
+        for clause_index, spanish_clause in enumerate(spanish_clauses):
+            english_clause = english_clauses[clause_index] if clause_index < len(english_clauses) else english
+            paired.append(
+                {
+                    "spanish": spanish_clause,
+                    "english": english_clause,
+                    "sentence_index": index,
+                    "sequence": [
+                        {"text": spanish_clause, "lang": "es"},
+                        {"text": english_clause, "lang": "en-us"},
+                        {"text": spanish_clause, "lang": "es"},
+                    ],
+                }
+            )
     return {
         "sentence_loop": paired,
         "full_loop": [
@@ -385,7 +424,7 @@ def listening_plan(spanish_text: str, english_text: str) -> dict[str, Any]:
             {"text": english_text, "lang": "en-us"},
             {"text": spanish_text, "lang": "es"},
         ],
-        "shadowing": [{"spanish": sentence, "pause_seconds": 3} for sentence in spanish_sentences],
+        "shadowing": [{"spanish": item["spanish"], "pause_seconds": 2.2} for item in paired],
     }
 
 

@@ -35,6 +35,8 @@ header {
 }
 
 h1 { margin: 0; font-size: 34px; letter-spacing: 0; }
+h2 { margin: 6px 0 12px; }
+h3 { margin: 14px 0 0; font-size: 18px; }
 p { margin: 7px 0 0; color: var(--muted); }
 
 #health {

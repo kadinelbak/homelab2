@@ -168,11 +168,13 @@ function renderStory(story) {
     <p class="spanish">${story.spanish_text}</p>
     <p class="english">${story.english_text}</p>
     <div class="chips">${vocab}</div>
+    <h3>Practice Questions</h3>
+    <p class="muted">Use these after listening to check understanding and practice answering out loud.</p>
     <ol>${questions}</ol>
     <div class="actions">
-      <button data-play-mode="sentence">Sentence Loop</button>
+      <button data-play-mode="sentence">Clause Loop</button>
       <button data-play-mode="full">Full Story</button>
-      <button data-play-mode="shadow">Shadowing</button>
+      <button data-play-mode="shadow">Clause Shadowing</button>
     </div>`;
   $("storyOutput").querySelectorAll("[data-play-mode]").forEach((button) => {
     button.addEventListener("click", async () => {
