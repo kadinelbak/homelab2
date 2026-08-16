@@ -194,6 +194,7 @@ def tutor_prompt(message: str) -> list[dict[str, str]]:
 
 def story_prompt(req: "StoryCreate") -> list[dict[str, str]]:
     shape = story_shape(req.level, req.length)
+    freshness = uuid.uuid4().hex[:8]
     long_form = " Aim for about 10 minutes of Spanish-English-Spanish listening playback, organized into 4 short scenes." if shape.get("minutes") == 10 else ""
     system = (
         "You generate varied interactive Spanish learning stories. The target language is Spanish. "
@@ -208,6 +209,7 @@ def story_prompt(req: "StoryCreate") -> list[dict[str, str]]:
         f"Target about {shape['sentences']} Spanish sentences at CEFR {shape['cefr']}. "
         f"Tense focus: {req.tense or 'present and practical past'}. "
         f"Required vocab focus: {req.vocab_focus or 'common useful words'}. "
+        f"Freshness seed: {freshness}. Use a different protagonist, setting, conflict, and ending from any generic cafe, market, or family boilerplate. "
         "Make the story specific, with a small decision or emotional turn, and include one question that asks the learner what they would say next."
         f"{long_form}"
     )
@@ -267,28 +269,72 @@ def fallback_story(req: "StoryCreate") -> dict[str, Any]:
     tense = (req.tense or "presente").strip().lower()
     shape = story_shape(level, length)
     topic_lower = topic.lower()
+    variant = uuid.uuid4().int % 9
     if "famil" in topic_lower:
-        title = "La decisión de la familia"
-        seed = [
-            ("El sábado por la mañana, la familia Rivera prepara el desayuno en una cocina pequeña.", "On Saturday morning, the Rivera family prepares breakfast in a small kitchen."),
-            ("La abuela quiere visitar el mercado, pero el hermano menor sueña con ir al parque.", "The grandmother wants to visit the market, but the younger brother dreams of going to the park."),
-            ("Sofía escucha a todos y escribe dos planes en una hoja amarilla.", "Sofía listens to everyone and writes two plans on a yellow sheet of paper."),
-            ("Su papá dice: «Primero compramos fruta fresca y después jugamos fútbol».", "Her dad says, \"First we buy fresh fruit and then we play soccer.\""),
-            ("La mamá sonríe porque la solución incluye a todos.", "The mom smiles because the solution includes everyone."),
-            ("En el mercado, Sofía pide piña, pan y un kilo de tomates con mucha confianza.", "At the market, Sofía asks for pineapple, bread, and a kilo of tomatoes with a lot of confidence."),
-            ("El vendedor le contesta rápido, y ella pregunta otra vez sin tener vergüenza.", "The seller answers quickly, and she asks again without being embarrassed."),
-            ("Cuando llegan al parque, el hermano menor enseña una canción nueva.", "When they arrive at the park, the younger brother teaches a new song."),
-            ("La abuela canta despacio, y todos repiten las palabras hasta reírse.", "The grandmother sings slowly, and everyone repeats the words until they laugh."),
-            ("Al final, Sofía entiende que una buena familia no siempre está de acuerdo, pero sí se escucha.", "In the end, Sofía understands that a good family does not always agree, but it does listen."),
-            ("Antes de dormir, escribe en su diario: «Mañana voy a hablar con más paciencia».", "Before sleeping, she writes in her diary: \"Tomorrow I am going to speak with more patience.\""),
-            ("También anota tres palabras nuevas para practicarlas en voz alta.", "She also writes down three new words to practice out loud."),
-            ("Su hermano toca la puerta y le pregunta si mañana pueden cocinar juntos.", "Her brother knocks on the door and asks if tomorrow they can cook together."),
-            ("Sofía responde que sí, pero solo si él lava los platos después.", "Sofía answers yes, but only if he washes the dishes afterward."),
-            ("Los dos se ríen porque saben que el trato es justo.", "They both laugh because they know the deal is fair."),
-            ("La casa queda tranquila, llena de pequeñas promesas para el día siguiente.", "The house becomes quiet, full of small promises for the next day."),
-            ("Si tú estuvieras allí, podrías decir: «Yo también quiero ayudar».", "If you were there, you could say: \"I also want to help.\""),
-            ("Esa frase sencilla abre una conversación nueva.", "That simple phrase opens a new conversation."),
+        family_plots = [
+            (
+                "La decisión de la familia",
+                [
+                    ("El sábado por la mañana, la familia Rivera prepara el desayuno en una cocina pequeña.", "On Saturday morning, the Rivera family prepares breakfast in a small kitchen."),
+                    ("La abuela quiere visitar el mercado, pero el hermano menor sueña con ir al parque.", "The grandmother wants to visit the market, but the younger brother dreams of going to the park."),
+                    ("Sofía escucha a todos y escribe dos planes en una hoja amarilla.", "Sofía listens to everyone and writes two plans on a yellow sheet of paper."),
+                    ("Su papá dice: «Primero compramos fruta fresca y después jugamos fútbol».", "Her dad says, \"First we buy fresh fruit and then we play soccer.\""),
+                    ("La mamá sonríe porque la solución incluye a todos.", "The mom smiles because the solution includes everyone."),
+                    ("En el mercado, Sofía pide piña, pan y un kilo de tomates con mucha confianza.", "At the market, Sofía asks for pineapple, bread, and a kilo of tomatoes with a lot of confidence."),
+                    ("El vendedor le contesta rápido, y ella pregunta otra vez sin tener vergüenza.", "The seller answers quickly, and she asks again without being embarrassed."),
+                    ("Cuando llegan al parque, el hermano menor enseña una canción nueva.", "When they arrive at the park, the younger brother teaches a new song."),
+                    ("La abuela canta despacio, y todos repiten las palabras hasta reírse.", "The grandmother sings slowly, and everyone repeats the words until they laugh."),
+                    ("Al final, Sofía entiende que una buena familia no siempre está de acuerdo, pero sí se escucha.", "In the end, Sofía understands that a good family does not always agree, but it does listen."),
+                    ("Antes de dormir, escribe en su diario: «Mañana voy a hablar con más paciencia».", "Before sleeping, she writes in her diary: \"Tomorrow I am going to speak with more patience.\""),
+                    ("También anota tres palabras nuevas para practicarlas en voz alta.", "She also writes down three new words to practice out loud."),
+                    ("Su hermano toca la puerta y le pregunta si mañana pueden cocinar juntos.", "Her brother knocks on the door and asks if tomorrow they can cook together."),
+                    ("Sofía responde que sí, pero solo si él lava los platos después.", "Sofía answers yes, but only if he washes the dishes afterward."),
+                    ("Los dos se ríen porque saben que el trato es justo.", "They both laugh because they know the deal is fair."),
+                    ("La casa queda tranquila, llena de pequeñas promesas para el día siguiente.", "The house becomes quiet, full of small promises for the next day."),
+                    ("Si tú estuvieras allí, podrías decir: «Yo también quiero ayudar».", "If you were there, you could say: \"I also want to help.\""),
+                    ("Esa frase sencilla abre una conversación nueva.", "That simple phrase opens a new conversation."),
+                ],
+            ),
+            (
+                "La llamada inesperada",
+                [
+                    ("El teléfono suena justo cuando la familia Rivera empieza a cenar.", "The phone rings just as the Rivera family begins dinner."),
+                    ("Una prima llega mañana y necesita quedarse en la casa por una semana.", "A cousin arrives tomorrow and needs to stay at the house for a week."),
+                    ("Sofía mira la mesa y nota que todos tienen una opinión diferente.", "Sofía looks at the table and notices that everyone has a different opinion."),
+                    ("Su mamá quiere preparar el cuarto pequeño, pero su papá piensa en el sofá grande.", "Her mom wants to prepare the small room, but her dad thinks about the big sofa."),
+                    ("La abuela dice que la hospitalidad empieza con una pregunta sencilla.", "The grandmother says hospitality begins with a simple question."),
+                    ("Sofía practica la frase: «¿Qué necesitas para sentirte cómoda?»", "Sofía practices the phrase: \"What do you need to feel comfortable?\""),
+                    ("Cuando llama a su prima, habla despacio y escucha con paciencia.", "When she calls her cousin, she speaks slowly and listens with patience."),
+                    ("La prima confiesa que tiene miedo de molestar a todos.", "The cousin admits that she is afraid of bothering everyone."),
+                    ("Sofía le responde que la familia puede cambiar sus planes con cariño.", "Sofía answers that the family can change its plans with care."),
+                    ("Después de la llamada, todos mueven sillas, mantas y una lámpara azul.", "After the call, everyone moves chairs, blankets, and a blue lamp."),
+                    ("El hermano menor dibuja un cartel que dice: «Bienvenida a casa».", "The younger brother draws a sign that says: \"Welcome home.\""),
+                    ("Por la noche, Sofía repite tres palabras nuevas: bienvenida, cómoda y ayudar.", "At night, Sofía repeats three new words: welcome, comfortable, and help."),
+                    ("La casa parece más pequeña, pero también más alegre.", "The house seems smaller, but also happier."),
+                    ("Sofía entiende que compartir espacio también es compartir tiempo.", "Sofía understands that sharing space is also sharing time."),
+                ],
+            ),
+            (
+                "El cumpleaños secreto",
+                [
+                    ("La familia Rivera prepara un cumpleaños secreto para la abuela.", "The Rivera family prepares a secret birthday for the grandmother."),
+                    ("Sofía tiene la lista, pero pierde el papel en el autobús.", "Sofía has the list, but loses the paper on the bus."),
+                    ("En vez de entrar en pánico, intenta recordar cada detalle en español.", "Instead of panicking, she tries to remember every detail in Spanish."),
+                    ("Necesitan flores amarillas, una vela pequeña y música tranquila.", "They need yellow flowers, a small candle, and calm music."),
+                    ("Su hermano compra globos verdes porque confunde amarillo con verde.", "Her brother buys green balloons because he confuses yellow with green."),
+                    ("Sofía sonríe y dice: «No pasa nada, todavía podemos arreglarlo».", "Sofía smiles and says: \"It's okay, we can still fix it.\""),
+                    ("En la tienda, pregunta por flores amarillas con mucha claridad.", "At the store, she asks for yellow flowers very clearly."),
+                    ("La vendedora le enseña rosas, girasoles y una planta pequeña.", "The seller shows her roses, sunflowers, and a small plant."),
+                    ("Sofía elige los girasoles porque parecen llenos de mañana.", "Sofía chooses the sunflowers because they seem full of morning."),
+                    ("Cuando la abuela entra, todos gritan: «¡Sorpresa!»", "When the grandmother enters, everyone shouts: \"Surprise!\""),
+                    ("La abuela llora un poquito y abraza a cada persona.", "The grandmother cries a little and hugs each person."),
+                    ("Después, Sofía cuenta la aventura de la lista perdida.", "Afterward, Sofía tells the adventure of the lost list."),
+                    ("La familia se ríe porque el error hizo la historia mejor.", "The family laughs because the mistake made the story better."),
+                    ("Sofía aprende que una fiesta perfecta también puede tener problemas.", "Sofía learns that a perfect party can also have problems."),
+                ],
+            ),
         ]
+        title, seed = family_plots[variant % len(family_plots)]
         vocab = [
             {"spanish": "mañana", "english": "morning / tomorrow", "example_sentence": "Mañana voy a hablar con más paciencia.", "tags": ["story", "ñ"]},
             {"spanish": "pequeña", "english": "small", "example_sentence": "La familia está en una cocina pequeña.", "tags": ["story", "adjective"]},
@@ -296,45 +342,99 @@ def fallback_story(req: "StoryCreate") -> dict[str, Any]:
             {"spanish": "también", "english": "also", "example_sentence": "Yo también quiero ayudar.", "tags": ["story", "accent"]},
         ]
     else:
-        title = f"Una historia sobre {topic}"
-        seed = [
-            (f"Esta mañana, Lucía encuentra algo extraño relacionado con {topic}.", f"This morning, Lucía finds something unusual related to {topic}."),
-            ("Al principio no sabe qué decir, así que respira y observa con atención.", "At first she does not know what to say, so she breathes and observes carefully."),
-            ("Un señor amable le hace una pregunta rápida en español.", "A kind man asks her a quick question in Spanish."),
-            ("Lucía entiende la idea principal, pero necesita repetir una palabra nueva.", "Lucía understands the main idea, but she needs to repeat a new word."),
-            ("Ella responde despacio: «¿Puede decirlo otra vez, por favor?».", "She answers slowly: \"Can you say it again, please?\""),
-            ("La conversación cambia, y de pronto todo parece más fácil.", "The conversation changes, and suddenly everything seems easier."),
-            ("Después escribe la palabra en su teléfono para practicarla más tarde.", "Afterward she writes the word on her phone to practice it later."),
-            ("Por la noche, cuenta la experiencia a su familia con orgullo.", "At night, she tells her family about the experience with pride."),
-            ("Su hermana pequeña dice que aprender español suena como una aventura.", "Her little sister says that learning Spanish sounds like an adventure."),
-            ("Lucía sonríe y promete enseñar una frase nueva cada día.", "Lucía smiles and promises to teach one new phrase every day."),
-            ("La primera frase es: «No entiendo todavía, pero quiero aprender».", "The first phrase is: \"I do not understand yet, but I want to learn.\""),
-            ("Todos la repiten juntos hasta que la pronunciación mejora.", "Everyone repeats it together until the pronunciation improves."),
-            ("Lucía descubre que la confianza crece cuando practica en voz alta.", "Lucía discovers that confidence grows when she practices out loud."),
-            ("Si tú fueras Lucía, ¿qué frase practicarías después?", "If you were Lucía, what phrase would you practice next?"),
-        ]
+        if any(word in topic_lower for word in ["travel", "viaje", "airport", "hotel", "train"]):
+            title = "El mapa que no coincide"
+            seed = [
+                ("Lucía llega a una estación grande con una maleta roja y un mapa viejo.", "Lucía arrives at a large station with a red suitcase and an old map."),
+                ("El mapa dice una cosa, pero las señales nuevas dicen otra.", "The map says one thing, but the new signs say another."),
+                ("Ella busca la plataforma correcta y practica la frase: «¿Dónde está el tren para Granada?»", "She looks for the correct platform and practices the phrase: \"Where is the train to Granada?\""),
+                ("Un trabajador le responde muy rápido, así que Lucía pide que repita más despacio.", "An employee answers very quickly, so Lucía asks him to repeat more slowly."),
+                ("En el andén, conoce a una estudiante que también viaja sola.", "On the platform, she meets a student who is also traveling alone."),
+                ("Las dos comparan sus boletos y descubren que tienen asientos cerca.", "The two compare their tickets and discover that they have seats nearby."),
+                ("Durante el viaje, hablan de ciudades, comida y palabras difíciles.", "During the trip, they talk about cities, food, and difficult words."),
+                ("Cuando el tren se detiene, Lucía casi baja en la ciudad equivocada.", "When the train stops, Lucía almost gets off in the wrong city."),
+                ("Su nueva amiga señala el letrero y dice: «Todavía no, faltan dos paradas».", "Her new friend points to the sign and says: \"Not yet, there are two stops left.\""),
+                ("Lucía respira con alivio y escribe la palabra todavía en su cuaderno.", "Lucía breathes with relief and writes the word still/yet in her notebook."),
+                ("Al llegar, encuentra una plaza llena de música y olor a pan.", "When she arrives, she finds a plaza full of music and the smell of bread."),
+                ("El viaje empezó con confusión, pero termina con una invitación a caminar juntas.", "The trip began with confusion, but ends with an invitation to walk together."),
+                ("Lucía aprende que pedir ayuda también puede abrir una amistad.", "Lucía learns that asking for help can also open a friendship."),
+                ("Si tú estuvieras en la estación, ¿qué pregunta harías primero?", "If you were at the station, what question would you ask first?"),
+            ]
+        elif any(word in topic_lower for word in ["food", "cafe", "restaurant", "market", "comida", "café"]):
+            title = "La receta incompleta"
+            seed = [
+                ("Marisol entra en un mercado con una receta escrita por su abuela.", "Marisol enters a market with a recipe written by her grandmother."),
+                ("La receta está manchada, y falta el nombre del ingrediente principal.", "The recipe is stained, and the name of the main ingredient is missing."),
+                ("Primero compra tomates, ajo, pan y una piña pequeña.", "First she buys tomatoes, garlic, bread, and a small pineapple."),
+                ("El vendedor le pregunta si quiere cilantro o perejil.", "The seller asks her if she wants cilantro or parsley."),
+                ("Marisol no sabe la diferencia, así que huele las dos hierbas con cuidado.", "Marisol does not know the difference, so she smells both herbs carefully."),
+                ("Una señora mayor escucha la conversación y reconoce la receta.", "An older woman hears the conversation and recognizes the recipe."),
+                ("Ella dice que la abuela siempre usaba cilantro los domingos.", "She says the grandmother always used cilantro on Sundays."),
+                ("Marisol compra el cilantro y aprende a decir: «¿Me da un manojo, por favor?»", "Marisol buys the cilantro and learns to say: \"Could you give me a bunch, please?\""),
+                ("En casa, la salsa queda demasiado picante.", "At home, the sauce turns out too spicy."),
+                ("Su hermano prueba una cucharada y corre por un vaso de agua.", "Her brother tastes a spoonful and runs for a glass of water."),
+                ("Todos se ríen, pero nadie deja de comer.", "Everyone laughs, but no one stops eating."),
+                ("Marisol llama a su abuela y le cuenta el error.", "Marisol calls her grandmother and tells her about the mistake."),
+                ("La abuela dice que cada receta necesita una historia nueva.", "The grandmother says every recipe needs a new story."),
+                ("Marisol anota dos palabras para repetir mañana: manojo y picante.", "Marisol writes down two words to repeat tomorrow: bunch and spicy."),
+            ]
+        elif any(word in topic_lower for word in ["work", "job", "office", "school", "study", "trabajo"]):
+            title = "La reunión de las nueve"
+            seed = [
+                ("Elena llega temprano a la oficina porque tiene una reunión importante.", "Elena arrives early at the office because she has an important meeting."),
+                ("Quiere explicar una idea nueva, pero las palabras se mezclan en su cabeza.", "She wants to explain a new idea, but the words mix in her head."),
+                ("Antes de empezar, escribe tres frases útiles en una nota.", "Before starting, she writes three useful phrases on a note."),
+                ("La primera frase es: «Tengo una propuesta sencilla».", "The first phrase is: \"I have a simple proposal.\""),
+                ("La segunda es: «¿Podemos revisar el problema paso a paso?»", "The second is: \"Can we review the problem step by step?\""),
+                ("La tercera es: «Necesito un minuto para explicarlo mejor».", "The third is: \"I need a minute to explain it better.\""),
+                ("Durante la reunión, alguien hace una pregunta difícil.", "During the meeting, someone asks a difficult question."),
+                ("Elena siente vergüenza, pero lee su nota y responde con calma.", "Elena feels embarrassed, but reads her note and answers calmly."),
+                ("Su compañero sonríe porque entiende la idea principal.", "Her coworker smiles because he understands the main idea."),
+                ("Después, el equipo cambia una parte del plan.", "Afterward, the team changes one part of the plan."),
+                ("Elena no gana toda la discusión, pero gana confianza.", "Elena does not win the whole discussion, but she gains confidence."),
+                ("Al final del día, guarda la nota en su bolsillo.", "At the end of the day, she keeps the note in her pocket."),
+                ("Mañana quiere usar las mismas frases con más naturalidad.", "Tomorrow she wants to use the same phrases more naturally."),
+                ("¿Qué frase usarías tú en una reunión difícil?", "What phrase would you use in a difficult meeting?"),
+            ]
+        else:
+            title = f"El detalle inesperado de {topic}"
+            seed = [
+                (f"Esta mañana, Lucía encuentra algo extraño relacionado con {topic}.", f"This morning, Lucía finds something unusual related to {topic}."),
+                ("Al principio no sabe qué decir, así que respira y observa con atención.", "At first she does not know what to say, so she breathes and observes carefully."),
+                ("Una persona amable le hace una pregunta rápida en español.", "A kind person asks her a quick question in Spanish."),
+                ("Lucía entiende la idea principal, pero necesita repetir una palabra nueva.", "Lucía understands the main idea, but she needs to repeat a new word."),
+                ("Ella responde despacio: «¿Puede decirlo otra vez, por favor?»", "She answers slowly: \"Can you say it again, please?\""),
+                ("La conversación cambia, y de pronto todo parece más fácil.", "The conversation changes, and suddenly everything seems easier."),
+                ("Después escribe la palabra en su teléfono para practicarla más tarde.", "Afterward she writes the word on her phone to practice it later."),
+                ("Por la noche, cuenta la experiencia a su familia con orgullo.", "At night, she tells her family about the experience with pride."),
+                ("Su hermana pequeña dice que aprender español suena como una aventura.", "Her little sister says that learning Spanish sounds like an adventure."),
+                ("Lucía sonríe y promete enseñar una frase nueva cada día.", "Lucía smiles and promises to teach one new phrase every day."),
+                ("La primera frase es: «No entiendo todavía, pero quiero aprender».", "The first phrase is: \"I do not understand yet, but I want to learn.\""),
+                ("Todos la repiten juntos hasta que la pronunciación mejora.", "Everyone repeats it together until the pronunciation improves."),
+                ("Lucía descubre que la confianza crece cuando practica en voz alta.", "Lucía discovers that confidence grows when she practices out loud."),
+                ("Si tú fueras Lucía, ¿qué frase practicarías después?", "If you were Lucía, what phrase would you practice next?"),
+            ]
         vocab = [
             {"spanish": "español", "english": "Spanish", "example_sentence": "Un señor le habla en español.", "tags": ["story", "ñ"]},
             {"spanish": "todavía", "english": "yet / still", "example_sentence": "No entiendo todavía.", "tags": ["story", "accent"]},
             {"spanish": "enseñar", "english": "to teach", "example_sentence": "Promete enseñar una frase nueva.", "tags": ["story", "ñ"]},
             {"spanish": "pronunciación", "english": "pronunciation", "example_sentence": "La pronunciación mejora.", "tags": ["story", "accent"]},
         ]
-    variant = uuid.uuid4().int % 3
     if "famil" in topic_lower:
         variants = [
             {"Rivera": "Rivera", "Sofía": "Sofía", "papá": "papá", "mamá": "mamá", "mercado": "mercado", "parque": "parque"},
             {"Rivera": "Morales", "Sofía": "Camila", "papá": "tío", "mamá": "tía", "mercado": "panadería", "parque": "plaza"},
             {"Rivera": "Cruz", "Sofía": "Valeria", "papá": "abuelo", "mamá": "abuela", "mercado": "tienda", "parque": "jardín"},
         ]
-        replacements = variants[variant]
-        title = f"La decisión de la familia {replacements['Rivera']}"
+        replacements = variants[variant % len(variants)]
+        title = f"{title} - familia {replacements['Rivera']}"
     else:
         variants = [
-            {"Lucía": "Lucía", "señor": "señor", "teléfono": "teléfono"},
-            {"Lucía": "Marisol", "señor": "vecino", "teléfono": "cuaderno"},
-            {"Lucía": "Elena", "señor": "profesor", "teléfono": "diario"},
+            {"Lucía": "Lucía", "Marisol": "Marisol", "Elena": "Elena", "señor": "señor", "persona": "persona", "teléfono": "teléfono"},
+            {"Lucía": "Ana", "Marisol": "Carmen", "Elena": "Rosa", "señor": "vecino", "persona": "vecina", "teléfono": "cuaderno"},
+            {"Lucía": "Nadia", "Marisol": "Clara", "Elena": "Paula", "señor": "profesor", "persona": "profesor", "teléfono": "diario"},
         ]
-        replacements = variants[variant]
+        replacements = variants[variant % len(variants)]
         title = f"{title}: versión {variant + 1}"
     seed = [
         (

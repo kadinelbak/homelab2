@@ -90,6 +90,50 @@ def test_ten_minute_story_length_expands_fallback_and_prompt(tmp_path):
     assert len(data["listening_plan"]["sentence_loop"]) >= 40
 
 
+def test_story_prompt_includes_freshness_seed(tmp_path):
+    module, _ = load_app(tmp_path)
+    prompt = module.story_prompt(module.StoryCreate(topic="travel"))
+    assert "Freshness seed:" in prompt[1]["content"]
+    assert "different protagonist" in prompt[1]["content"]
+
+
+def test_fallback_story_varies_by_topic_category(tmp_path, monkeypatch):
+    module, _ = load_app(tmp_path)
+
+    class FakeUuid:
+        int = 0
+        hex = "abc123"
+
+    monkeypatch.setattr(module.uuid, "uuid4", lambda: FakeUuid())
+    travel = module.fallback_story(module.StoryCreate(topic="travel"))
+    food = module.fallback_story(module.StoryCreate(topic="food"))
+    work = module.fallback_story(module.StoryCreate(topic="work"))
+    assert "mapa" in travel["spanish_text"].lower()
+    assert "receta" in food["spanish_text"].lower()
+    assert "reunión" in work["spanish_text"].lower()
+    assert len({travel["title"], food["title"], work["title"]}) == 3
+
+
+def test_family_fallback_has_multiple_plot_shapes(tmp_path, monkeypatch):
+    module, _ = load_app(tmp_path)
+
+    class FakeUuid:
+        hex = "abc123"
+
+    values = [0, 1, 2]
+
+    def fake_uuid4():
+        item = FakeUuid()
+        item.int = values.pop(0)
+        return item
+
+    monkeypatch.setattr(module.uuid, "uuid4", fake_uuid4)
+    titles = [module.fallback_story(module.StoryCreate(topic="family"))["title"] for _ in range(3)]
+    assert any("llamada" in title.lower() for title in titles)
+    assert any("cumpleaños" in title.lower() for title in titles)
+    assert len(set(titles)) == 3
+
+
 def test_listening_plan_uses_clause_sized_story_chunks(tmp_path):
     module, _ = load_app(tmp_path)
     plan = module.listening_plan(
