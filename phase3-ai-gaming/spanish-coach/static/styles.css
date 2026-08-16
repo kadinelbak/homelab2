@@ -129,6 +129,25 @@ textarea { resize: vertical; }
 .english { color: var(--accent2); }
 audio { width: 100%; margin-top: 10px; }
 
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #10150f;
+  color: var(--muted);
+  padding: 5px 9px;
+  font-size: 14px;
+}
+
+ol { padding-left: 22px; color: var(--muted); }
+li { margin-bottom: 6px; }
+
 @media (max-width: 640px) {
   header { display: block; }
   .topbar { margin-top: 12px; align-items: stretch; }

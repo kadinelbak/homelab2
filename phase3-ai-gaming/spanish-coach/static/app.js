@@ -93,7 +93,7 @@ $("makeStory").addEventListener("click", async () => {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(payload)
   })).json();
-  $("storyOutput").innerHTML = `<h2>${currentStory.title}</h2><p class="spanish">${currentStory.spanish_text}</p><p class="english">${currentStory.english_text}</p><p class="muted">${currentStory.questions.join(" | ")}</p>`;
+  renderStory(currentStory);
 });
 
 async function playSegments(segments) {
@@ -156,6 +156,43 @@ function renderCard(item) {
     el.appendChild(b);
   });
   return el;
+}
+
+function renderStory(story) {
+  const vocab = (story.vocabulary || []).map((item) => `<span class="chip">${item.spanish} = ${item.english}</span>`).join("");
+  const questions = (story.questions || []).map((q) => `<li>${q}</li>`).join("");
+  const source = story.source ? `<p class="muted">Source: ${story.source}${story.generation_error ? " (" + story.generation_error + ")" : ""}</p>` : "";
+  $("storyOutput").innerHTML = `
+    <h2>${story.title}</h2>
+    ${source}
+    <p class="spanish">${story.spanish_text}</p>
+    <p class="english">${story.english_text}</p>
+    <div class="chips">${vocab}</div>
+    <ol>${questions}</ol>
+    <div class="actions">
+      <button data-play-mode="sentence">Sentence Loop</button>
+      <button data-play-mode="full">Full Story</button>
+      <button data-play-mode="shadow">Shadowing</button>
+    </div>`;
+  $("storyOutput").querySelectorAll("[data-play-mode]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await playStoryMode(button.dataset.playMode);
+    });
+  });
+}
+
+async function playStoryMode(mode) {
+  if (!currentStory) return;
+  const plan = currentStory.listening_plan || {};
+  if (mode === "full") {
+    await playSegments(plan.full_loop || []);
+    return;
+  }
+  if (mode === "shadow") {
+    await playSegments((plan.shadowing || []).map((item) => ({text: item.spanish, lang: "es", pause_seconds: item.pause_seconds || 3})));
+    return;
+  }
+  await playSegments((plan.sentence_loop || []).flatMap((item) => item.sequence || []));
 }
 
 function normalizeSegments(segments) {

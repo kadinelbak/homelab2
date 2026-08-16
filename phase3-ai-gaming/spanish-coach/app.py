@@ -141,6 +141,19 @@ def parse_json_object(raw: str, fallback: dict[str, Any]) -> dict[str, Any]:
     return fallback
 
 
+def story_shape(level: str, length: str) -> dict[str, int | str]:
+    level_key = str(level or "beginner").lower()
+    length_key = str(length or "short").lower()
+    sentence_counts = {"short": 5, "medium": 10, "long": 16}
+    base = int(sentence_counts.get(length_key, 5))
+    if level_key in {"intermediate", "advanced"}:
+        base += 3
+    if level_key == "advanced":
+        base += 4
+    cefr = {"beginner": "A1-A2", "intermediate": "B1-B2", "advanced": "B2-C1"}.get(level_key, "A1-A2")
+    return {"sentences": base, "cefr": cefr}
+
+
 def tutor_prompt(message: str) -> list[dict[str, str]]:
     system = (
         "You are a private Spanish learning coach. The learner's target language is Spanish. "
@@ -153,16 +166,21 @@ def tutor_prompt(message: str) -> list[dict[str, str]]:
 
 
 def story_prompt(req: "StoryCreate") -> list[dict[str, str]]:
+    shape = story_shape(req.level, req.length)
     system = (
-        "You generate short Spanish learning stories. The target language is Spanish. "
+        "You generate varied interactive Spanish learning stories. The target language is Spanish. "
         "Return compact JSON only with keys title, spanish_text, english_text, vocabulary, questions. "
         "vocabulary is an array of objects with spanish, english, example_sentence, tags. "
-        "Write natural beginner-friendly Spanish, not a grammar lecture."
+        "questions is an array of 3 comprehension or speaking questions in Spanish with brief English glosses. "
+        "Use correct Spanish orthography, including ñ and accents such as español, mañana, pequeño, está, and también when appropriate. "
+        "Never reuse cafe/Ana boilerplate unless the topic truly asks for it."
     )
     user = (
         f"Level: {req.level}. Topic: {req.topic or 'daily life'}. Length: {req.length}. "
+        f"Target about {shape['sentences']} Spanish sentences at CEFR {shape['cefr']}. "
         f"Tense focus: {req.tense or 'present and practical past'}. "
-        f"Required vocab focus: {req.vocab_focus or 'common useful words'}."
+        f"Required vocab focus: {req.vocab_focus or 'common useful words'}. "
+        "Make the story specific, with a small decision or emotional turn, and include one question that asks the learner what they would say next."
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -171,24 +189,34 @@ async def call_llm(messages: list[dict[str, str]]) -> str:
     if not LLM_BASE_URL or not LLM_API_KEY:
         raise RuntimeError("llm_not_configured")
     headers = {"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": LLM_MODEL, "messages": messages, "temperature": 0.35}
+    payload = {"model": LLM_MODEL, "messages": messages, "temperature": 0.72}
+    urls = [f"{LLM_BASE_URL}/chat/completions"]
+    if not LLM_BASE_URL.rstrip("/").endswith("/v1"):
+        urls.append(f"{LLM_BASE_URL}/v1/chat/completions")
+    last_error = None
     async with httpx.AsyncClient(timeout=90) as client:
-        response = await client.post(f"{LLM_BASE_URL}/chat/completions", headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-    return data["choices"][0]["message"]["content"]
+        for url in dict.fromkeys(urls):
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            except Exception as exc:
+                last_error = exc
+                continue
+    raise RuntimeError(f"llm_request_failed: {last_error}")
 
 
 def fallback_tutor(message: str) -> dict[str, Any]:
     return {
-        "reply": "Vamos a practicar. Dime una frase sencilla en espanol y la mejoramos juntos. In English: say one simple sentence and I will help you polish it.",
+        "reply": "Vamos a practicar. Dime una frase sencilla en español y la mejoramos juntos. In English: say one simple sentence and I will help you polish it.",
         "corrections": [],
-        "next_phrase": "Quiero aprender espanol todos los dias.",
+        "next_phrase": "Quiero aprender español todos los días.",
         "vocab": [
             {
                 "spanish": "aprender",
                 "english": "to learn",
-                "example_sentence": "Quiero aprender espanol.",
+                "example_sentence": "Quiero aprender español.",
                 "tags": ["starter"],
             }
         ],
@@ -198,17 +226,82 @@ def fallback_tutor(message: str) -> dict[str, Any]:
 
 
 def fallback_story(req: "StoryCreate") -> dict[str, Any]:
-    topic = req.topic or "un cafe pequeno"
+    topic = (req.topic or "la familia").strip()
+    level = str(req.level or "beginner").lower()
+    length = str(req.length or "short").lower()
+    tense = (req.tense or "presente").strip().lower()
+    shape = story_shape(level, length)
+    topic_lower = topic.lower()
+    if "famil" in topic_lower:
+        title = "La decisión de la familia"
+        seed = [
+            ("El sábado por la mañana, la familia Rivera prepara el desayuno en una cocina pequeña.", "On Saturday morning, the Rivera family prepares breakfast in a small kitchen."),
+            ("La abuela quiere visitar el mercado, pero el hermano menor sueña con ir al parque.", "The grandmother wants to visit the market, but the younger brother dreams of going to the park."),
+            ("Sofía escucha a todos y escribe dos planes en una hoja amarilla.", "Sofía listens to everyone and writes two plans on a yellow sheet of paper."),
+            ("Su papá dice: «Primero compramos fruta fresca y después jugamos fútbol».", "Her dad says, \"First we buy fresh fruit and then we play soccer.\""),
+            ("La mamá sonríe porque la solución incluye a todos.", "The mom smiles because the solution includes everyone."),
+            ("En el mercado, Sofía pide piña, pan y un kilo de tomates con mucha confianza.", "At the market, Sofía asks for pineapple, bread, and a kilo of tomatoes with a lot of confidence."),
+            ("El vendedor le contesta rápido, y ella pregunta otra vez sin tener vergüenza.", "The seller answers quickly, and she asks again without being embarrassed."),
+            ("Cuando llegan al parque, el hermano menor enseña una canción nueva.", "When they arrive at the park, the younger brother teaches a new song."),
+            ("La abuela canta despacio, y todos repiten las palabras hasta reírse.", "The grandmother sings slowly, and everyone repeats the words until they laugh."),
+            ("Al final, Sofía entiende que una buena familia no siempre está de acuerdo, pero sí se escucha.", "In the end, Sofía understands that a good family does not always agree, but it does listen."),
+            ("Antes de dormir, escribe en su diario: «Mañana voy a hablar con más paciencia».", "Before sleeping, she writes in her diary: \"Tomorrow I am going to speak with more patience.\""),
+            ("También anota tres palabras nuevas para practicarlas en voz alta.", "She also writes down three new words to practice out loud."),
+            ("Su hermano toca la puerta y le pregunta si mañana pueden cocinar juntos.", "Her brother knocks on the door and asks if tomorrow they can cook together."),
+            ("Sofía responde que sí, pero solo si él lava los platos después.", "Sofía answers yes, but only if he washes the dishes afterward."),
+            ("Los dos se ríen porque saben que el trato es justo.", "They both laugh because they know the deal is fair."),
+            ("La casa queda tranquila, llena de pequeñas promesas para el día siguiente.", "The house becomes quiet, full of small promises for the next day."),
+            ("Si tú estuvieras allí, podrías decir: «Yo también quiero ayudar».", "If you were there, you could say: \"I also want to help.\""),
+            ("Esa frase sencilla abre una conversación nueva.", "That simple phrase opens a new conversation."),
+        ]
+        vocab = [
+            {"spanish": "mañana", "english": "morning / tomorrow", "example_sentence": "Mañana voy a hablar con más paciencia.", "tags": ["story", "ñ"]},
+            {"spanish": "pequeña", "english": "small", "example_sentence": "La familia está en una cocina pequeña.", "tags": ["story", "adjective"]},
+            {"spanish": "vergüenza", "english": "embarrassment", "example_sentence": "Ella pregunta otra vez sin vergüenza.", "tags": ["story", "emotion"]},
+            {"spanish": "también", "english": "also", "example_sentence": "Yo también quiero ayudar.", "tags": ["story", "accent"]},
+        ]
+    else:
+        title = f"Una historia sobre {topic}"
+        seed = [
+            (f"Esta mañana, Lucía encuentra algo extraño relacionado con {topic}.", f"This morning, Lucía finds something unusual related to {topic}."),
+            ("Al principio no sabe qué decir, así que respira y observa con atención.", "At first she does not know what to say, so she breathes and observes carefully."),
+            ("Un señor amable le hace una pregunta rápida en español.", "A kind man asks her a quick question in Spanish."),
+            ("Lucía entiende la idea principal, pero necesita repetir una palabra nueva.", "Lucía understands the main idea, but she needs to repeat a new word."),
+            ("Ella responde despacio: «¿Puede decirlo otra vez, por favor?».", "She answers slowly: \"Can you say it again, please?\""),
+            ("La conversación cambia, y de pronto todo parece más fácil.", "The conversation changes, and suddenly everything seems easier."),
+            ("Después escribe la palabra en su teléfono para practicarla más tarde.", "Afterward she writes the word on her phone to practice it later."),
+            ("Por la noche, cuenta la experiencia a su familia con orgullo.", "At night, she tells her family about the experience with pride."),
+            ("Su hermana pequeña dice que aprender español suena como una aventura.", "Her little sister says that learning Spanish sounds like an adventure."),
+            ("Lucía sonríe y promete enseñar una frase nueva cada día.", "Lucía smiles and promises to teach one new phrase every day."),
+            ("La primera frase es: «No entiendo todavía, pero quiero aprender».", "The first phrase is: \"I do not understand yet, but I want to learn.\""),
+            ("Todos la repiten juntos hasta que la pronunciación mejora.", "Everyone repeats it together until the pronunciation improves."),
+            ("Lucía descubre que la confianza crece cuando practica en voz alta.", "Lucía discovers that confidence grows when she practices out loud."),
+            ("Si tú fueras Lucía, ¿qué frase practicarías después?", "If you were Lucía, what phrase would you practice next?"),
+        ]
+        vocab = [
+            {"spanish": "español", "english": "Spanish", "example_sentence": "Un señor le habla en español.", "tags": ["story", "ñ"]},
+            {"spanish": "todavía", "english": "yet / still", "example_sentence": "No entiendo todavía.", "tags": ["story", "accent"]},
+            {"spanish": "enseñar", "english": "to teach", "example_sentence": "Promete enseñar una frase nueva.", "tags": ["story", "ñ"]},
+            {"spanish": "pronunciación", "english": "pronunciation", "example_sentence": "La pronunciación mejora.", "tags": ["story", "accent"]},
+        ]
+    count = int(shape["sentences"])
+    selected = seed[: min(count, len(seed))]
+    if tense.startswith("past") or tense.startswith("pretérito") or tense.startswith("preter"):
+        selected = [(es.replace("Esta mañana", "Ayer").replace("encuentra", "encontró").replace("prepara", "preparó"), en) for es, en in selected]
+    spanish_text = " ".join(es for es, _ in selected)
+    english_text = " ".join(en for _, en in selected)
     return {
-        "title": f"Una historia sobre {topic}",
-        "spanish_text": "Ana entra en un cafe pequeno. Pide agua y pan. Despues habla con un amigo y sonrie.",
-        "english_text": "Ana enters a small cafe. She asks for water and bread. Then she talks with a friend and smiles.",
-        "vocabulary": [
-            {"spanish": "cafe", "english": "cafe", "example_sentence": "Ana entra en un cafe.", "tags": ["story"]},
-            {"spanish": "pide", "english": "asks for", "example_sentence": "Ana pide agua.", "tags": ["story"]},
+        "title": title,
+        "spanish_text": spanish_text,
+        "english_text": english_text,
+        "vocabulary": vocab,
+        "questions": [
+            "¿Qué problema pequeño aparece en la historia? / What small problem appears in the story?",
+            "¿Qué frase podrías decir tú en esa situación? / What phrase could you say in that situation?",
+            "¿Qué palabra nueva quieres repetir tres veces? / What new word do you want to repeat three times?",
         ],
-        "questions": ["Que pide Ana?", "Con quien habla Ana?"],
         "source": "fallback",
+        "requested": {"level": level, "length": length, "topic": topic, "tense": tense},
     }
 
 
@@ -443,11 +536,17 @@ def review_vocab(card_id: str, req: ReviewRequest, db: Session = Depends(get_db)
 
 @app.post("/api/stories", dependencies=[Depends(require_auth)])
 async def create_story(req: StoryCreate, db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = "llm"
+    generation_error = ""
     try:
         raw = await call_llm(story_prompt(req))
         data = parse_json_object(raw, fallback_story(req))
+        if data.get("source") == "fallback":
+            source = "fallback_parse"
     except Exception:
+        generation_error = "story_model_unavailable"
         data = fallback_story(req)
+        source = "fallback"
     vocab = clean_vocab(data.get("vocabulary"))
     story = Story(
         title=str(data.get("title") or "Spanish Story"),
@@ -463,7 +562,11 @@ async def create_story(req: StoryCreate, db: Session = Depends(get_db)) -> dict[
     if req.save_vocab:
         upsert_vocab(db, vocab)
     db.commit()
-    return story_dict(story)
+    result = story_dict(story)
+    result["source"] = source
+    if generation_error:
+        result["generation_error"] = generation_error
+    return result
 
 
 @app.get("/api/stories", dependencies=[Depends(require_auth)])

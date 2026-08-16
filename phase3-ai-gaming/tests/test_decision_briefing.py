@@ -209,9 +209,9 @@ NEWS
 
     def test_tts_worker_routes_spanish_to_spanish_piper(self):
         with mock.patch.object(tts_worker, "synthesize_spanish_piper", return_value=(b"audio", "audio/ogg")) as synth:
-            audio, content_type = tts_worker.synthesize("Hola, quiero practicar.", "default", "ogg", max_chars=0, lang="es")
+            audio, content_type = tts_worker.synthesize("Hola, quiero practicar español mañana.", "default", "ogg", max_chars=0, lang="es")
         self.assertEqual((audio, content_type), (b"audio", "audio/ogg"))
-        self.assertEqual(synth.call_args.args[0], "Hola, quiero practicar.")
+        self.assertEqual(synth.call_args.args[0], "Hola, quiero practicar español mañana.")
 
     def test_telegram_voice_message_transcribes_and_enqueues(self):
         update = {

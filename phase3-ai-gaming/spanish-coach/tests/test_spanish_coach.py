@@ -54,23 +54,35 @@ def test_story_generation_fallback_has_listening_plan_and_vocab(tmp_path):
     module, client = load_app(tmp_path)
     prompt = module.story_prompt(module.StoryCreate(topic="cafe"))
     assert "Spanish" in prompt[0]["content"]
-    response = client.post("/api/stories", headers=auth(), json={"topic": "cafe", "level": "beginner"})
+    response = client.post("/api/stories", headers=auth(), json={"topic": "Family", "level": "intermediate", "length": "medium"})
     assert response.status_code == 200
     data = response.json()
     assert data["spanish_text"]
+    assert data["source"] == "fallback"
+    assert "ñ" in data["spanish_text"]
+    assert len(data["listening_plan"]["sentence_loop"]) >= 10
     assert data["listening_plan"]["sentence_loop"][0]["sequence"][0]["lang"] == "es"
     assert data["listening_plan"]["sentence_loop"][0]["sequence"][1]["lang"] == "en-us"
     assert data["vocabulary"]
 
 
+def test_story_length_and_level_change_fallback_size(tmp_path):
+    module, _ = load_app(tmp_path)
+    short = module.fallback_story(module.StoryCreate(topic="Family", level="beginner", length="short"))
+    long = module.fallback_story(module.StoryCreate(topic="Family", level="advanced", length="long"))
+    assert len(long["spanish_text"].split()) > len(short["spanish_text"].split()) * 2
+    assert "mañana" in long["spanish_text"]
+
+
 def test_vocab_deduplicates_across_sources(tmp_path):
     module, _ = load_app(tmp_path)
     cleaned = module.clean_vocab([
-        {"spanish": "pan", "english": "bread"},
-        {"spanish": "Pan", "english": "bread"},
+        {"spanish": "español", "english": "Spanish"},
+        {"spanish": "Español", "english": "Spanish"},
         {"spanish": "", "english": "blank"},
     ])
     assert len(cleaned) == 1
+    assert cleaned[0]["spanish"] == "español"
 
 
 def test_tts_posts_segments_to_worker(tmp_path, monkeypatch):
