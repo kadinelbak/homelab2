@@ -261,3 +261,109 @@ class AutomationRunRecord(Base):
     output: Mapped[dict] = mapped_column(JSON, default=dict)
     safe_summary: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class OrchestrationRunRecord(Base):
+    __tablename__ = "jarvis_orchestration_runs"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    status: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(80))
+    user_request: Mapped[str] = mapped_column(Text)
+    request_context: Mapped[dict] = mapped_column(JSON, default=dict)
+    requested_by: Mapped[str] = mapped_column(String(80))
+    priority: Mapped[int] = mapped_column(Integer, default=3)
+    risk_level: Mapped[str] = mapped_column(String(40), default="L0")
+    model_profile: Mapped[str | None] = mapped_column(String(120))
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrchestrationJobRecord(Base):
+    __tablename__ = "jarvis_orchestration_jobs"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("jarvis_orchestration_runs.id"))
+    parent_job_id: Mapped[str | None] = mapped_column(ForeignKey("jarvis_orchestration_jobs.id"))
+    job_type: Mapped[str] = mapped_column(String(80))
+    capability: Mapped[str] = mapped_column(String(120))
+    worker_selector: Mapped[dict] = mapped_column(JSON, default=dict)
+    worker_id: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(40))
+    priority: Mapped[int] = mapped_column(Integer, default=3)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=1)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    approval_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    approval_state: Mapped[str] = mapped_column(String(40), default="not_required")
+    input: Mapped[dict] = mapped_column(JSON, default=dict)
+    output: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(180), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JobDependencyRecord(Base):
+    __tablename__ = "jarvis_job_dependencies"
+
+    job_id: Mapped[str] = mapped_column(ForeignKey("jarvis_orchestration_jobs.id"), primary_key=True)
+    depends_on_job_id: Mapped[str] = mapped_column(ForeignKey("jarvis_orchestration_jobs.id"), primary_key=True)
+    dependency_type: Mapped[str] = mapped_column(String(40), default="success_required")
+
+
+class ArtifactRecord(Base):
+    __tablename__ = "jarvis_artifacts"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("jarvis_orchestration_runs.id"))
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("jarvis_orchestration_jobs.id"))
+    kind: Mapped[str] = mapped_column(String(80))
+    name: Mapped[str] = mapped_column(String(240))
+    path_or_uri: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str | None] = mapped_column(String(80))
+    artifact_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkerRecord(Base):
+    __tablename__ = "jarvis_workers"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(160))
+    worker_type: Mapped[str] = mapped_column(String(80))
+    hostname: Mapped[str | None] = mapped_column(String(160))
+    os: Mapped[str | None] = mapped_column(String(80))
+    version: Mapped[str] = mapped_column(String(80), default="unknown")
+    status: Mapped[str] = mapped_column(String(40), default="online")
+    capabilities: Mapped[list] = mapped_column(JSON, default=list)
+    worker_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WorkerCapabilityRecord(Base):
+    __tablename__ = "jarvis_worker_capabilities"
+
+    worker_id: Mapped[str] = mapped_column(ForeignKey("jarvis_workers.id"), primary_key=True)
+    capability: Mapped[str] = mapped_column(String(120), primary_key=True)
+    version: Mapped[str] = mapped_column(String(40), default="1")
+    risk_ceiling: Mapped[str] = mapped_column(String(40), default="L1")
+    capability_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class OrchestrationEventRecord(Base):
+    __tablename__ = "jarvis_orchestration_events"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("jarvis_orchestration_runs.id"))
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("jarvis_orchestration_jobs.id"))
+    worker_id: Mapped[str | None] = mapped_column(String(120))
+    event_type: Mapped[str] = mapped_column(String(120))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -1,0 +1,81 @@
+version: 1
+updated: 2026-08-16
+
+principles:
+  - Preserve existing Jarvis services; extend in place instead of rebuilding.
+  - PostgreSQL is durable truth for Jarvis Core state.
+  - Redis is transport/cache only, not source of truth.
+  - Existing approval/action tables remain the action authority.
+  - New worker and job systems must use typed capabilities and deterministic risk policy.
+  - Desktop/browser workers must use pull or local bridge patterns; do not expose broad shell/browser/filesystem access.
+
+components:
+  jarvis_core:
+    status: implemented
+    notes: FastAPI service with durable requests, actions, approvals, personal operations, notifications, automations, Drive migration, and diagnostics.
+  jarvis_chat:
+    status: implemented
+    notes: Tailscale-facing browser console for Core state, approvals, inbox, Drive, Gmail cleanup, automations, and worker/run visibility.
+  ai_orchestrator:
+    status: implemented
+    notes: Existing compatibility layer and model/tool routing remain in place.
+  google_tools_worker:
+    status: implemented
+    notes: Gmail, Calendar, Tasks, Contacts, Drive metadata/download support; writes remain approval-gated through Core.
+  codex_worker:
+    status: implemented
+    notes: Supports coding task modes and artifact metadata; real code execution remains approval-gated.
+  whisper_worker:
+    status: implemented
+    notes: Speech-to-text worker for Hey Jarvis.
+  tts_worker:
+    status: implemented
+    notes: Text-to-speech worker for voice responses and notifications.
+  telegram_bridge:
+    status: implemented
+    notes: Delivers Jarvis requests, approvals, notifications, and daily briefs.
+  openwebui_tool_bridge:
+    status: implemented
+    notes: Jarvis tool access through Open WebUI.
+  durable_orchestration_runs:
+    status: in_progress
+    notes: Additive run/job/worker/artifact/event tables and APIs exist; legacy request/action APIs remain compatible.
+  worker_registry:
+    status: in_progress
+    notes: Worker register, heartbeat, claim, start, complete, and fail endpoints are being introduced.
+  desktop_worker:
+    status: in_progress
+    notes: jarvis-voice-client now registers as a pull-based desktop worker while preserving voice behavior. V1 capabilities are notify, open_url, files.list, files.stat, and files.hash within allowlisted roots.
+  browser_extension:
+    status: planned
+    notes: Thin MV3 extension should talk to localhost Jarvis Desktop, not store server master tokens.
+  playwright_worker:
+    status: planned
+    notes: Future bounded browser worker with dedicated browser profile, allowlists, timeouts, and step limits.
+  multi_agent_runtime:
+    status: planned
+    notes: Future server-side parallel job runtime using data-driven agent specs.
+  downloads_janitor:
+    status: in_progress
+    notes: Read-only Downloads metadata scan and deterministic organization preview are live through the desktop worker. Moving/quarantine actions remain future approval-gated work.
+  loose_end_detector:
+    status: planned
+    notes: Gmail/Calendar/Tasks candidate extraction with suggestions, not automatic external replies.
+  purchases_returns_tracker:
+    status: planned
+    notes: Gmail/Paperless purchase records and return-window reminders.
+  research_watcher:
+    status: planned
+    notes: Generic scheduled watch framework, not topic-specific services.
+  paperless_import:
+    status: implemented
+    notes: Drive-to-Paperless proposal path exists; imports are approval-gated.
+  nextcloud_import:
+    status: implemented
+    notes: Drive copy/import path exists and verifies visible Nextcloud files.
+  pihole_dns:
+    status: implemented
+    notes: Ad blocking and family-safe upstream option are deployed on Tailscale/LAN only.
+  media_pipeline:
+    status: partial
+    notes: Media automation integration is optional until the sibling pipeline is ready.

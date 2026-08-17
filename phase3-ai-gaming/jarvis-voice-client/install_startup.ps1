@@ -23,16 +23,16 @@ if (-not $PythonPath) {
   }
 }
 
-$client = Join-Path $ClientDir "client.py"
-$action = New-ScheduledTaskAction -Execute $PythonPath -Argument "`"$client`" --tray --env `"$ClientDir\.env`"" -WorkingDirectory $ClientDir
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-
 try {
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  $client = Join-Path $ClientDir "client.py"
+  $action = New-ScheduledTaskAction -Execute $PythonPath -Argument "`"$client`" --tray --env `"$ClientDir\.env`"" -WorkingDirectory $ClientDir
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
   Write-Host "Installed startup task $TaskName for Jarvis voice client."
 } catch {
+  $client = Join-Path $ClientDir "client.py"
   $startup = [Environment]::GetFolderPath("Startup")
   $shortcutPath = Join-Path $startup "Jarvis Voice Client.lnk"
   $shell = New-Object -ComObject WScript.Shell

@@ -2,6 +2,7 @@ import http.client
 import importlib.util
 import json
 import pathlib
+import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -67,6 +68,15 @@ class FakeSpeaker:
 
     def play_audio(self, audio_bytes, content_type):
         self.audio.append((audio_bytes, content_type))
+
+
+class FakeDesktopClient:
+    def __init__(self):
+        self.requests = []
+
+    def request_json(self, path, payload, timeout=180):
+        self.requests.append((path, payload, timeout))
+        return {"ok": True}
 
 
 class FakeTunnel:
@@ -165,6 +175,76 @@ class VoiceClientStateTests(unittest.TestCase):
         self.assertTrue(controller.restart_tunnel())
         self.assertEqual(tunnel.restart_calls, 1)
         self.assertEqual(controller.state, voice_client.VoiceState.LISTENING)
+
+    def test_desktop_worker_resolves_only_allowed_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            allowed = root / "allowed"
+            denied = root / "denied"
+            allowed.mkdir()
+            denied.mkdir()
+            resolved = voice_client.resolve_allowed_path(str(allowed), [allowed.resolve()])
+            self.assertEqual(resolved, allowed.resolve())
+            with self.assertRaises(PermissionError):
+                voice_client.resolve_allowed_path(str(denied), [allowed.resolve()])
+
+    def test_desktop_files_list_returns_metadata_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "note.txt").write_text("secret-body", encoding="utf-8")
+            config = voice_client.VoiceConfig(desktop_worker_allowed_roots=str(root))
+            worker = voice_client.JarvisDesktopWorker(config, client=FakeDesktopClient(), speaker=FakeSpeaker())
+            result = worker.cap_files_list({"path": str(root), "max_items": 10})
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["items"][0]["name"], "note.txt")
+            self.assertNotIn("secret-body", json.dumps(result))
+
+    def test_desktop_files_move_stays_in_allowed_roots_and_avoids_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            source = root / "note.txt"
+            target_dir = root / "Documents"
+            target_dir.mkdir()
+            source.write_text("new", encoding="utf-8")
+            (target_dir / "note.txt").write_text("existing", encoding="utf-8")
+            worker = voice_client.JarvisDesktopWorker(
+                voice_client.VoiceConfig(desktop_worker_allowed_roots=str(root)),
+                client=FakeDesktopClient(),
+                speaker=FakeSpeaker(),
+            )
+            result = worker.cap_files_move({"moves": [{"source": str(source), "destination_dir": str(target_dir), "category": "Documents"}]})
+            self.assertEqual(result["count"], 1)
+            self.assertFalse(source.exists())
+            self.assertTrue((target_dir / "note (2).txt").exists())
+            self.assertTrue(result["moved"][0]["verified"])
+
+    def test_desktop_files_move_rejects_destination_outside_allowed_roots(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as denied:
+            root = pathlib.Path(tmp)
+            source = root / "note.txt"
+            source.write_text("new", encoding="utf-8")
+            worker = voice_client.JarvisDesktopWorker(
+                voice_client.VoiceConfig(desktop_worker_allowed_roots=str(root)),
+                client=FakeDesktopClient(),
+                speaker=FakeSpeaker(),
+            )
+            with self.assertRaises(PermissionError):
+                worker.cap_files_move({"moves": [{"source": str(source), "destination_dir": denied}]})
+
+    def test_desktop_open_url_rejects_unsafe_protocols(self):
+        worker = voice_client.JarvisDesktopWorker(voice_client.VoiceConfig(), client=FakeDesktopClient(), speaker=FakeSpeaker())
+        with self.assertRaises(PermissionError):
+            worker.cap_open_url({"url": "file:///C:/Windows/System32/calc.exe"})
+
+    def test_desktop_worker_handles_notify_job(self):
+        client = FakeDesktopClient()
+        speaker = FakeSpeaker()
+        worker = voice_client.JarvisDesktopWorker(voice_client.VoiceConfig(desktop_worker_id="test-worker"), client=client, speaker=speaker)
+        worker.handle_job({"id": "job_1", "capability": "desktop.notify", "input": {"title": "Hi", "body": "There"}})
+        paths = [call[0] for call in client.requests]
+        self.assertIn("/api/core/workers/test-worker/jobs/job_1/start", paths)
+        self.assertIn("/api/core/workers/test-worker/jobs/job_1/complete", paths)
+        self.assertTrue(any("Hi" in item for item in speaker.status))
 
     def test_response_normalization_humanizes_calendar_times_and_ids(self):
         text = "Calendar:\n1. Dentist reminder | 2026-08-03T21:00:00-04:00 -> 2026-08-03T21:30:00-04:00\nEvent ID: abc123"

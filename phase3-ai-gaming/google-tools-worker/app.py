@@ -367,6 +367,12 @@ def gmail_cleanup_summary(max_results=50):
     ]
     old_unread = gmail_search("in:inbox is:unread older_than:30d", min(max_results, 20))
     newsletters = gmail_search("in:inbox (category:promotions OR list:*) older_than:14d", min(max_results, 20))
+    promotions = gmail_search("in:inbox category:promotions", min(max_results, 20))
+    low_value_updates = gmail_search(
+        "in:inbox category:updates "
+        "-(admissions OR interview OR application OR supplemental OR applicant OR receipt OR invoice OR statement OR payment OR tax OR bill OR tuition OR security OR password OR alert OR appointment OR medical OR doctor OR clinic OR insurance OR travel OR flight OR shipping OR delivery)",
+        min(max_results, 20),
+    )
     needs_reply = gmail_search("in:inbox -from:me newer_than:30d", min(max_results, 20))
     medical_school = gmail_search('in:inbox ("medical school" OR "med school" OR enmed OR mcat OR aacom OR aamc OR osteopathic)', min(max_results, 20))
     admissions = gmail_search("in:inbox (admissions OR interview OR application OR supplemental OR applicant)", min(max_results, 20))
@@ -384,6 +390,8 @@ def gmail_cleanup_summary(max_results=50):
         "top_senders": top_senders,
         "old_unread": old_unread[:10],
         "likely_newsletters": newsletters[:10],
+        "promotions": promotions[:10],
+        "low_value_updates": low_value_updates[:10],
         "needs_reply": likely_needs_reply,
         "medical_school": medical_school[:10],
         "admissions": admissions[:10],
@@ -392,6 +400,11 @@ def gmail_cleanup_summary(max_results=50):
             "inbox_sample": len(sample),
             "old_unread": gmail_count("in:inbox is:unread older_than:30d"),
             "likely_newsletters": gmail_count("in:inbox (category:promotions OR list:*) older_than:14d"),
+            "promotions": gmail_count("in:inbox category:promotions"),
+            "low_value_updates": gmail_count(
+                "in:inbox category:updates "
+                "-(admissions OR interview OR application OR supplemental OR applicant OR receipt OR invoice OR statement OR payment OR tax OR bill OR tuition OR security OR password OR alert OR appointment OR medical OR doctor OR clinic OR insurance OR travel OR flight OR shipping OR delivery)"
+            ),
             "needs_reply_candidates": gmail_count("in:inbox -from:me newer_than:30d"),
             "medical_school": gmail_count('in:inbox ("medical school" OR "med school" OR enmed OR mcat OR aacom OR aamc OR osteopathic)'),
             "admissions": gmail_count("in:inbox (admissions OR interview OR application OR supplemental OR applicant)"),

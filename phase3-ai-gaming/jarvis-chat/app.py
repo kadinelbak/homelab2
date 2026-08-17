@@ -880,6 +880,8 @@ def interactive_core_console_page():
     .bad { color:var(--danger); }
     .warn { color:var(--warn); }
     .pill { display:inline-flex; align-items:center; border:1px solid rgba(43,57,72,.8); border-radius:999px; padding:2px 8px; color:var(--muted); font-size:12px; margin-right:6px; margin-bottom:6px; background:rgba(15,23,32,.62); }
+    button.pill { font-family:inherit; cursor:pointer; appearance:none; }
+    button.pill:hover { color:var(--accent); border-color:rgba(94,234,212,.56); background:rgba(94,234,212,.08); }
     .drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.48); opacity:0; pointer-events:none; transition:opacity .16s ease; }
     .drawer { position:fixed; top:0; right:0; width:min(760px, 100vw); height:100vh; background:#111821; border-left:1px solid var(--line); padding:18px; transform:translateX(100%); transition:transform .16s ease; overflow:auto; box-shadow:-20px 0 48px rgba(0,0,0,.32); }
     body.drawer-open .drawer-backdrop { opacity:1; pointer-events:auto; }
@@ -961,7 +963,7 @@ def interactive_core_console_page():
   <div id="drawerBody"></div>
 </aside>
 <script>
-const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], gmailCleanup: {}, drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
+const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], runs: [], workers: [], downloads: [], downloadsDestinationPlan: {}, tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], gmailCleanup: {}, drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
 async function get(path) {
   const res = await fetch(path);
   const data = await res.json();
@@ -982,6 +984,12 @@ function row(label, value) {
 }
 function itemButton(kind, idx, html) {
   return `<button class="item-button" onclick="openItem('${kind}', ${idx})">${html}</button>`;
+}
+function pillButton(label, action, tone = '') {
+  return `<button class="pill ${tone}" type="button" onclick="${action}">${esc(label)}</button>`;
+}
+function enc(value) {
+  return encodeURIComponent(String(value ?? ''));
 }
 function setCount(id, value) {
   const el = document.getElementById(id);
@@ -1030,6 +1038,34 @@ function notificationSubtitle(n) {
   const payload = n.payload || {};
   return payload.body || payload.summary || `${n.channel || 'notification'} / ${n.status || ''}`;
 }
+function linkedApprovalForNotification(n) {
+  const payload = n?.payload || {};
+  const actionId = payload.action_id || payload.proposed_action_id;
+  const approvalId = payload.approval_id;
+  return state.approvals.find(item =>
+    (approvalId && item.id === approvalId) ||
+    (actionId && (item.action?.id === actionId || item.proposed_action_id === actionId))
+  );
+}
+function notificationButton(n, idx) {
+  const approval = linkedApprovalForNotification(n);
+  const badge = approval ? (approval.action?.risk_level || 'approval') : (n.status || '');
+  const decisionActions = approval ? `
+        <button class="quick-action approve" title="Approve request" aria-label="Approve request" onclick="approveNotification(event, '${esc(n.id)}')">&#10003;</button>
+        <button class="quick-action reject" title="Reject request" aria-label="Reject request" onclick="rejectNotification(event, '${esc(n.id)}')">&#215;</button>` : '';
+  const dismissAction = `<button class="quick-action reject" title="Dismiss" aria-label="Dismiss" onclick="dismissNotification(event, '${esc(n.id)}')">&#215;</button>`;
+  return `<div class="item-button approval-row" role="button" tabindex="0" onclick="openItem('notifications', ${idx})">
+    <div class="compact-line">
+      <span class="compact-title">${esc(notificationTitle(n))}</span>
+      <span class="quick-actions">
+        ${badge ? `<span class="pill">${esc(badge)}</span>` : ''}
+        ${decisionActions}
+        ${dismissAction}
+      </span>
+    </div>
+    <div class="compact-sub">${esc(notificationSubtitle(n))}</div>
+  </div>`;
+}
 function maintenanceTitle(m) {
   return displayTitle(m.summary || m.service_name || 'Maintenance item');
 }
@@ -1042,8 +1078,7 @@ function usefulRows(key, rows) {
     return nonPackets.length ? nonPackets : rows;
   }
   if (key === 'notifications') {
-    const pending = rows.filter(item => item.status !== 'delivered');
-    return pending.length ? pending : rows;
+    return rows.filter(item => !['delivered', 'dismissed'].includes(String(item.status || '').toLowerCase()));
   }
   return rows;
 }
@@ -1053,13 +1088,19 @@ function renderOverview(data) {
   const due = (data.task.tasks || []).length;
   const maintenance = (data.maint.maintenance || []).filter(m => m.status !== 'resolved').length;
   const approvals = (data.ap.approvals || []).length;
-  const notifications = (data.notif.notifications || []).length;
+  const notifications = usefulRows('notifications', data.notif.notifications || []).length;
   const automations = (data.auto.automations || []).filter(a => ['scheduled_or_on_demand','continuous','event_driven'].includes(String(a.mode || ''))).length;
   const gmail = (data.gm.needs_reply || []).length + (data.gm.likely_newsletters || []).length;
+  const runs = (data.runs.runs || []).filter(r => !['completed','failed','cancelled'].includes(String(r.status || '').toLowerCase())).length;
+  const workers = (data.workers.workers || []).filter(w => w.status === 'online').length;
+  const downloads = (data.downloads.scans || []).length ? ((data.downloads.scans[0].preview || {}).file_count || 0) : 0;
   const selectedDrive = state.selectedDriveFolders.length;
   overview.innerHTML = [
     metric('AP', approvals, 'approvals', approvals ? 'attn' : '', 'openApprovalsHub()'),
     metric('DX', failed, 'diagnostics', failed ? 'bad' : '', 'openDiagnosticsHub()'),
+    metric('RN', runs, 'runs', runs ? 'attn' : '', 'openRunsHub()'),
+    metric('WK', workers, 'workers', workers ? '' : 'bad', 'openWorkersHub()'),
+    metric('DL', downloads, 'downloads', downloads ? 'attn' : '', 'openDownloadsHub()'),
     metric('CX', running, 'codex', running ? 'attn' : '', 'openCodexHub()'),
     metric('CA', briefEventCount(data.br), 'calendar', '', 'openCalendarHub()'),
     metric('DR', selectedDrive, 'drive', selectedDrive ? 'attn' : '', 'openDrive()'),
@@ -1109,6 +1150,65 @@ async function rejectApproval(event, approvalId) {
   if (event) event.stopPropagation();
   await guarded('Reject this action', () => send('POST', `/api/core/approvals/${approvalId}/decision`, {approved:false, decided_by:'jarvis-core-console'}));
 }
+async function dismissNotification(event, notificationId) {
+  if (event) event.stopPropagation();
+  try {
+    status.textContent = 'Dismissing...';
+    await send('POST', `/api/core/notifications/${encodeURIComponent(notificationId)}/dismiss`, {delivered_by:'jarvis-core-console'});
+    state.notifications = state.notifications.map(item => item.id === notificationId ? {...item, status:'dismissed'} : item);
+    renderOverview({ap:{approvals:state.approvals}, diag:{checks:state.diagnostics}, cx:{codex_tasks:state.codexTasks}, runs:{runs:state.runs}, workers:{workers:state.workers}, downloads:{scans:state.downloads}, task:{tasks:state.tasks}, maint:{maintenance:state.maintenance}, notif:{notifications:state.notifications}, auto:{automations:state.automations}, gm:state.gmailCleanup, br:state.brief});
+    if (document.body.classList.contains('drawer-open') && drawerTitle.textContent === 'Inbox') openNotificationsHub();
+    status.textContent = 'Dismissed.';
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+async function dismissAllNotifications() {
+  const rows = usefulRows('notifications', state.notifications);
+  if (!rows.length) return;
+  if (!confirm(`Dismiss ${rows.length} active notification(s)?`)) return;
+  try {
+    status.textContent = 'Dismissing notifications...';
+    for (const item of rows) {
+      await send('POST', `/api/core/notifications/${encodeURIComponent(item.id)}/dismiss`, {delivered_by:'jarvis-core-console'});
+    }
+    await loadAll();
+    openNotificationsHub();
+    status.textContent = `Dismissed ${rows.length} notification(s).`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+async function approveNotification(event, notificationId) {
+  if (event) event.stopPropagation();
+  const notification = state.notifications.find(item => item.id === notificationId);
+  const approval = linkedApprovalForNotification(notification);
+  if (!approval) {
+    status.textContent = 'No linked approval found for this notification.';
+    return;
+  }
+  const risk = approval?.action?.risk_level || '';
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase()) || approval?.action?.tool_name === 'codex.run_task'
+    ? 'This can run code or perform a high-risk action.'
+    : '';
+  await guarded('Approve this request', async () => {
+    await send('POST', `/api/core/approvals/${approval.id}/decision`, {approved:true, decided_by:'jarvis-core-console'});
+    await send('POST', `/api/core/notifications/${encodeURIComponent(notificationId)}/dismiss`, {delivered_by:'jarvis-core-console', reason:'approval_approved'}).catch(() => {});
+  }, warning);
+}
+async function rejectNotification(event, notificationId) {
+  if (event) event.stopPropagation();
+  const notification = state.notifications.find(item => item.id === notificationId);
+  const approval = linkedApprovalForNotification(notification);
+  if (!approval) {
+    status.textContent = 'No linked approval found for this notification.';
+    return;
+  }
+  await guarded('Reject this request', async () => {
+    await send('POST', `/api/core/approvals/${approval.id}/decision`, {approved:false, decided_by:'jarvis-core-console'});
+    await send('POST', `/api/core/notifications/${encodeURIComponent(notificationId)}/dismiss`, {delivered_by:'jarvis-core-console', reason:'approval_rejected'}).catch(() => {});
+  });
+}
 function renderApprovals(data) {
   state.approvals = data.approvals || [];
 }
@@ -1134,7 +1234,7 @@ function renderList(target, key, data, titleField) {
     if (key === 'tasks') return compactButton(kind, idx, displayTitle(r.title), r.status || '', r.priority ? `P${r.priority}` : '');
     if (key === 'evidence') return compactButton(kind, idx, evidenceTitle(r), r.evidence_type || '');
     if (key === 'maintenance') return compactButton(kind, idx, maintenanceTitle(r), r.service_name || r.status || '', r.status || '');
-    if (key === 'notifications') return compactButton(kind, idx, notificationTitle(r), notificationSubtitle(r), r.status || '');
+    if (key === 'notifications') return notificationButton(r, idx);
     return compactButton(kind, idx, displayTitle(r[titleField] || r.title || r.summary || r.event_type || r.id), r.created_at || '');
   }).join('') : emptyState('No records.');
 }
@@ -1148,7 +1248,7 @@ function renderBrief(data) {
   const taskRows = (data.tasks_due_soon || []).slice(0,5).map((task) => `<button onclick="openTaskById('${esc(task.id)}')"><span class="compact-title">${esc(displayTitle(task.title))}</span><span class="compact-sub">${esc(task.due_at || task.status || '')}</span></button>`).join('') || `<span class="muted">No task pressure.</span>`;
   const approvalRows = (data.pending_approvals || []).slice(0,4).map((approval) => approvalButton(approval)).join('') || `<span class="muted">No pending approvals.</span>`;
   const maintenanceRows = (data.open_maintenance || []).slice(0,4).map((m) => `<button onclick="openMaintenanceById('${esc(m.id)}')"><span class="compact-title">${esc(maintenanceTitle(m))}</span><span class="compact-sub">${esc(m.service_name || m.status || '')}</span></button>`).join('') || `<span class="muted">No open maintenance.</span>`;
-  brief.innerHTML = `<div><span class="pill">${taskCount} tasks</span><span class="pill">${approvalsCount} approvals</span><span class="pill">${maintCount} maint</span><button class="quick-action" title="Brief details" aria-label="Brief details" onclick="openBrief()">&#8942;</button></div><div class="brief-layout"><pre class="brief-text">${esc(data.text || 'No brief text yet.')}</pre><div class="brief-stack"><div class="brief-section"><b>Next</b>${actions}</div><div class="brief-section"><b>Tasks</b>${taskRows}</div><div class="brief-section"><b>Approvals</b>${approvalRows}</div><div class="brief-section"><b>Maintenance</b>${maintenanceRows}</div></div></div>`;
+  brief.innerHTML = `<div>${pillButton(`${taskCount} tasks`, 'openTasksHub()')}${pillButton(`${approvalsCount} approvals`, 'openApprovalsHub()')}${pillButton(`${maintCount} maint`, 'openMaintenanceHub()')}<button class="quick-action" title="Brief details" aria-label="Brief details" onclick="openBrief()">&#8942;</button></div><div class="brief-layout"><pre class="brief-text">${esc(data.text || 'No brief text yet.')}</pre><div class="brief-stack"><div class="brief-section"><b>Next</b>${actions}</div><div class="brief-section"><b>Tasks</b>${taskRows}</div><div class="brief-section"><b>Approvals</b>${approvalRows}</div><div class="brief-section"><b>Maintenance</b>${maintenanceRows}</div></div></div>`;
 }
 function renderDrive(data) {
   state.drive = data || {};
@@ -1215,6 +1315,22 @@ function openMaintenance(m) {
     row('Updated', m.updated_at), row('Record id', m.id)
   ].join(''), actions);
 }
+function openTasksHub() {
+  const rows = state.tasks || [];
+  const openRows = rows.filter(task => task.status !== 'completed');
+  const visibleRows = openRows.length ? openRows : rows;
+  openDrawer('Tasks', `${visibleRows.length} visible`, visibleRows.length ? visibleRows.slice(0,30).map((task) => {
+    const idx = state.tasks.indexOf(task);
+    return compactButton('task', idx, displayTitle(task.title), task.due_at || task.status || '', task.priority ? `P${task.priority}` : '');
+  }).join('') : emptyState('No tasks surfaced right now.'));
+}
+function openEvidenceHub() {
+  const rows = usefulRows('evidence', state.evidence || []);
+  openDrawer('Evidence', `${rows.length} item(s)`, rows.length ? rows.slice(0,30).map((item) => {
+    const idx = state.evidence.indexOf(item);
+    return compactButton('evidence', idx, evidenceTitle(item), item.evidence_type || item.source || '');
+  }).join('') : emptyState('No evidence surfaced right now.'));
+}
 function openMaintenanceHub() {
   const rows = state.maintenance.filter(m => m.status !== 'resolved');
   openDrawer('Maintenance', `${rows.length} open`, rows.length ? rows.slice(0,12).map((m, idx) => compactButton('maintenance', state.maintenance.indexOf(m), maintenanceTitle(m), m.service_name || m.status || '', m.status || '')).join('') : emptyState('No open maintenance records.'));
@@ -1243,6 +1359,85 @@ function openCodexHub() {
   }).join('');
   openDrawer('Codex', `${state.codexTasks.length} core / ${state.codexJobs.length} worker`, coreRows + workerRows || emptyState('No Codex activity yet.'));
 }
+function openRunsHub() {
+  const rows = state.runs || [];
+  openDrawer('Runs', `${rows.length} durable`, rows.length ? rows.slice(0,12).map((r, idx) => compactButton('run', idx, displayTitle(r.user_request || r.id), r.source || r.created_at || '', r.status || '')).join('') : emptyState('No durable orchestration runs yet.'));
+}
+function openWorkersHub() {
+  const rows = state.workers || [];
+  const actions = `<button class="quick-action approve" title="Scan Downloads" aria-label="Scan Downloads" onclick="requestDownloadsScan()">&#128269;</button>`;
+  openDrawer('Workers', `${rows.length} registered`, rows.length ? rows.map((w, idx) => compactButton('worker', idx, displayTitle(w.display_name || w.id), `${w.worker_type || 'worker'} / ${(w.capabilities || []).length} capabilities`, w.status || '')).join('') : emptyState('No workers registered yet.'), actions);
+}
+function openDownloadsHub() {
+  const scans = state.downloads || [];
+  const actions = `<button class="quick-action approve" title="Scan Downloads" aria-label="Scan Downloads" onclick="requestDownloadsScan()">&#128269;</button><button class="quick-action" title="Plan destinations" aria-label="Plan destinations" onclick="planDownloadsDestinations()">&#9873;</button><button class="quick-action" title="Propose cleanup" aria-label="Propose cleanup" onclick="proposeDownloadsCleanup()">&#128193;</button><button class="icon-button" title="Refresh" aria-label="Refresh" onclick="loadAll().then(openDownloadsHub)">&#8635;</button>`;
+  const body = scans.length ? scans.slice(0,8).map((scan, idx) => {
+    const preview = scan.preview || {};
+    const title = scan.run?.user_request || 'Downloads scan';
+    const subtitle = `${preview.file_count || 0} files / ${preview.directory_count || 0} dirs`;
+    return compactButton('downloadScan', idx, title, subtitle, scan.status || scan.run?.status || '');
+  }).join('') : emptyState('No Downloads scans yet.');
+  openDrawer('Downloads', 'Read-only janitor preview', body, actions);
+}
+async function requestDownloadsScan() {
+  await send('POST', '/api/core/desktop/downloads/scan', {max_items: 1000, recursive: false, idempotency_key: `downloads-scan-${Date.now()}`});
+  await loadAll();
+  openDownloadsHub();
+  status.textContent = 'Downloads scan queued. Keep Jarvis Desktop worker running to complete it.';
+}
+async function proposeDownloadsCleanup() {
+  const latest = (state.downloads || [])[0];
+  const payload = {scan_run_id: latest?.run?.id, auto_approve_low_risk: true, include_quarantine: true, idempotency_key: `downloads-cleanup-${Date.now()}`};
+  await send('POST', '/api/core/desktop/downloads/propose-cleanup', payload);
+  await loadAll();
+  openDownloadsHub();
+  status.textContent = 'Downloads cleanup proposed. Low-risk category moves are queued; quarantine awaits approval.';
+}
+async function planDownloadsDestinations() {
+  const latest = (state.downloads || [])[0];
+  status.textContent = 'Planning Downloads destinations...';
+  state.downloadsDestinationPlan = await send('POST', '/api/core/desktop/downloads/destination-plan', {scan_run_id: latest?.run?.id, max_items: 200});
+  openDownloadsDestinationPlan();
+  status.textContent = 'Downloads destination plan ready.';
+}
+function openDownloadsDestinationPlan() {
+  const data = state.downloadsDestinationPlan || {};
+  const items = data.items || [];
+  const counts = `<div class="actions">${pillButton(`${items.length} files`, 'openDownloadsDestinationPlan()')}${Object.entries(data.by_destination || {}).map(([k,v]) => pillButton(`${k} ${v}`, `openDownloadsDestinationBucket('${enc(k)}')`)).join('')}</div>`;
+  const tags = Object.entries(data.by_tag || {}).slice(0,12).map(([k,v]) => pillButton(`${k} ${v}`, `openDownloadsTagBucket('${enc(k)}')`)).join('');
+  const serviceRows = Object.entries(data.services || {}).filter(([key]) => ['paperless','nextcloud','needs_review'].includes(key)).map(([key, svc]) => pillButton(`${svc.label || key} ${svc.ready ? 'ready' : 'wait'}`, `openDownloadsService('${enc(key)}')`, svc.ready ? 'ok' : 'warn')).join('');
+  const rows = items.length ? items.slice(0,40).map((item, idx) => itemButton('downloadDestinationItem', idx, `<b>${esc(item.name)}</b><br><span class="muted">${esc(item.destination)} &middot; ${esc((item.tags || []).join(', '))}</span>`)).join('') : emptyState('No destination plan yet.');
+  openDrawer('Downloads Destinations', data.summary || 'Plan long-term filing', `${counts}<div class="compact-sub">${serviceRows}</div><div class="compact-sub">${tags}</div><div class="hub-card">${rows}</div>`, `<button class="icon-button" title="Refresh" aria-label="Refresh" onclick="planDownloadsDestinations()">&#8635;</button>`);
+}
+function openDownloadsDestinationBucket(encodedDestination) {
+  const destination = decodeURIComponent(encodedDestination);
+  const items = (state.downloadsDestinationPlan.items || []).filter(item => item.destination === destination);
+  const rows = items.length ? items.slice(0,80).map((item) => {
+    const idx = (state.downloadsDestinationPlan.items || []).indexOf(item);
+    return itemButton('downloadDestinationItem', idx, `<b>${esc(item.name)}</b><br><span class="muted">${esc((item.tags || []).join(', ')) || esc(item.reason || '')}</span>`);
+  }).join('') : emptyState('No files in this destination.');
+  openDrawer(destination, `${items.length} planned file(s)`, rows, `<button class="icon-button" title="Back" aria-label="Back" onclick="openDownloadsDestinationPlan()">&#8592;</button>`);
+}
+function openDownloadsTagBucket(encodedTag) {
+  const tag = decodeURIComponent(encodedTag);
+  const items = (state.downloadsDestinationPlan.items || []).filter(item => (item.tags || []).includes(tag));
+  const rows = items.length ? items.slice(0,80).map((item) => {
+    const idx = (state.downloadsDestinationPlan.items || []).indexOf(item);
+    return itemButton('downloadDestinationItem', idx, `<b>${esc(item.name)}</b><br><span class="muted">${esc(item.destination)} &middot; ${esc(item.reason || '')}</span>`);
+  }).join('') : emptyState('No files with this tag.');
+  openDrawer(`#${tag}`, `${items.length} planned file(s)`, rows, `<button class="icon-button" title="Back" aria-label="Back" onclick="openDownloadsDestinationPlan()">&#8592;</button>`);
+}
+function openDownloadsService(encodedKey) {
+  const key = decodeURIComponent(encodedKey);
+  const svc = (state.downloadsDestinationPlan.services || {})[key] || {};
+  openDrawer(svc.label || key, svc.ready ? 'Ready' : 'Needs attention', [
+    row('Ready', svc.ready),
+    row('Import root', svc.import_root),
+    row('Consume root', svc.consume_root),
+    row('Reason', svc.reason),
+    row('Service', svc)
+  ].join(''), `<button class="icon-button" title="Back" aria-label="Back" onclick="openDownloadsDestinationPlan()">&#8592;</button>`);
+}
 function openCalendarHub() {
   const br = state.brief || {};
   const calendar = br.google?.calendar || {};
@@ -1252,7 +1447,15 @@ function openCalendarHub() {
 }
 function openNotificationsHub() {
   const rows = usefulRows('notifications', state.notifications);
-  openDrawer('Inbox', `${rows.length} items`, rows.length ? rows.slice(0,12).map((n) => compactButton('notifications', state.notifications.indexOf(n), notificationTitle(n), notificationSubtitle(n), n.status || '')).join('') : emptyState('No notifications.'));
+  const actions = rows.length ? `<button class="quick-action reject" title="Dismiss all active" aria-label="Dismiss all active" onclick="dismissAllNotifications()">&#215;</button><button class="icon-button" title="Refresh" aria-label="Refresh" onclick="loadAll().then(openNotificationsHub)">&#8635;</button>` : `<button class="icon-button" title="Refresh" aria-label="Refresh" onclick="loadAll().then(openNotificationsHub)">&#8635;</button>`;
+  openDrawer('Inbox', `${rows.length} active`, rows.length ? rows.slice(0,12).map((n) => notificationButton(n, state.notifications.indexOf(n))).join('') : emptyState('No active notifications.'), actions);
+}
+function openAuditHub() {
+  const rows = state.audit || [];
+  openDrawer('Audit', `${rows.length} recent`, rows.length ? rows.slice(0,40).map((item) => {
+    const idx = state.audit.indexOf(item);
+    return compactButton('audit', idx, displayTitle(item.event_type || item.id), item.created_at || '', item.actor || '');
+  }).join('') : emptyState('No audit events surfaced right now.'));
 }
 function automationTitle(a) {
   return displayTitle(a.name || 'Automation');
@@ -1287,13 +1490,12 @@ function openGmailCleanupHub() {
   const data = state.gmailCleanup || {};
   const counts = data.counts || {};
   const actions = `<button class="icon-button" title="Refresh" onclick="loadAll().then(openGmailCleanupHub)">&#8635;</button><button class="quick-action approve" title="Classify with Jarvis labels" onclick="proposeGmailCleanup('label_classifications')" aria-label="Classify">&#9873;</button><button class="quick-action" title="Archive newsletters" onclick="proposeGmailCleanup('archive_newsletters')" aria-label="Archive newsletters">&#128230;</button><button class="quick-action" title="Mark old unread read" onclick="proposeGmailCleanup('mark_old_unread_read')" aria-label="Mark read">&#10003;</button><button class="quick-action" title="Star needs-reply" onclick="proposeGmailCleanup('star_needs_reply')" aria-label="Star needs-reply">&#9733;</button>`;
-  const summary = `<div class="actions"><span class="pill">${esc(counts.needs_reply_candidates || 0)} reply candidates</span><span class="pill">${esc(counts.medical_school || 0)} medical school</span><span class="pill">${esc(counts.admissions || 0)} admissions</span><span class="pill">${esc(counts.likely_newsletters || 0)} newsletters</span><span class="pill">${esc(counts.old_unread || 0)} old unread</span></div>`;
-  const senders = (data.top_senders || []).slice(0,8).map(s => `<span class="pill">${esc(s.sender)} ${esc(s.sample_count)}</span>`).join('') || emptyState('No senders sampled.');
+  const summary = `<div class="actions">${pillButton(`${counts.needs_reply_candidates || 0} reply candidates`, "openGmailBucket('needs_reply')")}${pillButton(`${counts.medical_school || 0} medical school`, "openGmailBucket('medical_school')")}${pillButton(`${counts.admissions || 0} admissions`, "openGmailBucket('admissions')")}${pillButton(`${counts.finance_receipts || 0} finance`, "openGmailBucket('finance_receipts')")}${pillButton(`${counts.promotions || 0} promotions auto-filed`, "openGmailBucket('promotions')")}${pillButton(`${counts.low_value_updates || 0} updates auto-filed`, "openGmailBucket('low_value_updates')")}${pillButton(`${counts.old_unread || 0} old unread`, "openGmailBucket('old_unread')")}</div>`;
+  const senders = (data.top_senders || []).slice(0,8).map(s => pillButton(`${s.sender} ${s.sample_count}`, `openGmailSender('${enc(s.sender)}')`)).join('') || emptyState('No senders sampled.');
   const body = summary + `<div class="hub-grid">
     ${gmailBucketSection('Medical school', data.medical_school, 'medical_school')}
     ${gmailBucketSection('Admissions', data.admissions, 'admissions')}
     ${gmailBucketSection('Needs reply', data.needs_reply, 'needs_reply')}
-    ${gmailBucketSection('Newsletters', data.likely_newsletters, 'likely_newsletters')}
     ${gmailBucketSection('Finance / receipts', data.finance_receipts, 'finance_receipts')}
     ${gmailBucketSection('Old unread', data.old_unread, 'old_unread')}
     <div class="hub-card"><div class="hub-card-head"><h3>Top senders</h3></div>${senders}</div>
@@ -1301,12 +1503,54 @@ function openGmailCleanupHub() {
   openDrawer('Gmail', 'Read-only scan; changes require approval', body, actions);
 }
 function gmailBucketSection(title, rows, key) {
-  const items = (rows || []).slice(0,5).map(mailPreview).join('') || emptyState('No matches.');
+  const items = (rows || []).slice(0,5).map((item, idx) => mailPreview(item, key, idx)).join('') || emptyState('No matches.');
   const count = (rows || []).length;
-  return `<div class="hub-card"><div class="hub-card-head"><h3>${esc(title)}</h3><span class="pill">${count}</span></div>${items}</div>`;
+  return `<div class="hub-card"><div class="hub-card-head"><h3>${esc(title)}</h3>${pillButton(count, `openGmailBucket('${key}')`)}</div>${items}</div>`;
 }
-function mailPreview(item) {
-  return `<div class="mail-row"><div class="mail-subject">${esc(displayTitle(item.subject || item.snippet || 'Message'))}</div><div class="mail-from">${esc(item.from || '')}</div></div>`;
+function mailPreview(item, key, idx) {
+  return `<button class="item-button" onclick="openGmailMessage('${key}', ${idx})"><div class="mail-subject">${esc(displayTitle(item.subject || item.snippet || 'Message'))}</div><div class="mail-from">${esc(item.from || '')}</div></button>`;
+}
+function gmailRowsFor(key) {
+  const data = state.gmailCleanup || {};
+  return data[key] || [];
+}
+function openGmailBucket(key) {
+  const labels = {
+    medical_school: 'Medical School',
+    admissions: 'Admissions',
+    needs_reply: 'Needs Reply',
+    finance_receipts: 'Finance / Receipts',
+    old_unread: 'Old Unread',
+    promotions: 'Promotions',
+    low_value_updates: 'Updates'
+  };
+  const rows = gmailRowsFor(key);
+  const body = rows.length ? rows.slice(0,80).map((item, idx) => mailPreview(item, key, idx)).join('') : emptyState('No messages in this group.');
+  openDrawer(labels[key] || displayTitle(key), `${rows.length} message(s)`, body, `<button class="icon-button" title="Back" aria-label="Back" onclick="openGmailCleanupHub()">&#8592;</button>`);
+}
+function openGmailSender(encodedSender) {
+  const sender = decodeURIComponent(encodedSender);
+  const keys = ['medical_school','admissions','needs_reply','finance_receipts','old_unread','promotions','low_value_updates','likely_newsletters'];
+  const matches = [];
+  keys.forEach(key => gmailRowsFor(key).forEach((item, idx) => {
+    if (String(item.from || '').includes(sender)) matches.push({key, idx, item});
+  }));
+  const body = matches.length ? matches.slice(0,80).map(match => mailPreview(match.item, match.key, match.idx)).join('') : row('Sender', sender);
+  openDrawer(sender, `${matches.length} sampled message(s)`, body, `<button class="icon-button" title="Back" aria-label="Back" onclick="openGmailCleanupHub()">&#8592;</button>`);
+}
+function openGmailMessage(key, idx) {
+  const item = gmailRowsFor(key)[idx];
+  if (!item) return;
+  openDrawer(displayTitle(item.subject || item.snippet || 'Message'), displayTitle(key), [
+    row('From', item.from),
+    row('Date', item.date || item.internal_date),
+    row('Snippet', item.snippet),
+    row('Suggested labels', item.suggested_labels || item.labels),
+    row('Reason', item.reason),
+    row('Thread id', item.thread_id),
+    row('Message id', item.id || item.message_id),
+    row('Raw', item)
+  ].join(''), `<button class="icon-button" title="Back" aria-label="Back" onclick="openGmailBucket('${key}')">&#8592;</button>`);
 }
 async function proposeGmailCleanup(actionType, maxResults = 25) {
   await send('POST', '/api/core/gmail/cleanup/propose', {action_type: actionType, max_results: maxResults, idempotency_key: `gmail-cleanup-${actionType}-${Date.now()}`});
@@ -1358,6 +1602,33 @@ function openCodexTask(t) {
     row('Artifacts', t.artifacts), row('Execution', t.execution), row('Approval', t.approval), row('Raw task', t)
   ].join(''));
 }
+function openRun(r) {
+  openDrawer(displayTitle(r.user_request || r.id), r.status || 'Run', [
+    row('Source', r.source), row('Priority', r.priority), row('Risk', r.risk_level), row('Requested by', r.requested_by),
+    row('Summary', r.result_summary), row('Error', r.error_message), row('Context', r.request_context),
+    row('Created', r.created_at), row('Run id', r.id)
+  ].join(''));
+}
+function openWorker(w) {
+  openDrawer(displayTitle(w.display_name || w.id), w.status || 'Worker', [
+    row('Type', w.worker_type), row('Host', w.hostname), row('OS', w.os), row('Version', w.version),
+    row('Last heartbeat', w.last_heartbeat_at), row('Capabilities', w.capabilities), row('Metadata', w.metadata),
+    row('Worker id', w.id)
+  ].join(''));
+}
+function openDownloadScan(scan) {
+  const preview = scan.preview || {};
+  const sample = Object.entries(preview.sample || {}).map(([name, items]) => {
+    const rows = (items || []).slice(0,6).map(item => `<div class="mail-row"><div class="mail-subject">${esc(item.name || 'file')}</div><div class="mail-from">${esc(item.extension || '')} ${esc(item.size || '')}</div></div>`).join('');
+    return `<div class="hub-card"><div class="hub-card-head"><h3>${esc(name)}</h3><span class="pill">${esc((items || []).length)}</span></div>${rows || emptyState('No sample')}</div>`;
+  }).join('');
+  openDrawer('Downloads Preview', scan.status || scan.run?.status || 'scan', [
+    row('Mode', preview.mode), row('Root', preview.root), row('Files', preview.file_count), row('Directories', preview.directory_count),
+    row('By category', preview.by_category), row('Duplicate candidates', preview.duplicates),
+    `<div class="hub-grid">${sample}</div>`,
+    row('Next step', preview.next_step), row('Run id', scan.run?.id), row('Job id', scan.job?.id)
+  ].join(''));
+}
 async function makeBriefAction(actionType) {
   const title = prompt(actionType === 'calendar_hold' ? 'Calendar hold title' : 'Task title');
   if (!title) return;
@@ -1387,8 +1658,13 @@ function openMaintenanceById(id) {
   const item = state.maintenance.find(record => record.id === id);
   if (item) openMaintenance(item);
 }
+function openBriefEvidence(idx) {
+  const item = (state.briefEvidence || [])[idx];
+  if (item) openEvidence(item);
+}
 function openBrief() {
   const br = state.brief || {};
+  state.briefEvidence = br.recent_evidence || [];
   const actions = `<button class="quick-action approve" title="Create task" aria-label="Create task" onclick="makeBriefAction('task')">+</button><button class="quick-action" title="Create calendar hold" aria-label="Create calendar hold" onclick="makeBriefAction('calendar_hold')">&#128197;</button>`;
   const google = br.google || {};
   const googleSummary = google.text || [
@@ -1396,13 +1672,16 @@ function openBrief() {
     google.gmail?.messages ? `${google.gmail.messages.length} mail items` : '',
     google.news?.items ? `${google.news.items.length} news items` : ''
   ].filter(Boolean).join(' / ');
+  const taskRows = (br.tasks_due_soon || []).slice(0,8).map(task => `<button class="item-button" onclick="openTaskById('${esc(task.id)}')"><b>${esc(displayTitle(task.title))}</b><br><span class="muted">${esc(task.due_at || task.status || '')}</span></button>`).join('') || emptyState('No tasks surfaced.');
+  const approvalRows = (br.pending_approvals || []).slice(0,8).map(approvalButton).join('') || emptyState('No approvals surfaced.');
+  const maintenanceRows = (br.open_maintenance || []).slice(0,8).map(item => `<button class="item-button" onclick="openMaintenanceById('${esc(item.id)}')"><b>${esc(maintenanceTitle(item))}</b><br><span class="muted">${esc(item.service_name || item.status || '')}</span></button>`).join('') || emptyState('No maintenance surfaced.');
+  const evidenceRows = state.briefEvidence.slice(0,8).map((item, idx) => `<button class="item-button" onclick="openBriefEvidence(${idx})"><b>${esc(evidenceTitle(item))}</b><br><span class="muted">${esc(item.evidence_type || item.source || '')}</span></button>`).join('') || emptyState('No evidence surfaced.');
+  const googleActions = `<div class="actions">${pillButton('Calendar', 'openCalendarHub()')}${pillButton('Gmail', 'openGmailCleanupHub()')}</div>`;
   openDrawer('Daily Brief', br.kind || 'morning', [
     row('Brief', br.text),
-    row('Tasks', briefList(br.tasks_due_soon, item => `${item.title}${item.due_at ? ` due ${item.due_at}` : ''}`)),
-    row('Approvals', briefList(br.pending_approvals, item => `${item.action?.tool_name || 'approval'}: ${item.reason || item.status || ''}`)),
-    row('Maintenance', briefList(br.open_maintenance, item => `${item.service_name}: ${item.summary}`)),
-    row('Evidence', briefList(br.recent_evidence, item => `${item.evidence_type}: ${item.title}`)),
-    row('Google', googleSummary || 'No Google summary returned.')
+    `<div class="hub-grid"><div class="hub-card"><div class="hub-card-head"><h3>Tasks</h3>${pillButton((br.tasks_due_soon || []).length, 'openTasksHub()')}</div>${taskRows}</div><div class="hub-card"><div class="hub-card-head"><h3>Approvals</h3>${pillButton((br.pending_approvals || []).length, 'openApprovalsHub()')}</div>${approvalRows}</div><div class="hub-card"><div class="hub-card-head"><h3>Maintenance</h3>${pillButton((br.open_maintenance || []).length, 'openMaintenanceHub()')}</div>${maintenanceRows}</div><div class="hub-card"><div class="hub-card-head"><h3>Evidence</h3>${pillButton(state.briefEvidence.length, 'openEvidenceHub()')}</div>${evidenceRows}</div></div>`,
+    row('Google', `${googleSummary || 'No Google summary returned.'}`),
+    googleActions
   ].join(''), actions);
 }
 function briefList(items, mapper) {
@@ -1618,6 +1897,10 @@ function openItem(kind, idx) {
   if (kind === 'diagnostic') return openDiagnostic(state.diagnostics[idx]);
   if (kind === 'codexTask') return openCodexTask(state.codexTasks[idx]);
   if (kind === 'codexJob') return openCodexJob(state.codexJobs[idx]);
+  if (kind === 'run') return openRun(state.runs[idx]);
+  if (kind === 'worker') return openWorker(state.workers[idx]);
+  if (kind === 'downloadScan') return openDownloadScan(state.downloads[idx]);
+  if (kind === 'downloadDestinationItem') return openDownloadDestinationItem((state.downloadsDestinationPlan.items || [])[idx]);
   if (kind === 'task') return openTask(state.tasks[idx]);
   if (kind === 'evidence') return openEvidence(state.evidence[idx]);
   if (kind === 'maintenance') return openMaintenance(state.maintenance[idx]);
@@ -1634,9 +1917,31 @@ function openItem(kind, idx) {
   if (kind === 'audit') return openAudit(state.audit[idx]);
 }
 function openNotification(n) {
-  openDrawer(n.payload?.title || n.id, `${n.channel} ${n.status}`, [
-    row('Body', n.payload?.body), row('Severity', n.payload?.severity), row('Payload', n.payload),
-    row('Created', n.created_at), row('Notification id', n.id)
+  const approval = linkedApprovalForNotification(n);
+  const actions = [
+    approval ? `<button class="quick-action approve" title="Approve request" aria-label="Approve request" onclick="approveNotification(event, '${esc(n.id)}')">&#10003;</button>` : '',
+    approval ? `<button class="quick-action reject" title="Reject request" aria-label="Reject request" onclick="rejectNotification(event, '${esc(n.id)}')">&#215;</button>` : '',
+    !['dismissed', 'delivered'].includes(String(n.status || '').toLowerCase()) ? `<button class="quick-action" title="Dismiss" aria-label="Dismiss" onclick="dismissNotification(event, '${esc(n.id)}')">&#8722;</button>` : ''
+  ].filter(Boolean).join('');
+  openDrawer(notificationTitle(n), `${n.channel} ${n.status}`, [
+    row('Body', n.payload?.body), row('Severity', n.payload?.severity),
+    row('Linked approval', approval ? `${approval.action?.tool_name || 'approval'} / ${approval.action?.risk_level || approval.status || ''}` : ''),
+    row('Created', n.created_at), row('Payload', n.payload)
+  ].join(''), actions);
+}
+function openDownloadDestinationItem(item) {
+  if (!item) return;
+  openDrawer(item.name || 'Download item', item.destination || 'Destination', [
+    row('This would go here', item.suggested_folder),
+    row('Destination', item.destination),
+    row('Action', item.action),
+    row('Tags', item.tags),
+    row('Why', item.reason),
+    row('Ready', item.ready),
+    row('Category', item.life_category_label || item.life_category),
+    row('Kind', item.kind),
+    row('Modified', item.modified_at),
+    row('Path', item.path)
   ].join(''));
 }
 function currentBriefKind() {
@@ -1646,11 +1951,14 @@ function currentBriefKind() {
 async function loadAll() {
   status.textContent = 'Refreshing...';
   const briefKind = currentBriefKind();
-  const [ap, diag, cx, jobs, task, ev, maint, br, notif, auto, gm, ds, dd] = await Promise.all([
+  const [ap, diag, cx, jobs, runs, workers, downloads, task, ev, maint, br, notif, auto, gm, ds, dd] = await Promise.all([
     get('/api/core/approvals?status=pending'),
     get('/api/core/diagnostics'),
     get('/api/core/codex/tasks'),
     get('/api/codex/jobs'),
+    get('/api/core/runs'),
+    get('/api/core/workers'),
+    get('/api/core/desktop/downloads/scans'),
     get('/api/core/tasks'),
     get('/api/core/evidence'),
     get('/api/core/maintenance'),
@@ -1667,11 +1975,14 @@ async function loadAll() {
   state.evidence = ev.evidence || [];
   state.maintenance = maint.maintenance || [];
   state.notifications = notif.notifications || [];
+  state.runs = runs.runs || [];
+  state.workers = workers.workers || [];
+  state.downloads = downloads.scans || [];
   state.automations = auto.automations || [];
   state.gmailCleanup = gm || {};
   state.driveStaging = ds || {};
   state.driveDestinations = dd || {};
-  renderOverview({ap, diag, cx, task, maint, notif, auto, gm, br});
+  renderOverview({ap, diag, cx, runs, workers, downloads, task, maint, notif, auto, gm, br});
   renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
   state.tasks = task.tasks || [];
   setCount('tasksCount', `${state.tasks.length}`);
@@ -1776,7 +2087,6 @@ class Handler(BaseHTTPRequestHandler):
             return exc.code, data
         except Exception as exc:
             return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
-
 
     def codex_proxy(self, method, path, payload=None, timeout=120):
         body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
@@ -1961,6 +2271,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/core/executions": "/api/v1/executions",
             "/api/core/notifications": "/api/v1/notifications",
             "/api/core/automations": "/api/v1/automations",
+            "/api/core/runs": "/api/v1/runs",
+            "/api/core/workers": "/api/v1/workers",
+            "/api/core/desktop/downloads/scans": "/api/v1/desktop/downloads/scans",
             "/api/core/gmail/cleanup-summary": "/api/v1/gmail/cleanup-summary",
             "/api/core/drive/nextcloud-status": "/api/v1/drive/nextcloud-status",
         }
@@ -1970,6 +2283,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             suffix = f"?{query}" if query else ""
             status, data = self.core_proxy("GET", core_get_routes[path] + suffix)
+            self.write_json(status, data)
+            return
+        if path.startswith("/api/core/runs/") or path.startswith("/api/core/jobs/") or path.startswith("/api/core/workers/"):
+            if not self.authorized():
+                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
+                return
+            core_path = path.replace("/api/core", "/api/v1", 1)
+            suffix = f"?{query}" if query else ""
+            status, data = self.core_proxy("GET", core_path + suffix)
             self.write_json(status, data)
             return
         if path == "/api/codex/jobs":
@@ -2027,10 +2349,75 @@ class Handler(BaseHTTPRequestHandler):
             self.write_json(status, data)
             return
 
+        if path == "/api/core/runs":
+            status, data = self.core_proxy("POST", "/api/v1/runs", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/desktop/downloads/scan":
+            status, data = self.core_proxy("POST", "/api/v1/desktop/downloads/scan", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/desktop/downloads/propose-cleanup":
+            status, data = self.core_proxy("POST", "/api/v1/desktop/downloads/propose-cleanup", self.read_json(), timeout=240)
+            self.write_json(status, data)
+            return
+
+        if path == "/api/core/desktop/downloads/destination-plan":
+            status, data = self.core_proxy("POST", "/api/v1/desktop/downloads/destination-plan", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path.startswith("/api/core/runs/") and path.endswith("/jobs"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/runs/{parts[4]}/jobs", self.read_json(), timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/runs/") and path.endswith("/cancel"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/runs/{parts[4]}/cancel", self.read_json(), timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/jobs/") and path.endswith("/retry"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/jobs/{parts[4]}/retry", self.read_json(), timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path == "/api/core/workers/register":
+            status, data = self.core_proxy("POST", "/api/v1/workers/register", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path.startswith("/api/core/workers/"):
+            suffix = path.replace("/api/core/workers", "/api/v1/workers", 1)
+            status, data = self.core_proxy("POST", suffix, self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
         if path.startswith("/api/core/automations/") and path.endswith("/run"):
             parts = path.split("/")
             if len(parts) == 6:
                 status, data = self.core_proxy("POST", f"/api/v1/automations/{parts[4]}/run", self.read_json(), timeout=240)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/notifications/") and path.endswith("/dismiss"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                payload = self.read_json()
+                status, data = self.core_proxy(
+                    "POST",
+                    f"/api/v1/notifications/{parts[4]}/delivery",
+                    {"status": "dismissed", "delivered_by": payload.get("delivered_by") or "jarvis-core-console"},
+                    timeout=120,
+                )
                 self.write_json(status, data)
                 return
 

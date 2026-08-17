@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import audioop
+import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -15,6 +18,7 @@ import urllib.error
 import urllib.request
 import uuid
 import wave
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -62,6 +66,17 @@ class VoiceConfig:
     record_silence_seconds: float = 1.8
     record_rms_threshold: int = 450
     tts_voice: str = "af_heart"
+    desktop_worker_enabled: bool = True
+    desktop_worker_id: str = "kadin-laptop"
+    desktop_worker_display_name: str = "Kadin Laptop"
+    desktop_worker_type: str = "desktop"
+    desktop_worker_heartbeat_seconds: float = 15.0
+    desktop_worker_claim_seconds: float = 5.0
+    desktop_worker_allowed_roots: str = ""
+    desktop_worker_quarantine: str = ""
+    desktop_enable_files: bool = True
+    desktop_enable_notify: bool = True
+    desktop_enable_open_url: bool = True
 
     @classmethod
     def from_env(cls):
@@ -91,6 +106,17 @@ class VoiceConfig:
             record_silence_seconds=float(os.environ.get("JARVIS_RECORD_SILENCE_SECONDS", cls.record_silence_seconds)),
             record_rms_threshold=int(os.environ.get("JARVIS_RECORD_RMS_THRESHOLD", cls.record_rms_threshold)),
             tts_voice=os.environ.get("JARVIS_TTS_VOICE", cls.tts_voice),
+            desktop_worker_enabled=env_bool("JARVIS_DESKTOP_WORKER_ENABLED", cls.desktop_worker_enabled),
+            desktop_worker_id=os.environ.get("JARVIS_DESKTOP_WORKER_ID", cls.desktop_worker_id),
+            desktop_worker_display_name=os.environ.get("JARVIS_DESKTOP_WORKER_DISPLAY_NAME", cls.desktop_worker_display_name),
+            desktop_worker_type=os.environ.get("JARVIS_DESKTOP_WORKER_TYPE", cls.desktop_worker_type),
+            desktop_worker_heartbeat_seconds=float(os.environ.get("JARVIS_DESKTOP_HEARTBEAT_SECONDS", cls.desktop_worker_heartbeat_seconds)),
+            desktop_worker_claim_seconds=float(os.environ.get("JARVIS_DESKTOP_CLAIM_SECONDS", cls.desktop_worker_claim_seconds)),
+            desktop_worker_allowed_roots=os.environ.get("JARVIS_DESKTOP_ALLOWED_ROOTS", cls.desktop_worker_allowed_roots),
+            desktop_worker_quarantine=os.environ.get("JARVIS_DESKTOP_QUARANTINE", cls.desktop_worker_quarantine),
+            desktop_enable_files=env_bool("JARVIS_DESKTOP_ENABLE_FILES", cls.desktop_enable_files),
+            desktop_enable_notify=env_bool("JARVIS_DESKTOP_ENABLE_NOTIFY", cls.desktop_enable_notify),
+            desktop_enable_open_url=env_bool("JARVIS_DESKTOP_ENABLE_OPEN_URL", cls.desktop_enable_open_url),
         )
 
 
@@ -510,6 +536,250 @@ class JarvisChatClient:
             return json.loads(response.read().decode("utf-8") or "{}")
 
 
+def default_desktop_roots():
+    home = Path.home()
+    return [
+        home / "Downloads",
+        home / "Documents" / "Jarvis",
+        home / "Desktop" / "Jarvis",
+    ]
+
+
+def configured_desktop_roots(config):
+    raw = config.desktop_worker_allowed_roots.strip()
+    roots = [Path(item.strip()).expanduser() for item in raw.split(";") if item.strip()] if raw else default_desktop_roots()
+    return [root.resolve() for root in roots]
+
+
+def resolve_allowed_path(path, roots):
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = roots[0] / candidate
+    resolved = candidate.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            continue
+    raise PermissionError(f"path outside allowed roots: {resolved}")
+
+
+def file_metadata(path, include_hash=False):
+    stat = path.stat()
+    item = {
+        "name": path.name,
+        "path": str(path),
+        "kind": "directory" if path.is_dir() else "file",
+        "size": stat.st_size,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "extension": path.suffix.lower(),
+        "mime_type": mimetypes.guess_type(str(path))[0],
+        "hidden": path.name.startswith(".") or (os.name == "nt" and bool(stat.st_file_attributes & 2) if hasattr(stat, "st_file_attributes") else False),
+    }
+    if include_hash and path.is_file():
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        item["sha256"] = digest.hexdigest()
+    return item
+
+
+def unique_destination(path):
+    candidate = path
+    counter = 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem} ({counter}){path.suffix}")
+        counter += 1
+    return candidate
+
+
+class JarvisDesktopWorker:
+    def __init__(self, config, client=None, speaker=None):
+        self.config = config
+        self.client = client or JarvisChatClient(config)
+        self.speaker = speaker or ConsoleSpeaker()
+        self.stop_event = threading.Event()
+        self.roots = configured_desktop_roots(config)
+        self.capabilities = self.build_capabilities()
+
+    def build_capabilities(self):
+        caps = []
+        if self.config.desktop_enable_notify:
+            caps.append({"name": "desktop.notify", "version": "1", "risk_ceiling": "L1"})
+        if self.config.desktop_enable_open_url:
+            caps.append({"name": "desktop.open_url", "version": "1", "risk_ceiling": "L2"})
+        if self.config.desktop_enable_files:
+            caps.extend(
+                [
+                    {"name": "desktop.files.list", "version": "1", "risk_ceiling": "L1"},
+                    {"name": "desktop.files.stat", "version": "1", "risk_ceiling": "L1"},
+                    {"name": "desktop.files.hash", "version": "1", "risk_ceiling": "L1"},
+                    {"name": "desktop.files.move", "version": "1", "risk_ceiling": "L2"},
+                    {"name": "desktop.files.quarantine", "version": "1", "risk_ceiling": "L2"},
+                ]
+            )
+        return caps
+
+    def register(self):
+        payload = {
+            "worker_id": self.config.desktop_worker_id,
+            "display_name": self.config.desktop_worker_display_name,
+            "worker_type": self.config.desktop_worker_type,
+            "hostname": socket.gethostname(),
+            "os": sys.platform,
+            "version": "1.0.0",
+            "capabilities": self.capabilities,
+            "metadata": {
+                "allowed_roots": [str(root) for root in self.roots],
+                "voice_client": True,
+            },
+        }
+        return self.client.request_json("/api/core/workers/register", payload, timeout=30)
+
+    def heartbeat(self, status="online"):
+        return self.client.request_json(
+            f"/api/core/workers/{self.config.desktop_worker_id}/heartbeat",
+            {"status": status, "capabilities": self.capabilities},
+            timeout=30,
+        )
+
+    def claim(self):
+        return self.client.request_json(
+            f"/api/core/workers/{self.config.desktop_worker_id}/claim",
+            {"capabilities": [item["name"] for item in self.capabilities], "max_jobs": 1},
+            timeout=30,
+        ).get("jobs") or []
+
+    def run_forever(self):
+        self.register()
+        last_heartbeat = 0.0
+        while not self.stop_event.is_set():
+            now = time.time()
+            if now - last_heartbeat >= self.config.desktop_worker_heartbeat_seconds:
+                self.heartbeat()
+                last_heartbeat = now
+            for job in self.claim():
+                self.handle_job(job)
+            self.stop_event.wait(self.config.desktop_worker_claim_seconds)
+
+    def stop(self):
+        self.stop_event.set()
+        try:
+            self.heartbeat("offline")
+        except Exception:
+            logging.exception("desktop worker offline heartbeat failed")
+
+    def handle_job(self, job):
+        job_id = job["id"]
+        start_path = f"/api/core/workers/{self.config.desktop_worker_id}/jobs/{job_id}/start"
+        complete_path = f"/api/core/workers/{self.config.desktop_worker_id}/jobs/{job_id}/complete"
+        fail_path = f"/api/core/workers/{self.config.desktop_worker_id}/jobs/{job_id}/fail"
+        try:
+            self.client.request_json(start_path, {}, timeout=30)
+            result = self.execute(job.get("capability"), job.get("input") or {})
+            self.client.request_json(complete_path, {"output": result, "safe_summary": result.get("summary")}, timeout=30)
+        except Exception as exc:
+            logging.exception("desktop worker job failed")
+            self.client.request_json(fail_path, {"error": {"message": str(exc)}, "safe_summary": str(exc)[:240]}, timeout=30)
+
+    def execute(self, capability, inputs):
+        if capability == "desktop.notify":
+            return self.cap_notify(inputs)
+        if capability == "desktop.open_url":
+            return self.cap_open_url(inputs)
+        if capability == "desktop.files.list":
+            return self.cap_files_list(inputs)
+        if capability == "desktop.files.stat":
+            return self.cap_files_stat(inputs)
+        if capability == "desktop.files.hash":
+            return self.cap_files_hash(inputs)
+        if capability == "desktop.files.move":
+            return self.cap_files_move(inputs, quarantine=False)
+        if capability == "desktop.files.quarantine":
+            return self.cap_files_move(inputs, quarantine=True)
+        raise ValueError(f"unsupported capability: {capability}")
+
+    def cap_notify(self, inputs):
+        title = str(inputs.get("title") or "Jarvis")
+        body = str(inputs.get("body") or "")
+        self.speaker.print_status(f"{title}: {body}".strip())
+        logging.info("desktop notify title=%s body=%s", title, body[:240])
+        return {"ok": True, "summary": f"Notification shown: {title}"}
+
+    def cap_open_url(self, inputs):
+        url = str(inputs.get("url") or "")
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            raise PermissionError("desktop.open_url allows only http and https URLs")
+        opened = webbrowser.open(url)
+        return {"ok": bool(opened), "url": url, "summary": f"Opened URL: {url}"}
+
+    def cap_files_list(self, inputs):
+        root = resolve_allowed_path(inputs.get("path") or str(self.roots[0]), self.roots)
+        if not root.exists():
+            raise FileNotFoundError(str(root))
+        if not root.is_dir():
+            raise NotADirectoryError(str(root))
+        recursive = bool(inputs.get("recursive", False))
+        max_items = max(1, min(int(inputs.get("max_items") or 1000), 1000))
+        iterator = root.rglob("*") if recursive else root.iterdir()
+        items = []
+        for path in iterator:
+            items.append(file_metadata(path))
+            if len(items) >= max_items:
+                break
+        return {"ok": True, "root": str(root), "count": len(items), "items": items, "summary": f"Listed {len(items)} items in {root.name}"}
+
+    def cap_files_stat(self, inputs):
+        path = resolve_allowed_path(inputs.get("path") or "", self.roots)
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        return {"ok": True, "item": file_metadata(path), "summary": f"Read metadata for {path.name}"}
+
+    def cap_files_hash(self, inputs):
+        path = resolve_allowed_path(inputs.get("path") or "", self.roots)
+        if not path.exists():
+            raise FileNotFoundError(str(path))
+        if not path.is_file():
+            raise IsADirectoryError(str(path))
+        return {"ok": True, "item": file_metadata(path, include_hash=True), "summary": f"Hashed {path.name}"}
+
+    def cap_files_move(self, inputs, quarantine=False):
+        moves = inputs.get("moves") or []
+        if not isinstance(moves, list) or not moves:
+            raise ValueError("moves_required")
+        max_moves = max(1, min(int(inputs.get("max_moves") or 200), 200))
+        moved = []
+        for item in moves[:max_moves]:
+            source = resolve_allowed_path(item.get("source") or "", self.roots)
+            if not source.exists():
+                raise FileNotFoundError(str(source))
+            if not source.is_file():
+                raise IsADirectoryError(str(source))
+            destination_dir = item.get("destination_dir")
+            if quarantine:
+                destination_dir = destination_dir or self.config.desktop_worker_quarantine or str(self.roots[0] / "_Jarvis Quarantine")
+            if not destination_dir:
+                raise ValueError("destination_dir_required")
+            target_dir = resolve_allowed_path(destination_dir, self.roots)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            destination = unique_destination(target_dir / source.name)
+            shutil.move(str(source), str(destination))
+            moved.append(
+                {
+                    "source": str(source),
+                    "destination": str(destination),
+                    "name": destination.name,
+                    "category": item.get("category"),
+                    "verified": destination.exists() and not source.exists(),
+                }
+            )
+        verb = "Quarantined" if quarantine else "Moved"
+        return {"ok": True, "moved": moved, "count": len(moved), "summary": f"{verb} {len(moved)} file(s)"}
+
+
 class TunnelManager:
     def __init__(self, config):
         self.config = config
@@ -733,6 +1003,7 @@ class VoiceController:
         self.speaker = speaker or ConsoleSpeaker()
         self.tunnel = tunnel or TunnelManager(config)
         self.client = client or JarvisChatClient(config)
+        self.desktop_worker = JarvisDesktopWorker(config, self.client, self.speaker) if config.desktop_worker_enabled else None
         self.session = JarvisVoiceSession(self.client, self.speaker, self.set_state)
         self.recorder = recorder or record_until_silence
         self.state = VoiceState.DISCONNECTED
@@ -761,6 +1032,11 @@ class VoiceController:
     def ensure_connected(self):
         if self.tunnel.ensure():
             self.set_state(VoiceState.LISTENING)
+            if self.desktop_worker:
+                try:
+                    self.desktop_worker.register()
+                except Exception as exc:
+                    logging.warning("desktop worker registration failed: %s", exc)
             return True
         self.set_state(VoiceState.DISCONNECTED, "Jarvis Chat tunnel unavailable")
         self.speaker.print_status("Jarvis Chat tunnel unavailable.")
@@ -782,6 +1058,8 @@ class VoiceController:
 
     def stop(self):
         self.stop_event.set()
+        if self.desktop_worker:
+            self.desktop_worker.stop()
 
     def record_turn(self, trigger="wake"):
         if not self.turn_lock.acquire(blocking=False):
@@ -873,6 +1151,20 @@ def run_listen(config):
 
 def run_push_to_talk(config):
     VoiceController(config).push_to_talk()
+
+
+def run_worker(config):
+    setup_logging(config)
+    controller = VoiceController(config)
+    if not controller.ensure_connected():
+        raise RuntimeError("Jarvis Chat unavailable")
+    if not controller.desktop_worker:
+        raise RuntimeError("Desktop worker is disabled")
+    print(f"Jarvis desktop worker registered as {config.desktop_worker_id}. Press Ctrl+C to stop.")
+    try:
+        controller.desktop_worker.run_forever()
+    except KeyboardInterrupt:
+        controller.stop()
 
 
 def tray_image(state):
@@ -984,6 +1276,8 @@ def run_tray(config):
         run_threaded("jarvis-wake-listener", controller.listen_forever)
     else:
         controller.ensure_connected()
+    if controller.desktop_worker:
+        run_threaded("jarvis-desktop-worker", controller.desktop_worker.run_forever)
     refresh()
     icon.run()
 
@@ -1001,6 +1295,11 @@ def diagnose(config):
     print(f"Wake consecutive hits: {config.wake_consecutive_hits}")
     print(f"Post-turn cooldown seconds: {config.post_turn_cooldown_seconds}")
     print(f"Sample rate: {config.sample_rate}")
+    print(f"Desktop worker enabled: {config.desktop_worker_enabled}")
+    print(f"Desktop worker id: {config.desktop_worker_id}")
+    print(f"Desktop worker heartbeat seconds: {config.desktop_worker_heartbeat_seconds}")
+    print(f"Desktop worker capabilities: {[item['name'] for item in JarvisDesktopWorker(config).capabilities]}")
+    print(f"Desktop allowed roots: {[str(root) for root in configured_desktop_roots(config)]}")
     try:
         tunnel = TunnelManager(config)
         print(f"Tunnel/local chat port: connected={tunnel.is_connected()}")
@@ -1036,6 +1335,7 @@ def main():
     parser.add_argument("--listen", action="store_true", help="Listen continuously for the wake phrase.")
     parser.add_argument("--push-to-talk", action="store_true", help="Record one request through the push-to-talk path.")
     parser.add_argument("--tray", action="store_true", help="Run the Windows tray app.")
+    parser.add_argument("--worker", action="store_true", help="Run only the Jarvis desktop worker loop.")
     parser.add_argument("--diagnose", action="store_true", help="Check Jarvis Chat, audio devices, and wake model setup.")
     parser.add_argument("--env", default=".env", help="Path to local env config.")
     args = parser.parse_args()
@@ -1045,6 +1345,8 @@ def main():
         diagnose(config)
     elif args.tray:
         run_tray(config)
+    elif args.worker:
+        run_worker(config)
     elif args.push_to_talk:
         run_push_to_talk(config)
     elif args.listen:

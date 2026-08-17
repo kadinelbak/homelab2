@@ -32,6 +32,11 @@ from .models import (
     MaintenanceRecord,
     ModelInvocationRecord,
     NotificationRecord,
+    ArtifactRecord,
+    JobDependencyRecord,
+    OrchestrationEventRecord,
+    OrchestrationJobRecord,
+    OrchestrationRunRecord,
     OutboxEventRecord,
     ProjectRecord,
     ProposedActionRecord,
@@ -40,6 +45,8 @@ from .models import (
     TaskRecord,
     ToolDefinitionRecord,
     VerificationResultRecord,
+    WorkerCapabilityRecord,
+    WorkerRecord,
 )
 from .database import engine
 
@@ -99,6 +106,27 @@ DEFAULT_DRIVE_EXCLUDE_FOLDER_IDS = {
     "10HgRs3i7x0dndZ2V2wBW188cVMesql_X",
 }
 AUTOMATION_RUNNER_STARTED = False
+JOB_STATUS_TRANSITIONS = {
+    "created": {"queued", "waiting_approval", "cancelled"},
+    "blocked": {"queued", "cancelled"},
+    "queued": {"claimed", "cancelled", "expired"},
+    "claimed": {"running", "queued", "failed", "cancelled"},
+    "running": {"completed", "failed", "retry_wait", "cancelled"},
+    "waiting_approval": {"queued", "cancelled"},
+    "retry_wait": {"queued", "failed", "cancelled"},
+    "completed": set(),
+    "failed": {"queued"},
+    "cancelled": set(),
+    "expired": {"queued", "cancelled"},
+}
+RUN_STATUS_TRANSITIONS = {
+    "created": {"queued", "running", "completed", "failed", "cancelled"},
+    "queued": {"running", "completed", "failed", "cancelled"},
+    "running": {"completed", "failed", "cancelled"},
+    "completed": set(),
+    "failed": set(),
+    "cancelled": set(),
+}
 
 
 def default_drive_exclude_names():
@@ -215,6 +243,86 @@ class ModelGenerate(BaseModel):
     images: list[str] = Field(default_factory=list)
     max_tokens: int = Field(default=500, ge=1, le=4000)
     temperature: float = Field(default=0.2, ge=0, le=2)
+
+
+class RunCreate(BaseModel):
+    user_request: str
+    source: str = "jarvis-core-api"
+    request_context: dict = Field(default_factory=dict)
+    priority: int = Field(default=3, ge=1, le=5)
+    risk_level: str = "L0"
+    model_profile: str | None = None
+
+
+class JobCreate(BaseModel):
+    job_type: str = "capability"
+    capability: str
+    worker_selector: dict = Field(default_factory=dict)
+    priority: int = Field(default=3, ge=1, le=5)
+    max_attempts: int = Field(default=1, ge=1, le=10)
+    timeout_seconds: int = Field(default=300, ge=1, le=86400)
+    approval_required: bool = False
+    input: dict = Field(default_factory=dict)
+    idempotency_key: str | None = None
+    parent_job_id: str | None = None
+    dependencies: list[dict] = Field(default_factory=list)
+
+
+class JobResult(BaseModel):
+    output: dict = Field(default_factory=dict)
+    error: dict = Field(default_factory=dict)
+    safe_summary: str | None = None
+
+
+class WorkerCapability(BaseModel):
+    name: str
+    version: str = "1"
+    risk_ceiling: str = "L1"
+    metadata: dict = Field(default_factory=dict)
+
+
+class WorkerRegister(BaseModel):
+    worker_id: str
+    display_name: str
+    worker_type: str = "desktop"
+    hostname: str | None = None
+    os: str | None = None
+    version: str = "unknown"
+    capabilities: list[WorkerCapability] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class WorkerHeartbeat(BaseModel):
+    status: str = Field(default="online", pattern="^(online|degraded|offline)$")
+    capabilities: list[WorkerCapability] | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class WorkerClaimRequest(BaseModel):
+    capabilities: list[str] | None = None
+    max_jobs: int = Field(default=1, ge=1, le=5)
+
+
+class DownloadsScanRequest(BaseModel):
+    worker_id: str | None = None
+    max_items: int = Field(default=1000, ge=1, le=1000)
+    recursive: bool = False
+    idempotency_key: str | None = None
+
+
+class DownloadsCleanupProposalRequest(BaseModel):
+    scan_run_id: str | None = None
+    worker_id: str | None = None
+    categories: list[str] = Field(default_factory=lambda: ["Documents", "Images", "Videos", "Audio", "Archives", "Installers", "Code", "Data"])
+    include_quarantine: bool = True
+    auto_approve_low_risk: bool = True
+    max_files: int = Field(default=200, ge=1, le=200)
+    idempotency_key: str | None = None
+
+
+class DownloadsDestinationPlanRequest(BaseModel):
+    scan_run_id: str | None = None
+    max_items: int = Field(default=200, ge=1, le=500)
 
 
 class DriveInventoryRequest(BaseModel):
@@ -340,6 +448,468 @@ def health():
 def readiness(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
     return {"ok": True, "database": "ready"}
+
+
+@app.post("/api/v1/runs")
+def create_run(payload: RunCreate, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    run = OrchestrationRunRecord(
+        id=new_id("run"),
+        status="created",
+        source=payload.source,
+        user_request=payload.user_request,
+        request_context=redact(payload.request_context),
+        requested_by=actor,
+        priority=payload.priority,
+        risk_level=payload.risk_level,
+        model_profile=payload.model_profile,
+    )
+    db.add(run)
+    db.flush()
+    orchestration_event(db, "run.created", run_id=run.id, payload={"source": run.source, "priority": run.priority})
+    db.commit()
+    return run_response(run)
+
+
+@app.get("/api/v1/runs")
+def list_runs(status: str | None = None, limit: int = 50, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    query = db.query(OrchestrationRunRecord).order_by(OrchestrationRunRecord.created_at.desc())
+    if status:
+        query = query.filter(OrchestrationRunRecord.status == status)
+    return {"runs": [run_response(item) for item in query.limit(max(1, min(limit, 100))).all()]}
+
+
+@app.get("/api/v1/runs/{run_id}")
+def get_run(run_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    run = db.get(OrchestrationRunRecord, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found"})
+    return run_response(run)
+
+
+@app.post("/api/v1/runs/{run_id}/jobs")
+def create_job(run_id: str, payload: JobCreate, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    run = db.get(OrchestrationRunRecord, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found"})
+    if payload.idempotency_key:
+        existing = db.query(OrchestrationJobRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return job_response(existing)
+    status = "waiting_approval" if payload.approval_required else "queued"
+    job = OrchestrationJobRecord(
+        id=new_id("job"),
+        run_id=run.id,
+        parent_job_id=payload.parent_job_id,
+        job_type=payload.job_type,
+        capability=payload.capability,
+        worker_selector=payload.worker_selector,
+        status=status,
+        priority=payload.priority,
+        max_attempts=payload.max_attempts,
+        timeout_seconds=payload.timeout_seconds,
+        approval_required=payload.approval_required,
+        approval_state="pending" if payload.approval_required else "not_required",
+        input=redact(payload.input),
+        output={},
+        error={},
+        idempotency_key=payload.idempotency_key,
+    )
+    db.add(job)
+    db.flush()
+    for dep in payload.dependencies:
+        depends_on = dep.get("depends_on_job_id") or dep.get("job_id")
+        if depends_on:
+            db.add(JobDependencyRecord(job_id=job.id, depends_on_job_id=depends_on, dependency_type=dep.get("dependency_type") or "success_required"))
+    transition_run(db, run, "queued")
+    orchestration_event(db, "job.created", run_id=run.id, job_id=job.id, payload={"capability": job.capability, "status": job.status})
+    db.commit()
+    return job_response(job)
+
+
+@app.get("/api/v1/runs/{run_id}/jobs")
+def list_run_jobs(run_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    jobs = db.query(OrchestrationJobRecord).filter_by(run_id=run_id).order_by(OrchestrationJobRecord.created_at.asc()).all()
+    return {"jobs": [job_response(item) for item in jobs]}
+
+
+@app.get("/api/v1/runs/{run_id}/events")
+def list_run_events(run_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    events = db.query(OrchestrationEventRecord).filter_by(run_id=run_id).order_by(OrchestrationEventRecord.created_at.asc()).all()
+    return {"events": [orchestration_event_response(item) for item in events]}
+
+
+@app.post("/api/v1/runs/{run_id}/cancel")
+def cancel_run(run_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    run = db.get(OrchestrationRunRecord, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail={"error": "run_not_found"})
+    transition_run(db, run, "cancelled")
+    for job in db.query(OrchestrationJobRecord).filter_by(run_id=run_id).all():
+        if job.status not in {"completed", "failed", "cancelled"}:
+            transition_job(db, job, "cancelled")
+    orchestration_event(db, "run.cancelled", run_id=run.id, payload={"actor": actor})
+    db.commit()
+    return run_response(run)
+
+
+@app.get("/api/v1/jobs/{job_id}")
+def get_job(job_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    job = db.get(OrchestrationJobRecord, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found"})
+    return job_response(job)
+
+
+@app.post("/api/v1/jobs/{job_id}/retry")
+def retry_job(job_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    job = db.get(OrchestrationJobRecord, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found"})
+    if job.attempt >= job.max_attempts:
+        raise HTTPException(status_code=409, detail={"error": "max_attempts_reached"})
+    transition_job(db, job, "queued")
+    job.worker_id = None
+    job.error = {}
+    orchestration_event(db, "job.retrying", run_id=job.run_id, job_id=job.id, payload={"attempt": job.attempt})
+    db.commit()
+    return job_response(job)
+
+
+@app.get("/api/v1/actions/pending")
+def list_pending_actions(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    approvals = db.query(ApprovalRequestRecord).filter_by(status="pending").order_by(ApprovalRequestRecord.created_at.desc()).all()
+    return {"actions": [pending_action_response(db, item) for item in approvals]}
+
+
+@app.post("/api/v1/workers/register")
+def register_worker(payload: WorkerRegister, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    worker = db.get(WorkerRecord, payload.worker_id)
+    if not worker:
+        worker = WorkerRecord(id=payload.worker_id, display_name=payload.display_name, worker_type=payload.worker_type)
+    worker.display_name = payload.display_name
+    worker.worker_type = payload.worker_type
+    worker.hostname = payload.hostname
+    worker.os = payload.os
+    worker.version = payload.version
+    worker.status = "online"
+    worker.last_heartbeat_at = now_utc()
+    worker.capabilities = [item.model_dump() for item in payload.capabilities]
+    worker.worker_metadata = redact(payload.metadata)
+    db.add(worker)
+    db.flush()
+    replace_worker_capabilities(db, worker.id, payload.capabilities)
+    orchestration_event(db, "worker.online", worker_id=worker.id, payload={"worker_type": worker.worker_type, "capabilities": [item.name for item in payload.capabilities]})
+    db.commit()
+    return worker_response(worker, db)
+
+
+@app.get("/api/v1/workers")
+def list_workers(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    mark_stale_workers(db)
+    workers = db.query(WorkerRecord).order_by(WorkerRecord.last_heartbeat_at.desc()).all()
+    return {"workers": [worker_response(item, db) for item in workers]}
+
+
+@app.get("/api/v1/workers/{worker_id}")
+def get_worker(worker_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    mark_stale_workers(db)
+    worker = db.get(WorkerRecord, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail={"error": "worker_not_found"})
+    return worker_response(worker, db)
+
+
+@app.post("/api/v1/workers/{worker_id}/heartbeat")
+def worker_heartbeat(worker_id: str, payload: WorkerHeartbeat, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    worker = db.get(WorkerRecord, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail={"error": "worker_not_found"})
+    worker.status = payload.status
+    worker.last_heartbeat_at = now_utc()
+    if payload.metadata:
+        worker.worker_metadata = {**(worker.worker_metadata or {}), **redact(payload.metadata)}
+    if payload.capabilities is not None:
+        worker.capabilities = [item.model_dump() for item in payload.capabilities]
+        replace_worker_capabilities(db, worker.id, payload.capabilities)
+    orchestration_event(db, "worker.heartbeat", worker_id=worker.id, payload={"status": worker.status})
+    db.commit()
+    return worker_response(worker, db)
+
+
+@app.post("/api/v1/workers/{worker_id}/claim")
+def claim_worker_jobs(worker_id: str, payload: WorkerClaimRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    worker = db.get(WorkerRecord, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail={"error": "worker_not_found"})
+    capabilities = set(payload.capabilities or [cap.capability for cap in db.query(WorkerCapabilityRecord).filter_by(worker_id=worker.id).all()])
+    if not capabilities:
+        return {"jobs": []}
+    candidates = (
+        db.query(OrchestrationJobRecord)
+        .filter(OrchestrationJobRecord.status == "queued", OrchestrationJobRecord.capability.in_(capabilities))
+        .order_by(OrchestrationJobRecord.priority.asc(), OrchestrationJobRecord.created_at.asc())
+        .limit(payload.max_jobs * 10)
+        .all()
+    )
+    jobs = []
+    for job in candidates:
+        selector_worker = (job.worker_selector or {}).get("worker_id")
+        if selector_worker and selector_worker != worker.id:
+            continue
+        jobs.append(job)
+        if len(jobs) >= payload.max_jobs:
+            break
+    for job in jobs:
+        transition_job(db, job, "claimed")
+        job.worker_id = worker.id
+        job.attempt += 1
+        orchestration_event(db, "job.claimed", run_id=job.run_id, job_id=job.id, worker_id=worker.id, payload={"capability": job.capability})
+    db.commit()
+    return {"jobs": [job_response(item) for item in jobs]}
+
+
+@app.post("/api/v1/workers/{worker_id}/jobs/{job_id}/start")
+def start_worker_job(worker_id: str, job_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    job = db.get(OrchestrationJobRecord, job_id)
+    if not job or job.worker_id != worker_id:
+        raise HTTPException(status_code=404, detail={"error": "claimed_job_not_found"})
+    transition_job(db, job, "running")
+    job.started_at = now_utc()
+    orchestration_event(db, "job.started", run_id=job.run_id, job_id=job.id, worker_id=worker_id, payload={"capability": job.capability})
+    db.commit()
+    return job_response(job)
+
+
+@app.post("/api/v1/workers/{worker_id}/jobs/{job_id}/complete")
+def complete_worker_job(worker_id: str, job_id: str, payload: JobResult, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    job = worker_job_or_404(db, worker_id, job_id)
+    transition_job(db, job, "completed")
+    job.output = redact(payload.output)
+    job.finished_at = now_utc()
+    db.flush()
+    run = db.get(OrchestrationRunRecord, job.run_id)
+    if run and not db.query(OrchestrationJobRecord).filter(OrchestrationJobRecord.run_id == run.id, OrchestrationJobRecord.status.notin_(["completed", "cancelled"])).first():
+        run.result_summary = payload.safe_summary or run.result_summary
+        transition_run(db, run, "completed")
+    complete_linked_desktop_action(db, job, payload, actor)
+    orchestration_event(db, "job.completed", run_id=job.run_id, job_id=job.id, worker_id=worker_id, payload={"summary": payload.safe_summary})
+    db.commit()
+    return job_response(job)
+
+
+@app.post("/api/v1/workers/{worker_id}/jobs/{job_id}/fail")
+def fail_worker_job(worker_id: str, job_id: str, payload: JobResult, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    job = worker_job_or_404(db, worker_id, job_id)
+    transition_job(db, job, "failed")
+    job.error = redact(payload.error)
+    job.finished_at = now_utc()
+    fail_linked_desktop_action(db, job, payload, actor)
+    orchestration_event(db, "job.failed", run_id=job.run_id, job_id=job.id, worker_id=worker_id, payload={"summary": payload.safe_summary, "error": job.error})
+    db.commit()
+    return job_response(job)
+
+
+@app.post("/api/v1/desktop/downloads/scan")
+def create_downloads_scan(payload: DownloadsScanRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    mark_stale_workers(db)
+    worker = select_worker_for_capability(db, "desktop.files.list", payload.worker_id)
+    if not worker:
+        raise HTTPException(status_code=409, detail={"error": "desktop_worker_unavailable", "capability": "desktop.files.list"})
+    if payload.idempotency_key:
+        existing = db.query(OrchestrationJobRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            run = db.get(OrchestrationRunRecord, existing.run_id)
+            return {"run": run_response(run), "job": job_response(existing), "scan": downloads_scan_response(run, existing) if run else None}
+    run = OrchestrationRunRecord(
+        id=new_id("run"),
+        status="created",
+        source="downloads-janitor",
+        user_request="Scan Downloads folder for a read-only organization preview.",
+        request_context={"capability": "desktop.files.list", "worker_id": worker.id, "mode": "metadata_only"},
+        requested_by=actor,
+        priority=3,
+        risk_level="L0",
+        model_profile=None,
+    )
+    db.add(run)
+    db.flush()
+    orchestration_event(db, "run.created", run_id=run.id, payload={"source": run.source, "worker_id": worker.id})
+    job = OrchestrationJobRecord(
+        id=new_id("job"),
+        run_id=run.id,
+        parent_job_id=None,
+        job_type="desktop_scan",
+        capability="desktop.files.list",
+        worker_selector={"worker_id": worker.id, "capability": "desktop.files.list"},
+        status="queued",
+        priority=3,
+        max_attempts=1,
+        timeout_seconds=120,
+        approval_required=False,
+        approval_state="not_required",
+        input={"recursive": payload.recursive, "max_items": payload.max_items},
+        output={},
+        error={},
+        idempotency_key=payload.idempotency_key,
+    )
+    db.add(job)
+    db.flush()
+    transition_run(db, run, "queued")
+    orchestration_event(db, "job.created", run_id=run.id, job_id=job.id, worker_id=worker.id, payload={"capability": job.capability, "mode": "downloads_preview"})
+    db.commit()
+    return {"run": run_response(run), "job": job_response(job), "worker": worker_response(worker, db)}
+
+
+@app.get("/api/v1/desktop/downloads/scans")
+def list_downloads_scans(limit: int = 10, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    runs = (
+        db.query(OrchestrationRunRecord)
+        .filter_by(source="downloads-janitor")
+        .order_by(OrchestrationRunRecord.created_at.desc())
+        .limit(max(1, min(limit, 20)))
+        .all()
+    )
+    scans = []
+    for run in runs:
+        job = (
+            db.query(OrchestrationJobRecord)
+            .filter_by(run_id=run.id, capability="desktop.files.list")
+            .order_by(OrchestrationJobRecord.created_at.desc())
+            .first()
+        )
+        scans.append(downloads_scan_response(run, job))
+    return {"scans": scans}
+
+
+@app.post("/api/v1/desktop/downloads/propose-cleanup")
+def propose_downloads_cleanup(payload: DownloadsCleanupProposalRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    scan_run, scan_job = latest_downloads_scan_job(db, payload.scan_run_id)
+    if not scan_job or scan_job.status != "completed":
+        raise HTTPException(status_code=409, detail={"error": "completed_downloads_scan_required"})
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+
+    root = (scan_job.output or {}).get("root")
+    if not root:
+        raise HTTPException(status_code=409, detail={"error": "scan_root_missing"})
+    move_items, quarantine_items = build_downloads_cleanup_batches(scan_job.output or {}, payload.categories, payload.max_files)
+    if not move_items and not quarantine_items:
+        raise HTTPException(status_code=409, detail={"error": "nothing_to_propose"})
+
+    request = RequestRecord(
+        id=new_id("req"),
+        user_id=actor,
+        source="downloads-janitor",
+        raw_text="Organize Downloads folder from a completed scan.",
+        status="received",
+        idempotency_key=payload.idempotency_key,
+        correlation_id=new_id("corr"),
+    )
+    db.add(request)
+    db.flush()
+    audit(db, "request.received", actor, request.correlation_id, request.id, {"source": "downloads-janitor", "scan_run_id": scan_run.id})
+
+    actions = []
+    if move_items:
+        action = ProposedActionRecord(
+            id=new_id("act"),
+            request_id=request.id,
+            tool_name="desktop.downloads.organize",
+            tool_version="1.0",
+            risk_level=RiskLevel.LOW_RISK_WRITE.value,
+            status=ActionStatus.APPROVED.value if payload.auto_approve_low_risk else ActionStatus.AWAITING_APPROVAL.value,
+            arguments={"root": root, "moves": move_items, "worker_id": payload.worker_id, "scan_run_id": scan_run.id},
+            preview={
+                "summary": f"Move {len(move_items)} Downloads file(s) into category folders.",
+                "changes": summarize_downloads_moves(move_items),
+                "assumptions": ["Only files under the worker's allowed Downloads root will be moved.", "Existing destination names are not overwritten."],
+                "reversible": True,
+            },
+            requires_approval=not payload.auto_approve_low_risk,
+        )
+        db.add(action)
+        db.flush()
+        audit_for_action(db, "action.proposed", action, actor, {"tool": action.tool_name, "risk_level": action.risk_level, "auto_approved": payload.auto_approve_low_risk})
+        if action.requires_approval:
+            db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Move Downloads files into category folders."))
+            audit_for_action(db, "approval.requested", action, actor, {"reason": "low_risk_write_manual_review"})
+        else:
+            execute_action(db, action, actor)
+        actions.append(action)
+
+    if payload.include_quarantine and quarantine_items:
+        action = ProposedActionRecord(
+            id=new_id("act"),
+            request_id=request.id,
+            tool_name="desktop.downloads.quarantine",
+            tool_version="1.0",
+            risk_level=RiskLevel.EXTERNAL_WRITE.value,
+            status=ActionStatus.AWAITING_APPROVAL.value,
+            arguments={"root": root, "moves": quarantine_items, "worker_id": payload.worker_id, "scan_run_id": scan_run.id},
+            preview={
+                "summary": f"Quarantine {len(quarantine_items)} temporary or partial Downloads file(s).",
+                "changes": summarize_downloads_moves(quarantine_items),
+                "assumptions": ["Quarantine moves files to a _Jarvis Quarantine folder under Downloads.", "No files are deleted."],
+                "reversible": True,
+            },
+            requires_approval=True,
+        )
+        db.add(action)
+        db.flush()
+        db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Quarantine should be explicitly approved."))
+        audit_for_action(db, "action.proposed", action, actor, {"tool": action.tool_name, "risk_level": action.risk_level})
+        audit_for_action(db, "approval.requested", action, actor, {"reason": "quarantine_requires_approval"})
+        actions.append(action)
+
+    request.status = "queued" if any(item.status == "queued_for_worker" for item in actions) else "awaiting_approval"
+    if all(item.status == ActionStatus.COMPLETED.value for item in actions):
+        request.status = "completed"
+    db.commit()
+    return request_response(db, request)
+
+
+@app.post("/api/v1/desktop/downloads/destination-plan")
+def downloads_destination_plan(payload: DownloadsDestinationPlanRequest, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    scan_run, scan_job = latest_downloads_scan_job(db, payload.scan_run_id)
+    if not scan_job or scan_job.status != "completed":
+        raise HTTPException(status_code=409, detail={"error": "completed_downloads_scan_required"})
+    services = drive_destination_services()
+    items = []
+    by_destination: dict[str, int] = {}
+    by_tag: dict[str, int] = {}
+    by_action: dict[str, int] = {}
+    for raw in (scan_job.output or {}).get("items") or []:
+        if len(items) >= payload.max_items:
+            break
+        if raw.get("kind") == "directory":
+            continue
+        planned = downloads_destination_for(raw, services)
+        items.append(planned)
+        by_destination[planned["destination"]] = by_destination.get(planned["destination"], 0) + 1
+        by_action[planned["action"]] = by_action.get(planned["action"], 0) + 1
+        for tag in planned.get("tags") or []:
+            by_tag[tag] = by_tag.get(tag, 0) + 1
+    return {
+        "ok": True,
+        "mode": "read_only_downloads_destination_planning",
+        "scan_run_id": scan_run.id,
+        "root": (scan_job.output or {}).get("root"),
+        "summary": f"{len(items)} Downloads file(s) planned for long-term destinations.",
+        "services": services,
+        "by_destination": by_destination,
+        "by_action": by_action,
+        "by_tag": by_tag,
+        "items": items,
+        "pathway": [
+            "Review destination suggestions.",
+            "Quarantine temporary or partial downloads after approval.",
+            "Send official PDFs/docs to Paperless with suggested tags after approval.",
+            "Move general files to Nextcloud after approval.",
+            "Keep ambiguous items in Needs Review; do not delete automatically.",
+        ],
+    }
 
 
 @app.get("/metrics")
@@ -1907,6 +2477,27 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
             notify_many(db, actor, ("homepage", "telegram", "voice"), "Gmail cleanup failed", str(exc)[:500], "warning", {"action_id": action.id})
             audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "gmail", "error": str(exc)[:240]})
             return
+    if action.tool_name in {"desktop.downloads.organize", "desktop.downloads.quarantine"}:
+        try:
+            payload = queue_desktop_downloads_action(db, action, attempt, actor)
+            attempt.status = "queued"
+            attempt.safe_summary = payload.get("summary")
+            action.status = "queued_for_worker"
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "queued"
+            audit_for_action(db, "execution.queued", action, actor, {"execution_id": attempt.id, "job_id": payload.get("job_id"), "capability": payload.get("capability")})
+            return
+        except Exception as exc:
+            attempt.status = "failed"
+            attempt.error_category = "desktop_downloads_queue_failed"
+            attempt.safe_summary = f"Downloads cleanup queue failed: {str(exc)[:240]}"
+            attempt.completed_at = now_utc()
+            action.status = ActionStatus.FAILED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "failed"
+            notify_many(db, actor, ("homepage", "voice"), "Downloads cleanup failed", str(exc)[:500], "warning", {"action_id": action.id})
+            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "desktop-worker", "error": str(exc)[:240]})
+            return
     if action.tool_name in {"calendar.schedule_google_event", "calendar.schedule_simulated_event"}:
         if action.tool_name == "calendar.schedule_google_event":
             try:
@@ -1972,6 +2563,118 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
     attempt.error_category = "unsupported_tool"
     attempt.completed_at = now_utc()
     action.status = ActionStatus.FAILED.value
+
+
+def queue_desktop_downloads_action(db: Session, action: ProposedActionRecord, attempt: ExecutionAttemptRecord, actor: str):
+    capability = "desktop.files.quarantine" if action.tool_name == "desktop.downloads.quarantine" else "desktop.files.move"
+    mark_stale_workers(db)
+    worker = select_worker_for_capability(db, capability, action.arguments.get("worker_id"))
+    if not worker:
+        raise RuntimeError(f"desktop_worker_unavailable:{capability}")
+    run = OrchestrationRunRecord(
+        id=new_id("run"),
+        status="created",
+        source="downloads-janitor",
+        user_request=(action.preview or {}).get("summary") or "Run Downloads cleanup.",
+        request_context={"action_id": action.id, "execution_attempt_id": attempt.id, "capability": capability},
+        requested_by=actor,
+        priority=2,
+        risk_level=action.risk_level,
+        model_profile=None,
+    )
+    db.add(run)
+    db.flush()
+    job = OrchestrationJobRecord(
+        id=new_id("job"),
+        run_id=run.id,
+        parent_job_id=None,
+        job_type="desktop_file_write",
+        capability=capability,
+        worker_selector={"worker_id": worker.id, "capability": capability},
+        status="queued",
+        priority=2,
+        max_attempts=1,
+        timeout_seconds=300,
+        approval_required=action.requires_approval,
+        approval_state="approved" if action.status in {ActionStatus.APPROVED.value, "queued_for_worker"} else "not_required",
+        input={
+            "action_id": action.id,
+            "execution_attempt_id": attempt.id,
+            "moves": action.arguments.get("moves") or [],
+            "max_moves": min(len(action.arguments.get("moves") or []), 200),
+        },
+        output={},
+        error={},
+        idempotency_key=f"desktop-cleanup-{action.id}",
+    )
+    db.add(job)
+    transition_run(db, run, "queued")
+    orchestration_event(db, "run.created", run_id=run.id, payload={"source": run.source, "action_id": action.id, "worker_id": worker.id})
+    orchestration_event(db, "job.created", run_id=run.id, job_id=job.id, worker_id=worker.id, payload={"capability": capability, "action_id": action.id})
+    return {"status": "queued", "job_id": job.id, "run_id": run.id, "capability": capability, "summary": f"Queued {len(job.input.get('moves') or [])} file move(s) for {worker.id}."}
+
+
+def complete_linked_desktop_action(db: Session, job: OrchestrationJobRecord, payload: JobResult, actor: str):
+    action_id = (job.input or {}).get("action_id")
+    attempt_id = (job.input or {}).get("execution_attempt_id")
+    if not action_id:
+        return
+    action = db.get(ProposedActionRecord, action_id)
+    if not action:
+        return
+    attempt = db.get(ExecutionAttemptRecord, attempt_id) if attempt_id else None
+    if not attempt:
+        attempt = ExecutionAttemptRecord(id=new_id("exec"), proposed_action_id=action.id, status="running", retry_count=0)
+        db.add(attempt)
+        db.flush()
+    output = payload.output or {}
+    moved = output.get("moved") or []
+    verified_count = sum(1 for item in moved if item.get("verified"))
+    attempt.status = "completed" if output.get("ok") and verified_count == len(moved) else "failed"
+    attempt.safe_summary = payload.safe_summary or output.get("summary") or f"Moved {verified_count} file(s)."
+    attempt.completed_at = now_utc()
+    result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success" if attempt.status == "completed" else "partial", payload={"desktop_downloads": output, "job_id": job.id})
+    db.add(result)
+    db.flush()
+    verification = VerificationResultRecord(
+        id=new_id("verify"),
+        execution_result_id=result.id,
+        status="verified" if attempt.status == "completed" else "partial",
+        payload={"checked": "desktop_worker_move_result", "moved_count": len(moved), "verified_count": verified_count, "job_id": job.id},
+    )
+    db.add(verification)
+    db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "desktop-worker"}))
+    action.status = ActionStatus.COMPLETED.value if attempt.status == "completed" else ActionStatus.FAILED.value
+    request = db.get(RequestRecord, action.request_id)
+    if request:
+        request.status = action.status
+    notify_many(db, actor, ("homepage", "voice"), "Downloads cleanup completed" if attempt.status == "completed" else "Downloads cleanup incomplete", attempt.safe_summary or "", "info" if attempt.status == "completed" else "warning", {"action_id": action.id, "job_id": job.id, "moved_count": len(moved)})
+    audit_for_action(db, "execution.completed" if attempt.status == "completed" else "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "desktop-worker", "job_id": job.id, "verified_count": verified_count})
+    audit_for_action(db, "verification.completed", action, actor, {"verification_id": verification.id, "provider": "desktop-worker"})
+
+
+def fail_linked_desktop_action(db: Session, job: OrchestrationJobRecord, payload: JobResult, actor: str):
+    action_id = (job.input or {}).get("action_id")
+    attempt_id = (job.input or {}).get("execution_attempt_id")
+    if not action_id:
+        return
+    action = db.get(ProposedActionRecord, action_id)
+    if not action:
+        return
+    attempt = db.get(ExecutionAttemptRecord, attempt_id) if attempt_id else None
+    if not attempt:
+        attempt = ExecutionAttemptRecord(id=new_id("exec"), proposed_action_id=action.id, status="running", retry_count=0)
+        db.add(attempt)
+    attempt.status = "failed"
+    attempt.error_category = "desktop_worker_job_failed"
+    attempt.safe_summary = payload.safe_summary or "Desktop worker job failed."
+    attempt.completed_at = now_utc()
+    action.status = ActionStatus.FAILED.value
+    request = db.get(RequestRecord, action.request_id)
+    if request:
+        request.status = "failed"
+    notify_many(db, actor, ("homepage", "voice"), "Downloads cleanup failed", attempt.safe_summary or "", "warning", {"action_id": action.id, "job_id": job.id})
+    audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "desktop-worker", "job_id": job.id, "error": payload.error})
 
 
 def execute_google_calendar_action(action: ProposedActionRecord):
@@ -2122,16 +2825,34 @@ def run_safe_gmail_inbox_organizer():
             )
         )
 
-    newsletter_ids = [item.get("id") for item in (summary.get("likely_newsletters") or [])[:25] if item.get("id")]
-    if newsletter_ids:
+    promo_ids = [item.get("id") for item in (summary.get("promotions") or summary.get("likely_newsletters") or [])[:25] if item.get("id")]
+    if promo_ids:
         results.append(
             call_google_tools(
                 "/gmail/execute-contract",
                 {
                     "contract": {
                         "operation": "label_messages",
-                        "message_ids": newsletter_ids,
-                        "label_names": ["Jarvis/Newsletters"],
+                        "message_ids": promo_ids,
+                        "label_names": ["Jarvis/Promotions", "Jarvis/Newsletters"],
+                        "remove_label_ids": ["INBOX"],
+                    },
+                    "approved": True,
+                },
+                timeout=240,
+            )
+        )
+
+    low_value_update_ids = [item.get("id") for item in (summary.get("low_value_updates") or [])[:25] if item.get("id")]
+    if low_value_update_ids:
+        results.append(
+            call_google_tools(
+                "/gmail/execute-contract",
+                {
+                    "contract": {
+                        "operation": "label_messages",
+                        "message_ids": low_value_update_ids,
+                        "label_names": ["Jarvis/Low Value Updates"],
                         "remove_label_ids": ["INBOX"],
                     },
                     "approved": True,
@@ -2173,12 +2894,13 @@ def run_safe_gmail_inbox_organizer():
         "mode": "safe_no_spam_no_trash",
         "counts": {
             "classified_batches": len(classification_batches),
-            "archived_newsletters": len(newsletter_ids),
+            "archived_promotions": len(promo_ids),
+            "archived_low_value_updates": len(low_value_update_ids),
             "starred_reply_or_interview": len(star_ids),
             **(summary.get("counts") or {}),
         },
         "results": results,
-        "text": f"Gmail organized safely: {len(classification_batches)} label batch(es), {len(newsletter_ids)} newsletter(s) archived, {len(star_ids)} reply/interview item(s) starred. Nothing was moved to spam, junk, or trash.",
+        "text": f"Gmail organized safely: {len(classification_batches)} label batch(es), {len(promo_ids)} promotion(s) archived, {len(low_value_update_ids)} low-value update(s) archived, {len(star_ids)} reply/interview item(s) starred. Nothing was moved to spam, junk, or trash.",
     }
 
 
@@ -2340,6 +3062,484 @@ def notification_response(record: NotificationRecord):
         "payload": record.payload,
         "created_at": record.created_at,
     }
+
+
+def transition_run(db: Session, run: OrchestrationRunRecord, next_status: str):
+    if run.status == next_status:
+        return
+    allowed = RUN_STATUS_TRANSITIONS.get(run.status, set())
+    if next_status not in allowed:
+        raise HTTPException(status_code=409, detail={"error": "illegal_run_transition", "from": run.status, "to": next_status})
+    previous = run.status
+    run.status = next_status
+    run.updated_at = now_utc()
+    orchestration_event(db, f"run.{next_status}", run_id=run.id, payload={"from": previous, "to": next_status})
+
+
+def transition_job(db: Session, job: OrchestrationJobRecord, next_status: str):
+    if job.status == next_status:
+        return
+    allowed = JOB_STATUS_TRANSITIONS.get(job.status, set())
+    if next_status not in allowed:
+        raise HTTPException(status_code=409, detail={"error": "illegal_job_transition", "from": job.status, "to": next_status})
+    previous = job.status
+    job.status = next_status
+    job.updated_at = now_utc()
+    orchestration_event(db, f"job.{next_status}", run_id=job.run_id, job_id=job.id, worker_id=job.worker_id, payload={"from": previous, "to": next_status})
+
+
+def orchestration_event(db: Session, event_type: str, run_id: str | None = None, job_id: str | None = None, worker_id: str | None = None, payload: dict | None = None):
+    db.add(
+        OrchestrationEventRecord(
+            id=new_id("evt"),
+            run_id=run_id,
+            job_id=job_id,
+            worker_id=worker_id,
+            event_type=event_type,
+            payload=redact(payload or {}),
+        )
+    )
+
+
+def run_response(run: OrchestrationRunRecord):
+    return {
+        "id": run.id,
+        "status": run.status,
+        "source": run.source,
+        "user_request": run.user_request,
+        "request_context": run.request_context,
+        "requested_by": run.requested_by,
+        "priority": run.priority,
+        "risk_level": run.risk_level,
+        "model_profile": run.model_profile,
+        "result_summary": run.result_summary,
+        "error_code": run.error_code,
+        "error_message": run.error_message,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+    }
+
+
+def job_response(job: OrchestrationJobRecord):
+    return {
+        "id": job.id,
+        "run_id": job.run_id,
+        "parent_job_id": job.parent_job_id,
+        "job_type": job.job_type,
+        "capability": job.capability,
+        "worker_selector": job.worker_selector,
+        "worker_id": job.worker_id,
+        "status": job.status,
+        "priority": job.priority,
+        "attempt": job.attempt,
+        "max_attempts": job.max_attempts,
+        "timeout_seconds": job.timeout_seconds,
+        "approval_required": job.approval_required,
+        "approval_state": job.approval_state,
+        "input": job.input,
+        "output": job.output,
+        "error": job.error,
+        "idempotency_key": job.idempotency_key,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "updated_at": job.updated_at,
+    }
+
+
+def orchestration_event_response(event: OrchestrationEventRecord):
+    return {
+        "id": event.id,
+        "run_id": event.run_id,
+        "job_id": event.job_id,
+        "worker_id": event.worker_id,
+        "event_type": event.event_type,
+        "payload": event.payload,
+        "created_at": event.created_at,
+    }
+
+
+def pending_action_response(db: Session, approval: ApprovalRequestRecord):
+    action = db.get(ProposedActionRecord, approval.proposed_action_id)
+    preview = action.preview if action else {}
+    return {
+        "action_id": action.id if action else approval.proposed_action_id,
+        "approval_id": approval.id,
+        "run_id": None,
+        "summary": preview.get("summary") or action.tool_name if action else approval.reason,
+        "capability": action.tool_name if action else "unknown",
+        "operation": action.tool_name.rsplit(".", 1)[-1] if action else "unknown",
+        "risk_level": action.risk_level if action else "unknown",
+        "created_at": approval.created_at,
+        "expires_at": None,
+        "requested_payload_summary": preview,
+        "worker": preview.get("provider") if isinstance(preview, dict) else None,
+    }
+
+
+def replace_worker_capabilities(db: Session, worker_id: str, capabilities: list[WorkerCapability]):
+    db.query(WorkerCapabilityRecord).filter_by(worker_id=worker_id).delete()
+    for item in capabilities:
+        db.add(
+            WorkerCapabilityRecord(
+                worker_id=worker_id,
+                capability=item.name,
+                version=item.version,
+                risk_ceiling=item.risk_ceiling,
+                capability_metadata=redact(item.metadata),
+            )
+        )
+
+
+def worker_response(worker: WorkerRecord, db: Session):
+    capabilities = db.query(WorkerCapabilityRecord).filter_by(worker_id=worker.id).all()
+    return {
+        "id": worker.id,
+        "display_name": worker.display_name,
+        "worker_type": worker.worker_type,
+        "hostname": worker.hostname,
+        "os": worker.os,
+        "version": worker.version,
+        "status": worker.status,
+        "last_heartbeat_at": worker.last_heartbeat_at,
+        "capabilities": [
+            {
+                "name": item.capability,
+                "version": item.version,
+                "risk_ceiling": item.risk_ceiling,
+                "metadata": item.capability_metadata,
+            }
+            for item in capabilities
+        ],
+        "metadata": worker.worker_metadata,
+        "created_at": worker.created_at,
+    }
+
+
+def mark_stale_workers(db: Session):
+    cutoff = now_utc() - timedelta(minutes=2)
+    changed = False
+    for worker in db.query(WorkerRecord).filter(WorkerRecord.status != "offline").all():
+        heartbeat = worker.last_heartbeat_at
+        if heartbeat and heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        if heartbeat and heartbeat < cutoff:
+            worker.status = "offline"
+            orchestration_event(db, "worker.offline", worker_id=worker.id, payload={"last_heartbeat_at": heartbeat.isoformat()})
+            changed = True
+    if changed:
+        db.commit()
+
+
+def worker_job_or_404(db: Session, worker_id: str, job_id: str):
+    job = db.get(OrchestrationJobRecord, job_id)
+    if not job or job.worker_id != worker_id:
+        raise HTTPException(status_code=404, detail={"error": "claimed_job_not_found"})
+    return job
+
+
+def select_worker_for_capability(db: Session, capability: str, worker_id: str | None = None):
+    query = db.query(WorkerRecord).join(WorkerCapabilityRecord, WorkerCapabilityRecord.worker_id == WorkerRecord.id).filter(
+        WorkerCapabilityRecord.capability == capability,
+        WorkerRecord.status == "online",
+    )
+    if worker_id:
+        query = query.filter(WorkerRecord.id == worker_id)
+    return query.order_by(WorkerRecord.last_heartbeat_at.desc()).first()
+
+
+def downloads_scan_response(run: OrchestrationRunRecord, job: OrchestrationJobRecord | None):
+    preview = build_downloads_preview((job.output or {}) if job else {})
+    return {
+        "run": run_response(run),
+        "job": job_response(job) if job else None,
+        "status": job.status if job else run.status,
+        "preview": preview,
+    }
+
+
+def build_downloads_preview(output: dict):
+    items = output.get("items") or []
+    buckets = {
+        "Documents": [],
+        "Images": [],
+        "Videos": [],
+        "Audio": [],
+        "Archives": [],
+        "Installers": [],
+        "Code": [],
+        "Data": [],
+        "Unknown": [],
+        "Quarantine candidates": [],
+    }
+    seen = {}
+    duplicates = []
+    for item in items:
+        if item.get("kind") == "directory":
+            continue
+        category = downloads_file_category(item)
+        buckets.setdefault(category, []).append(downloads_preview_item(item))
+        if downloads_quarantine_candidate(item):
+            buckets["Quarantine candidates"].append(downloads_preview_item(item))
+        duplicate_key = (str(item.get("name") or "").casefold(), item.get("size"))
+        if duplicate_key[0] and duplicate_key[1]:
+            if duplicate_key in seen:
+                duplicates.append(downloads_preview_item(item))
+            else:
+                seen[duplicate_key] = item
+    summary = {name: len(values) for name, values in buckets.items() if values}
+    if duplicates:
+        summary["Duplicate candidates"] = len(duplicates)
+    return {
+        "mode": "read_only_metadata_preview",
+        "root": output.get("root"),
+        "total_items": output.get("count") or len(items),
+        "file_count": len([item for item in items if item.get("kind") != "directory"]),
+        "directory_count": len([item for item in items if item.get("kind") == "directory"]),
+        "by_category": summary,
+        "duplicates": duplicates[:20],
+        "sample": {name: values[:8] for name, values in buckets.items() if values},
+        "next_step": "Review the preview. Moving files will be a separate approval-gated action in a later phase.",
+    }
+
+
+def latest_downloads_scan_job(db: Session, scan_run_id: str | None):
+    query = db.query(OrchestrationRunRecord).filter_by(source="downloads-janitor")
+    if scan_run_id:
+        query = query.filter_by(id=scan_run_id)
+    run = query.order_by(OrchestrationRunRecord.created_at.desc()).first()
+    if not run:
+        raise HTTPException(status_code=404, detail={"error": "downloads_scan_not_found"})
+    job = (
+        db.query(OrchestrationJobRecord)
+        .filter_by(run_id=run.id, capability="desktop.files.list")
+        .order_by(OrchestrationJobRecord.created_at.desc())
+        .first()
+    )
+    return run, job
+
+
+def build_downloads_cleanup_batches(output: dict, categories: list[str], max_files: int):
+    root = str(output.get("root") or "").rstrip("\\/")
+    allowed_categories = {category for category in categories if category in downloads_auto_move_categories()}
+    moves = []
+    quarantine = []
+    seen_sources = set()
+    for item in output.get("items") or []:
+        if len(moves) + len(quarantine) >= max_files:
+            break
+        if item.get("kind") == "directory":
+            continue
+        source = item.get("path")
+        if not source or source in seen_sources:
+            continue
+        seen_sources.add(source)
+        if downloads_quarantine_candidate(item):
+            quarantine.append(downloads_move_item(item, downloads_join(root, "_Jarvis Quarantine"), "Quarantine"))
+            continue
+        category = downloads_file_category(item)
+        if category not in allowed_categories:
+            continue
+        if downloads_parent_name(source).casefold() == category.casefold():
+            continue
+        moves.append(downloads_move_item(item, downloads_join(root, category), category))
+    return moves, quarantine
+
+
+def downloads_auto_move_categories():
+    return {"Documents", "Images", "Videos", "Audio", "Archives", "Installers", "Code", "Data"}
+
+
+def downloads_move_item(item: dict, destination_dir: str, category: str):
+    return {
+        "source": item.get("path"),
+        "destination_dir": destination_dir,
+        "name": item.get("name"),
+        "category": category,
+        "size": item.get("size"),
+        "modified_at": item.get("modified_at"),
+    }
+
+
+def downloads_join(root: str, child: str):
+    separator = "\\" if ":" in root or "\\" in root else "/"
+    clean_root = root.rstrip("/\\")
+    return f"{clean_root}{separator}{child}"
+
+
+def downloads_parent_name(path: str):
+    clean = str(path or "").rstrip("\\/")
+    parts = [part for part in clean.replace("\\", "/").split("/") if part]
+    return parts[-2] if len(parts) >= 2 else ""
+
+
+def summarize_downloads_moves(moves: list[dict]):
+    counts = {}
+    for item in moves:
+        counts[item.get("category") or "Files"] = counts.get(item.get("category") or "Files", 0) + 1
+    return [f"{count} file(s) -> {category}" for category, count in sorted(counts.items())]
+
+
+def downloads_destination_for(item: dict, services: dict):
+    name = item.get("name") or ""
+    text_value = " ".join(str(item.get(key) or "").lower() for key in ("name", "mime_type", "extension"))
+    file_category = downloads_file_category(item)
+    life_category = drive_life_category_for({"name": name, "mime_type": item.get("mime_type") or ""})
+    kind = downloads_kind(item, file_category)
+    tags = downloads_suggested_tags(item, life_category, file_category)
+
+    if downloads_quarantine_candidate(item):
+        destination = "Quarantine"
+        service_key = "needs_review"
+        action = "quarantine_after_approval"
+        reason = "Temporary, partial, or system files should be isolated first and reviewed later; Jarvis should not delete them automatically."
+    elif downloads_paperless_candidate(item, text_value, file_category):
+        destination = "Paperless"
+        service_key = "paperless"
+        action = "send_to_paperless_after_approval"
+        reason = "Official documents and PDFs are most useful in Paperless because OCR, tags, correspondent/date metadata, and retrieval matter more than folder location."
+    elif file_category in {"Images", "Videos"}:
+        destination = "Nextcloud"
+        service_key = "nextcloud"
+        action = "move_to_nextcloud_after_approval"
+        reason = "Downloads media should first land in ordinary file storage; Immich import can be a later explicit choice for personal photo libraries."
+    elif file_category in {"Documents", "Archives", "Installers", "Code", "Data", "Audio"}:
+        destination = "Nextcloud"
+        service_key = "nextcloud"
+        action = "move_to_nextcloud_after_approval"
+        reason = "General long-term files belong in file storage, with Jarvis storing tags, category, and audit references."
+    else:
+        destination = "Needs Review"
+        service_key = "needs_review"
+        action = "needs_review"
+        reason = "The file type or name is ambiguous, so Jarvis should show it for a human decision before filing."
+
+    service = services.get(service_key) or services["needs_review"]
+    return {
+        "name": name,
+        "path": item.get("path"),
+        "size": item.get("size"),
+        "modified_at": item.get("modified_at"),
+        "extension": item.get("extension"),
+        "mime_type": item.get("mime_type"),
+        "kind": kind,
+        "file_category": file_category,
+        "life_category": life_category,
+        "life_category_label": drive_category_label(life_category),
+        "destination": destination,
+        "service": service_key,
+        "ready": service.get("ready"),
+        "action": action,
+        "tags": tags,
+        "suggested_folder": downloads_suggested_folder(destination, life_category, file_category),
+        "reason": reason,
+        "next_action": smart_destination_next_action({"destination": destination, "name": name}, service),
+    }
+
+
+def downloads_kind(item: dict, file_category: str):
+    ext = str(item.get("extension") or "").lower()
+    if ext == ".pdf":
+        return "pdf"
+    mapping = {
+        "Documents": "document",
+        "Images": "image",
+        "Videos": "video",
+        "Audio": "audio",
+        "Archives": "archive",
+        "Installers": "installer",
+        "Code": "code",
+        "Data": "data",
+    }
+    return mapping.get(file_category, "unknown")
+
+
+def downloads_paperless_candidate(item: dict, text_value: str, file_category: str):
+    ext = str(item.get("extension") or "").lower()
+    if ext == ".pdf":
+        return True
+    official_terms = ("receipt", "bill", "invoice", "tax", "insurance", "lease", "transcript", "statement", "contract", "form", "medical", "health", "bank", "paystub", "tuition", "financial aid")
+    return file_category == "Documents" and any(term in text_value for term in official_terms)
+
+
+def downloads_suggested_tags(item: dict, life_category: str, file_category: str):
+    text_value = " ".join(str(item.get(key) or "").lower() for key in ("name", "mime_type", "extension"))
+    tags = []
+    base = {
+        "professional_education": "education",
+        "professional_work": "work",
+        "research": "research",
+        "hobbies": "hobbies",
+        "personal_lifeadmin": "lifeadmin",
+    }.get(life_category)
+    if base:
+        tags.append(base)
+    keyword_tags = [
+        ("medical", ("medical", "health", "doctor", "clinic", "hospital", "immunization", "vaccine")),
+        ("finance", ("receipt", "invoice", "bill", "bank", "tax", "statement", "paystub", "tuition")),
+        ("interview", ("interview", "enmed", "admission", "application", "secondary")),
+        ("school", ("school", "course", "class", "mcat", "transcript", "aamc", "aacom")),
+        ("forms", ("form", "contract", "lease", "agreement")),
+        ("downloads", ("",)),
+    ]
+    for tag, keywords in keyword_tags:
+        if tag == "downloads" or any(keyword and keyword in text_value for keyword in keywords):
+            tags.append(tag)
+    if file_category == "Documents" and "documents" not in tags:
+        tags.append("documents")
+    return sorted(dict.fromkeys(tags))
+
+
+def downloads_suggested_folder(destination: str, life_category: str, file_category: str):
+    label = drive_category_label(life_category).replace(" / ", " ").replace(" ", "_")
+    if destination == "Paperless":
+        return f"Paperless tags: {', '.join([label.lower(), 'downloads'])}"
+    if destination == "Nextcloud":
+        return f"Jarvis/Downloads/{label}/{file_category}"
+    if destination == "Quarantine":
+        return "Downloads/_Jarvis Quarantine"
+    return "Downloads/_Needs Review"
+
+
+def downloads_preview_item(item: dict):
+    return {
+        "name": item.get("name"),
+        "path": item.get("path"),
+        "size": item.get("size"),
+        "modified_at": item.get("modified_at"),
+        "extension": item.get("extension"),
+        "mime_type": item.get("mime_type"),
+    }
+
+
+def downloads_file_category(item: dict):
+    ext = str(item.get("extension") or "").lower()
+    mime = str(item.get("mime_type") or "").lower()
+    if ext in {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt"}:
+        return "Documents"
+    if mime.startswith("image/") or ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".svg", ".bmp", ".tiff"}:
+        return "Images"
+    if mime.startswith("video/") or ext in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+        return "Videos"
+    if mime.startswith("audio/") or ext in {".mp3", ".wav", ".flac", ".m4a", ".ogg"}:
+        return "Audio"
+    if ext in {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"}:
+        return "Archives"
+    if ext in {".exe", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".appx", ".iso"}:
+        return "Installers"
+    if ext in {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".scss", ".java", ".cs", ".cpp", ".c", ".h", ".rs", ".go", ".sh", ".ps1", ".bat"}:
+        return "Code"
+    if ext in {".csv", ".tsv", ".xlsx", ".xls", ".json", ".xml", ".yaml", ".yml", ".sqlite", ".db", ".parquet"}:
+        return "Data"
+    return "Unknown"
+
+
+def downloads_quarantine_candidate(item: dict):
+    name = str(item.get("name") or "").lower()
+    ext = str(item.get("extension") or "").lower()
+    if ext in {".tmp", ".temp", ".crdownload", ".part", ".download"}:
+        return True
+    return name.startswith("~$") or name in {"desktop.ini", "thumbs.db"}
 
 
 def collect_git_commits(limit: int = 20):
@@ -3026,6 +4226,8 @@ def destination_service_key(destination: str):
 def gmail_classification_batches(summary: dict, max_results: int):
     buckets: dict[str, set[str]] = {
         "Jarvis/Newsletters": set(),
+        "Jarvis/Promotions": set(),
+        "Jarvis/Low Value Updates": set(),
         "Jarvis/Needs Reply": set(),
         "Jarvis/Needs Review": set(),
         "Jarvis/Medical School": set(),
@@ -3045,6 +4247,11 @@ def gmail_classification_batches(summary: dict, max_results: int):
 
     for message in summary.get("likely_newsletters") or []:
         add("Jarvis/Newsletters", message)
+    for message in summary.get("promotions") or []:
+        add("Jarvis/Promotions", message)
+        add("Jarvis/Newsletters", message)
+    for message in summary.get("low_value_updates") or []:
+        add("Jarvis/Low Value Updates", message)
     for message in summary.get("needs_reply") or []:
         add("Jarvis/Needs Reply", message)
     for message in summary.get("old_unread") or []:
@@ -3065,7 +4272,7 @@ def gmail_classification_batches(summary: dict, max_results: int):
         ("Jarvis/Work", ("project", "meeting", "interview", "application", "deadline", "team", "work")),
     ]
     seen_messages = []
-    for key in ("needs_reply", "old_unread", "likely_newsletters", "medical_school", "admissions", "finance_receipts"):
+    for key in ("needs_reply", "old_unread", "likely_newsletters", "promotions", "low_value_updates", "medical_school", "admissions", "finance_receipts"):
         seen_messages.extend(summary.get(key) or [])
     for message in seen_messages:
         text_value = " ".join(str(message.get(key, "")) for key in ("from", "subject", "snippet")).lower()

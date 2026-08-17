@@ -2,6 +2,8 @@
 
 Use this file when asking an AI assistant for help. Paste relevant sections so the assistant gets accurate context immediately.
 
+For current implementation status, use `context/architecture-state.yaml` as the source of truth. Human-readable docs can drift; the YAML file should be updated whenever Jarvis service boundaries, worker state, or planned capability status changes.
+
 ## 1. Environment Snapshot
 
 - Host OS: Linux
@@ -25,6 +27,10 @@ Use this file when asking an AI assistant for help. Paste relevant sections so t
 4. Ollama must use NVIDIA deployment block for GPU access.
 5. Central Postgres + Redis live in Phase 1 and are reused by many services.
 6. `homelab_proxy` and `homelab_internal` Docker networks must exist.
+7. Jarvis Core is the durable approval and automation boundary. Do not create duplicate control planes.
+8. New Jarvis orchestration work should use the additive run/job/worker registry APIs while preserving existing request/action/approval compatibility.
+9. Desktop and browser workers must advertise narrow typed capabilities and should use pull/local-bridge patterns instead of broad server-initiated control.
+10. Ollama is optional; hosted API models such as Nemotron and Llama 70B may be the primary reasoning providers.
 
 ## 3. Common Commands
 

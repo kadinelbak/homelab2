@@ -5,6 +5,7 @@
 - Restored the local checkout from `https://github.com/kadinelbak/homelab2.git`.
 - Added Phase 3 `jarvis-core` as a durable FastAPI service while keeping `ai-orchestrator`, Jarvis Chat, Telegram, Google tools, Codex, Whisper, and TTS paths intact.
 - Added PostgreSQL-backed records for requests, intents, proposed actions, approvals, execution attempts/results, verification, audit events, outbox events, model invocations, notifications, calendar events, projects, and tasks.
+- Added the first P0 master-plan orchestration foundation: durable runs, jobs, job dependencies, artifacts, worker registry, worker capabilities, and orchestration event tables/APIs. Existing Jarvis request/action/approval APIs remain compatible and authoritative for approvals.
 - Added central risk levels, approval enforcement, idempotent request creation, health/readiness/metrics endpoints, tools registry, Personal Ops projects/tasks/capture, and deterministic daily brief.
 - Registered media and homelab tool boundaries for follow-on integrations.
 - Added `jarvis_core` database bootstrap to Phase 1 Postgres init.
@@ -56,7 +57,31 @@
   - Core owns a conservative in-process runner for daily briefs, Gmail inbox organization, homelab health, Pi-hole/DNS health, and Drive migration scan status.
   - Automation cards show last run, next run, last status, and safe output.
   - Manual "run now" is available from the automation detail drawer.
-  - Gmail inbox organization is automatic and safe-scoped: it applies Jarvis labels, stars likely reply/interview items, and archives newsletter/promotional mail by removing `INBOX`. It never applies spam/junk/trash labels.
+  - Gmail inbox organization is automatic and safe-scoped: it applies Jarvis labels, stars likely reply/interview items, archives promotional mail, and archives only filtered low-value Updates by removing `INBOX`. It never applies spam/junk/trash labels.
+- Durable orchestration and worker discovery APIs are in progress:
+  - Runs: `/api/v1/runs`, `/api/v1/runs/{id}`, `/api/v1/runs/{id}/jobs`, `/api/v1/runs/{id}/events`, `/api/v1/runs/{id}/cancel`.
+  - Jobs: `/api/v1/jobs/{id}`, `/api/v1/jobs/{id}/retry`.
+  - Workers: `/api/v1/workers/register`, `/api/v1/workers/{id}/heartbeat`, `/api/v1/workers/{id}/claim`, `/api/v1/workers/{id}/jobs/{job_id}/start|complete|fail`.
+  - Pending action alias: `/api/v1/actions/pending`.
+  - Jarvis Chat now surfaces durable runs and registered workers in the Core dashboard.
+- Jarvis Desktop worker v1 is implemented inside the existing `jarvis-voice-client` without replacing Hey Jarvis:
+  - Tray mode preserves wake word, push-to-talk, Whisper, TTS, tunnel, diagnostics, and logs.
+  - The same client can now register as a pull-based worker with Core through Jarvis Chat.
+  - Safe v1 capabilities: `desktop.notify`, `desktop.open_url`, `desktop.files.list`, `desktop.files.stat`, `desktop.files.hash`, `desktop.files.move`, and `desktop.files.quarantine`.
+  - File capabilities are restricted to allowlisted roots. Move/quarantine jobs only move files, avoid overwrites, and re-check source/destination paths in the worker.
+  - No desktop delete, screenshots, clipboard, script runner, or arbitrary shell capability exists in v1.
+  - Live validation from the Windows laptop registered `kadin-laptop`, advertised the safe v1 capabilities, claimed a `desktop.notify` job, completed it, and rolled the durable run to `completed`.
+- Downloads Janitor read-only preview is live:
+  - Core endpoint: `POST /api/v1/desktop/downloads/scan`.
+  - Preview endpoint: `GET /api/v1/desktop/downloads/scans`.
+  - Cleanup proposal endpoint: `POST /api/v1/desktop/downloads/propose-cleanup`.
+  - Destination planner endpoint: `POST /api/v1/desktop/downloads/destination-plan`.
+  - Jarvis Chat exposes a `DL` dashboard item and scan action.
+  - The scan queues a `desktop.files.list` job for `kadin-laptop`, reads file metadata only, and categorizes files into Documents, Images, Videos, Audio, Archives, Installers, Code, Data, Unknown, duplicate candidates, and quarantine candidates.
+  - Cleanup proposals turn a completed scan into reversible category moves. Low-risk category moves can auto-queue when enabled; quarantine candidates remain approval-gated and no files are deleted.
+  - Destination planning is read-only and maps files to Paperless, Nextcloud, Quarantine, or Needs Review with suggested tags such as education, medical, finance, lifeadmin, interview, school, forms, and downloads.
+  - Live validation scanned the Windows Downloads folder and returned 368 files across categories without moving, copying, deleting, or reading file contents.
+  - Runtime note: restart the Windows Jarvis tray worker after this update so it advertises `desktop.files.move` and `desktop.files.quarantine`.
 - Local `Hey Jarvis` compatibility is wired through Jarvis Chat:
   - The laptop voice client still only needs the existing Jarvis Chat tunnel on `127.0.0.1:18100`.
   - Jarvis Chat routes Phase 4 voice requests to Jarvis Core internally.

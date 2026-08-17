@@ -19,7 +19,7 @@ HOST = os.environ.get("AI_ORCHESTRATOR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AI_ORCHESTRATOR_PORT", "8095"))
 DATA_DIR = Path(os.environ.get("AI_ORCHESTRATOR_DATA_DIR", "/data"))
 STATE_PATH = DATA_DIR / "requests.json"
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://ollama:11434").rstrip("/")
+OLLAMA_URL = (os.environ.get("OLLAMA_HOST") or "http://ollama:11434").rstrip("/")
 OLLAMA_ROUTER_MODEL = os.environ.get("AI_ORCHESTRATOR_ROUTER_MODEL", os.environ.get("OLLAMA_MODEL", "llama3.1"))
 OLLAMA_ROUTER_ENABLED = os.environ.get("AI_ORCHESTRATOR_USE_OLLAMA_ROUTER", "true").lower() in {
     "1",

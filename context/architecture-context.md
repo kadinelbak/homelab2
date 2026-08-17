@@ -1,5 +1,7 @@
 # Architecture Context
 
+Machine-readable implementation state lives in `context/architecture-state.yaml`. Use that file as the status source of truth before making Jarvis architecture changes.
+
 ## Stack
 
 | Layer     | Technology                  | Role   |
@@ -62,3 +64,6 @@
 6. Resource usage is monitored to prevent exhaustion
 7. Configuration changes are version-controlled and reviewed
 8. Service dependencies are documented and maintained
+9. Jarvis Core owns durable approvals, audit, automations, and orchestration state; other interfaces bridge into it.
+10. Jarvis workers expose typed capabilities with deterministic authorization and approval policy. Do not add an unrestricted browser, shell, Docker, Gmail, or filesystem agent.
+11. Reversible actions and previews come before consequential actions. Mutating worker results must include verification evidence where practical.

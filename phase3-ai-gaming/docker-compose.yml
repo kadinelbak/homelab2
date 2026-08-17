@@ -323,6 +323,9 @@ services:
       - ./ai-orchestrator/state:/data
     ports:
       - "${TAILSCALE_HOST_IP:-127.0.0.1}:8095:8095"
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     networks:
       - homelab_internal
     depends_on:
@@ -378,6 +381,9 @@ services:
       JARVIS_LLM_TIMEOUT_SECONDS: ${JARVIS_LLM_TIMEOUT_SECONDS:-90}
     ports:
       - "${TAILSCALE_HOST_IP:-127.0.0.1}:${JARVIS_CORE_HOST_PORT:-18097}:8097"
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     networks:
       - homelab_internal
       - homelab_proxy
