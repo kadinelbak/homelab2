@@ -301,21 +301,20 @@ function renderCard(item) {
 function renderStory(story) {
   const vocab = (story.vocabulary || []).map((item) => `<span class="chip">${item.spanish} = ${item.english}</span>`).join("");
   const questions = (story.questions || []).map((q) => `<li>${q}</li>`).join("");
-  const source = story.source ? `<p class="muted">Source: ${story.source}${story.generation_error ? " (" + story.generation_error + ")" : ""}</p>` : "";
+  const source = story.generation_error ? `<p class="source-line">Offline story mode</p>` : "";
+  const questionBlock = questions ? `<h3>Practice Questions</h3><ol>${questions}</ol>` : "";
   $("storyOutput").innerHTML = `
     <h2>${story.title}</h2>
     ${source}
     <p class="spanish">${story.spanish_text}</p>
     <p class="english">${story.english_text}</p>
     <div class="chips">${vocab}</div>
-    <h3>Practice Questions</h3>
-    <p class="muted">Answer these out loud after listening.</p>
-    <ol>${questions}</ol>
+    ${questionBlock}
     <div class="actions">
-      <button data-play-mode="sentence" class="primary icon-button" title="Clause loop" aria-label="Clause loop">▶</button>
-      <button data-play-mode="full" class="icon-button" title="Full story" aria-label="Full story">▸▸</button>
-      <button data-play-mode="shadow" class="icon-button" title="Shadowing" aria-label="Shadowing">◌</button>
-      <button data-play-mode="speak" class="icon-button" title="Pronunciation check" aria-label="Pronunciation check">🎙</button>
+      <button data-play-mode="sentence" class="primary icon-button" title="Clause loop" aria-label="Clause loop">&#9654;</button>
+      <button data-play-mode="full" class="icon-button" title="Full story" aria-label="Full story">&#9656;&#9656;</button>
+      <button data-play-mode="shadow" class="icon-button" title="Shadowing" aria-label="Shadowing">&#9675;</button>
+      <button data-play-mode="speak" class="icon-button" title="Pronunciation check" aria-label="Pronunciation check">&#9679;</button>
     </div>`;
   $("storyOutput").querySelectorAll("[data-play-mode]").forEach((button) => {
     button.addEventListener("click", async () => {
