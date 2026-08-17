@@ -149,6 +149,36 @@ def test_listening_plan_uses_clause_sized_story_chunks(tmp_path):
     assert plan["shadowing"][0]["pause_seconds"] == 2.2
 
 
+def test_listening_plan_does_not_split_scene_label_colons(tmp_path):
+    module, _ = load_app(tmp_path)
+    plan = module.listening_plan(
+        "Primera escena 2: Lucía llega a una estación grande con una maleta roja.",
+        "First scene 2: Lucía arrives at a large station with a red suitcase.",
+    )
+    assert len(plan["sentence_loop"]) == 1
+    assert plan["sentence_loop"][0]["spanish"].startswith("Primera escena 2:")
+    assert plan["sentence_loop"][0]["english"].startswith("First scene 2:")
+
+
+def test_listening_plan_merges_short_intro_clause(tmp_path):
+    module, _ = load_app(tmp_path)
+    plan = module.listening_plan(
+        "En el andén, conoce a una estudiante que también viaja sola.",
+        "On the platform, she meets a student who is also traveling alone.",
+    )
+    assert len(plan["sentence_loop"]) == 1
+    assert plan["sentence_loop"][0]["spanish"] == "En el andén conoce a una estudiante que también viaja sola."
+    assert plan["sentence_loop"][0]["english"] == "On the platform she meets a student who is also traveling alone."
+
+
+def test_ten_minute_fallback_does_not_prefix_repeated_sentences_with_colons(tmp_path):
+    module, _ = load_app(tmp_path)
+    story = module.fallback_story(module.StoryCreate(topic="travel", length="ten_minutes"))
+    sentences = module.split_sentences(story["spanish_text"])
+    assert len(sentences) >= 40
+    assert not any(sentence.startswith(("Primera escena", "Segunda escena", "Tercera escena", "Cuarta escena")) and ":" in sentence for sentence in sentences)
+
+
 def test_sentence_split_handles_closing_quotes(tmp_path):
     module, _ = load_app(tmp_path)
     sentences = module.split_sentences('Her dad says, "First we buy fruit." The mom smiles.')

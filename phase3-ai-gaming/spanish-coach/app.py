@@ -446,25 +446,19 @@ def fallback_story(req: "StoryCreate") -> dict[str, Any]:
     count = int(shape["sentences"])
     expanded_seed = list(seed)
     if count > len(expanded_seed):
-        scene_labels = [
-            ("Primera escena", "First scene"),
-            ("Segunda escena", "Second scene"),
-            ("Tercera escena", "Third scene"),
-            ("Cuarta escena", "Fourth scene"),
+        transitions = [
+            ("Más tarde, la situación cambia un poco.", "Later, the situation changes a little."),
+            ("Después, aparece un detalle nuevo.", "Afterward, a new detail appears."),
+            ("En ese momento, la conversación toma otro camino.", "At that moment, the conversation takes another path."),
+            ("Antes de seguir, la protagonista respira y escucha.", "Before continuing, the protagonist breathes and listens."),
         ]
         cycle = 0
         while len(expanded_seed) < count:
-            scene_es, scene_en = scene_labels[cycle % len(scene_labels)]
+            expanded_seed.append(transitions[cycle % len(transitions)])
             for index, (es, en) in enumerate(seed):
                 if len(expanded_seed) >= count:
                     break
-                detail = cycle + 2
-                expanded_seed.append(
-                    (
-                        f"{scene_es} {detail}: {es}",
-                        f"{scene_en} {detail}: {en}",
-                    )
-                )
+                expanded_seed.append((es, en))
                 if len(expanded_seed) >= count:
                     break
                 if index % 4 == 3:
@@ -533,13 +527,28 @@ def split_clauses(sentence: str, lang: str) -> list[str]:
     if len(sentence.split()) <= 7:
         return [sentence]
     if lang == "es":
-        pattern = r"(?<=[,;:])\s+|\s+(?=pero\b|porque\b|cuando\b|si\b|aunque\b|después\b)"
+        pattern = r"(?<=[,;])\s+|\s+(?=pero\b|porque\b|cuando\b|si\b|aunque\b|después\b)"
     else:
-        pattern = r"(?<=[,;:])\s+|\s+(?=but\b|because\b|when\b|if\b|although\b|after\b|then\b)"
-    parts = [part.strip(" ,;:") for part in re.split(pattern, sentence, flags=re.I) if part.strip(" ,;:")]
+        pattern = r"(?<=[,;])\s+|\s+(?=but\b|because\b|when\b|if\b|although\b|after\b|then\b)"
+    parts = [part.strip(" ,;") for part in re.split(pattern, sentence, flags=re.I) if part.strip(" ,;")]
     if len(parts) <= 1:
         return [sentence]
-    return parts
+    clauses: list[str] = []
+    pending = ""
+    for part in parts:
+        if pending:
+            clauses.append(f"{pending} {part}".strip())
+            pending = ""
+        elif len(part.split()) < 4:
+            pending = part
+        else:
+            clauses.append(part)
+    if pending:
+        if clauses:
+            clauses[-1] = f"{clauses[-1]} {pending}".strip()
+        else:
+            clauses.append(pending)
+    return clauses or [sentence]
 
 
 def listening_plan(spanish_text: str, english_text: str) -> dict[str, Any]:
