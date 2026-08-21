@@ -20,7 +20,7 @@ CREATE DATABASE spanish_coach;
 -- On-Demand Services
 CREATE DATABASE gitea;
 CREATE DATABASE nextcloud;
-CREATE DATABASE outline;
+CREATE DATABASE docmost;
 CREATE DATABASE calcom;
 CREATE DATABASE nocodb;
 CREATE DATABASE guacamole;

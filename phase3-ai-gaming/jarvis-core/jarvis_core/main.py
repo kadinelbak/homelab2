@@ -41,6 +41,7 @@ from .models import (
     ProjectRecord,
     ProposedActionRecord,
     RequestRecord,
+    ScheduledAutomationRecord,
     StructuredIntentRecord,
     TaskRecord,
     ToolDefinitionRecord,
@@ -380,6 +381,31 @@ class GmailCleanupProposal(BaseModel):
     action_type: str = Field(default="label_classifications", pattern="^(label_classifications|archive_newsletters|mark_old_unread_read|star_needs_reply)$")
     message_ids: list[str] = Field(default_factory=list)
     max_results: int = Field(default=10, ge=1, le=50)
+    idempotency_key: str | None = None
+
+
+class AutomationScheduleSpec(BaseModel):
+    schedule_kind: str = Field(default="daily", pattern="^(daily|weekly|manual)$")
+    hour: int | None = Field(default=None, ge=0, le=23)
+    minute: int | None = Field(default=0, ge=0, le=59)
+    weekdays: list[int] = Field(default_factory=list)
+
+
+class AutomationCreateProposal(BaseModel):
+    name: str
+    job_type: str
+    schedule: AutomationScheduleSpec = Field(default_factory=AutomationScheduleSpec)
+    parameters: dict = Field(default_factory=dict)
+    channels: list[str] = Field(default_factory=lambda: ["Homepage"])
+    idempotency_key: str | None = None
+
+
+class AutomationUpdateProposal(BaseModel):
+    name: str | None = None
+    schedule: AutomationScheduleSpec | None = None
+    parameters: dict | None = None
+    channels: list[str] | None = None
+    status: str | None = Field(default=None, pattern="^(enabled|paused)$")
     idempotency_key: str | None = None
 
 
@@ -1278,6 +1304,12 @@ def drive_nextcloud_status(actor: str = Depends(authorize)):
     return {"ok": True, **status}
 
 
+@app.get("/api/v1/drive/paperless-status")
+def drive_paperless_status(actor: str = Depends(authorize)):
+    status = call_google_tools("/drive/paperless-status", {}, timeout=60)
+    return {"ok": True, **status}
+
+
 @app.post("/api/v1/drive/destinations")
 def drive_destinations(payload: DriveInventoryRequest, actor: str = Depends(authorize)):
     staging = call_google_tools("/drive/staging-status", {"max_results": payload.max_results}, timeout=60)
@@ -1900,8 +1932,273 @@ def daily_brief(kind: str = "morning", save: bool = False, db: Session = Depends
     return payload
 
 
+AUTOMATION_JOB_TYPES = {
+    "daily_brief": {"category": "briefing", "risk_level": RiskLevel.LOW_RISK_WRITE.value},
+    "gmail_needs_reply_scan": {"category": "email", "risk_level": RiskLevel.READ_ONLY.value},
+    "gmail_cleanup_proposal": {"category": "email", "risk_level": RiskLevel.EXTERNAL_WRITE.value},
+    "drive_inventory_scan": {"category": "migration", "risk_level": RiskLevel.READ_ONLY.value},
+    "downloads_cleanup_proposal": {"category": "desktop", "risk_level": RiskLevel.LOW_RISK_WRITE.value},
+    "homelab_health_check": {"category": "maintenance", "risk_level": RiskLevel.READ_ONLY.value},
+    "pihole_health_check": {"category": "network", "risk_level": RiskLevel.READ_ONLY.value},
+}
+
+
+DEFAULT_SCHEDULED_AUTOMATIONS = [
+    {
+        "automation_key": "daily_brief_morning",
+        "name": "Morning daily brief",
+        "job_type": "daily_brief",
+        "status": "enabled",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 7, "minute": 30},
+        "parameters": {"kind": "morning"},
+        "channels": ["Homepage", "Telegram", "Voice"],
+    },
+    {
+        "automation_key": "homelab_health",
+        "name": "Homelab health check",
+        "job_type": "homelab_health_check",
+        "status": "enabled",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 8, "minute": 0},
+        "parameters": {},
+        "channels": ["Homepage", "Telegram"],
+    },
+    {
+        "automation_key": "pihole_dns_health",
+        "name": "Pi-hole/DNS health check",
+        "job_type": "pihole_health_check",
+        "status": "enabled",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 8, "minute": 5},
+        "parameters": {},
+        "channels": ["Homepage", "Telegram"],
+    },
+    {
+        "automation_key": "gmail_needs_reply_scan",
+        "name": "Gmail needs-reply scan",
+        "job_type": "gmail_needs_reply_scan",
+        "status": "enabled",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 8, "minute": 45},
+        "parameters": {"max_results": 50},
+        "channels": ["Homepage", "Telegram"],
+    },
+    {
+        "automation_key": "daily_brief_evening",
+        "name": "Evening daily brief",
+        "job_type": "daily_brief",
+        "status": "enabled",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 20, "minute": 30},
+        "parameters": {"kind": "evening"},
+        "channels": ["Homepage", "Telegram", "Voice"],
+    },
+    {
+        "automation_key": "drive_inventory_scan",
+        "name": "Drive inventory scan",
+        "job_type": "drive_inventory_scan",
+        "status": "enabled",
+        "schedule_kind": "weekly",
+        "schedule": {"hour": 9, "minute": 15, "weekdays": [5]},
+        "parameters": {"max_results": 10000, "top_level_only": True, "root_topics_only": True, "my_drive_only": True},
+        "channels": ["Homepage"],
+    },
+    {
+        "automation_key": "gmail_cleanup_proposal",
+        "name": "Gmail cleanup proposal",
+        "job_type": "gmail_cleanup_proposal",
+        "status": "paused",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 9, "minute": 0},
+        "parameters": {"action_type": "label_classifications", "max_results": 25},
+        "channels": ["Homepage", "Telegram", "Voice"],
+    },
+    {
+        "automation_key": "downloads_cleanup_proposal",
+        "name": "Downloads cleanup proposal",
+        "job_type": "downloads_cleanup_proposal",
+        "status": "paused",
+        "schedule_kind": "daily",
+        "schedule": {"hour": 21, "minute": 30},
+        "parameters": {"max_items": 1000, "max_files": 200},
+        "channels": ["Homepage", "Voice"],
+    },
+]
+
+
+STATIC_AUTOMATIONS = [
+    {
+        "key": "approval_notifications",
+        "name": "Approval notifications",
+        "category": "notifications",
+        "status": "event_driven",
+        "mode": "event_driven",
+        "schedule": "When approval-gated work is proposed",
+        "source": "jarvis-core",
+        "channels": ["Homepage", "Telegram", "Voice"],
+    },
+    {
+        "key": "notification_delivery",
+        "name": "Notification delivery bridge",
+        "category": "notifications",
+        "status": "continuous",
+        "mode": "continuous",
+        "schedule": "Bridge services poll pending notifications",
+        "source": "telegram-bridge / hey-jarvis / homepage",
+        "channels": ["Telegram", "Voice", "Homepage"],
+    },
+    {
+        "key": "media_automations",
+        "name": "Media automations",
+        "category": "media",
+        "status": "external_service",
+        "mode": "external_service",
+        "schedule": "Managed by the media automation stack",
+        "source": "media-creation-pipeline",
+        "channels": ["Homepage"],
+    },
+]
+
+
+def ensure_default_scheduled_automations(db: Session):
+    changed = False
+    for spec in DEFAULT_SCHEDULED_AUTOMATIONS:
+        record = db.query(ScheduledAutomationRecord).filter_by(automation_key=spec["automation_key"]).first()
+        if record:
+            continue
+        record = ScheduledAutomationRecord(
+            id=new_id("sched"),
+            automation_key=spec["automation_key"],
+            name=spec["name"],
+            job_type=spec["job_type"],
+            status=spec["status"],
+            schedule_kind=spec["schedule_kind"],
+            schedule=spec["schedule"],
+            timezone=settings.user_timezone,
+            parameters=spec["parameters"],
+            channels=spec["channels"],
+            requires_approval=True,
+            created_by="jarvis-core",
+            updated_by="jarvis-core",
+        )
+        record.next_run_at = next_scheduled_run(record, datetime.now(ZoneInfo(record.timezone)))
+        db.add(record)
+        changed = True
+    if changed:
+        db.commit()
+
+
+def latest_automation_run(db: Session, key: str):
+    return (
+        db.query(AutomationRunRecord)
+        .filter(AutomationRunRecord.automation_key == key)
+        .order_by(AutomationRunRecord.started_at.desc())
+        .first()
+    )
+
+
+def next_scheduled_run(record: ScheduledAutomationRecord, local_now: datetime):
+    if record.schedule_kind == "manual":
+        return None
+    schedule = record.schedule or {}
+    hour = int(schedule.get("hour", 0))
+    minute = int(schedule.get("minute", 0))
+    target = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if record.schedule_kind == "weekly":
+        weekdays = [int(item) for item in schedule.get("weekdays") or [local_now.weekday()]]
+        for days_ahead in range(0, 8):
+            candidate = target + timedelta(days=days_ahead)
+            if candidate.weekday() in weekdays and candidate > local_now:
+                return candidate.astimezone(timezone.utc)
+        return (target + timedelta(days=7)).astimezone(timezone.utc)
+    if target <= local_now:
+        target += timedelta(days=1)
+    return target.astimezone(timezone.utc)
+
+
+def automation_schedule_label(record: ScheduledAutomationRecord):
+    schedule = record.schedule or {}
+    if record.schedule_kind == "manual":
+        return "Manual only"
+    hour = int(schedule.get("hour", 0))
+    minute = int(schedule.get("minute", 0))
+    when = f"{hour:02d}:{minute:02d}"
+    if record.schedule_kind == "weekly":
+        names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        weekdays = ", ".join(names[int(day)] for day in schedule.get("weekdays") or [])
+        return f"{when} weekly {weekdays}, {record.timezone}"
+    return f"{when} daily, {record.timezone}"
+
+
+def scheduled_automation_response(db: Session, record: ScheduledAutomationRecord):
+    latest = latest_automation_run(db, record.automation_key)
+    meta = AUTOMATION_JOB_TYPES.get(record.job_type, {})
+    return {
+        "id": record.id,
+        "key": record.automation_key,
+        "name": record.name,
+        "job_type": record.job_type,
+        "category": meta.get("category") or record.job_type,
+        "status": record.status,
+        "mode": "scheduled_or_on_demand" if record.schedule_kind != "manual" else "manual",
+        "schedule": automation_schedule_label(record),
+        "schedule_spec": {"schedule_kind": record.schedule_kind, **(record.schedule or {})},
+        "parameters": record.parameters or {},
+        "last_run": latest.started_at.isoformat() if latest else (record.last_run_at.isoformat() if record.last_run_at else None),
+        "next_run": record.next_run_at.isoformat() if record.next_run_at else None,
+        "source": "jarvis-core",
+        "channels": record.channels or [],
+        "summary": automation_job_summary(record),
+        "last_status": latest.status if latest else None,
+        "last_output": latest.safe_summary if latest else None,
+        "approval_id": record.approval_id,
+        "requires_approval": record.requires_approval,
+    }
+
+
+def automation_job_summary(record: ScheduledAutomationRecord):
+    summaries = {
+        "daily_brief": "Saves a daily brief and queues Homepage, Telegram, and voice notifications.",
+        "gmail_needs_reply_scan": "Reads Gmail and reports messages that probably need a reply.",
+        "gmail_cleanup_proposal": "Creates an approval-gated Gmail organization proposal. No labels or archives happen until approval.",
+        "drive_inventory_scan": "Refreshes Drive metadata and migration visibility without downloading or deleting.",
+        "downloads_cleanup_proposal": "Scans Downloads and proposes approved file organization or quarantine actions.",
+        "homelab_health_check": "Runs homelab diagnostics and notifies on failures.",
+        "pihole_health_check": "Checks Pi-hole/DNS filtering health.",
+    }
+    return summaries.get(record.job_type, "Scheduled Jarvis automation.")
+
+
 @app.get("/api/v1/automations")
 def list_automations(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    ensure_default_scheduled_automations(db)
+    records = (
+        db.query(ScheduledAutomationRecord)
+        .order_by(ScheduledAutomationRecord.status.asc(), ScheduledAutomationRecord.name.asc())
+        .all()
+    )
+    pending_notifications = db.query(NotificationRecord).filter(NotificationRecord.status == "pending").count()
+    pending_approvals = db.query(ApprovalRequestRecord).filter(ApprovalRequestRecord.status == "pending").count()
+    automations = [scheduled_automation_response(db, item) for item in records]
+    for item in STATIC_AUTOMATIONS:
+        copied = dict(item)
+        if copied["key"] == "approval_notifications":
+            copied["status"] = "attention" if pending_approvals else "quiet"
+            copied["summary"] = f"{pending_approvals} approval(s) currently pending."
+        elif copied["key"] == "notification_delivery":
+            copied["status"] = "attention" if pending_notifications else "quiet"
+            copied["summary"] = f"{pending_notifications} notification(s) waiting for delivery or acknowledgement."
+        elif copied["key"] == "media_automations":
+            latest = latest_automation_run(db, "media_automations")
+            copied["last_run"] = latest.started_at.isoformat() if latest else None
+            copied["last_status"] = latest.status if latest else None
+            copied["last_output"] = latest.safe_summary if latest else None
+            copied["summary"] = "Jarvis can display status and route approval-gated media actions when the media stack is ready."
+        automations.append(copied)
+    scheduled = [item for item in automations if item["mode"] in {"scheduled_or_on_demand", "manual", "continuous", "event_driven"}]
+    return {"ok": True, "automations": automations, "total": len(automations), "scheduled": len(scheduled), "job_types": sorted(AUTOMATION_JOB_TYPES)}
+
     def latest_run(key: str):
         return (
             db.query(AutomationRunRecord)
@@ -1935,6 +2232,36 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
         if target <= local_now:
             target += timedelta(days=7)
         return target.isoformat()
+
+    recent_notifications = db.query(NotificationRecord).order_by(NotificationRecord.created_at.desc()).limit(250).all()
+
+    def delivery_summary(title_prefix: str | None = None, channel: str | None = None):
+        rows = []
+        for item in recent_notifications:
+            payload = item.payload or {}
+            title = str(payload.get("title") or "")
+            if title_prefix and not title.lower().startswith(title_prefix.lower()):
+                continue
+            if channel and item.channel != channel:
+                continue
+            rows.append(item)
+        counts = {}
+        by_channel = {}
+        last = None
+        for item in rows:
+            counts[item.status] = counts.get(item.status, 0) + 1
+            by_channel.setdefault(item.channel, {})
+            by_channel[item.channel][item.status] = by_channel[item.channel].get(item.status, 0) + 1
+            if last is None or item.created_at > last.created_at:
+                last = item
+        return {
+            "total_recent": len(rows),
+            "by_status": counts,
+            "by_channel": by_channel,
+            "last_status": last.status if last else None,
+            "last_channel": last.channel if last else None,
+            "last_created_at": last.created_at.isoformat() if last and last.created_at else None,
+        }
 
     pending_notifications = db.query(NotificationRecord).filter(NotificationRecord.status == "pending").count()
     pending_approvals = db.query(ApprovalRequestRecord).filter(ApprovalRequestRecord.status == "pending").count()
@@ -1975,6 +2302,7 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             "summary": "Scheduled by Telegram bridge, saved by Jarvis Core, then delivered through Core notifications.",
             "last_status": latest_run("daily_brief_morning").status if latest_run("daily_brief_morning") else None,
             "last_output": latest_run("daily_brief_morning").safe_summary if latest_run("daily_brief_morning") else None,
+            "delivery": delivery_summary("Morning brief ready"),
         },
         {
             "key": "daily_brief_evening",
@@ -1990,6 +2318,7 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             "summary": "Scheduled by Telegram bridge, saved by Jarvis Core, then delivered through Core notifications.",
             "last_status": latest_run("daily_brief_evening").status if latest_run("daily_brief_evening") else None,
             "last_output": latest_run("daily_brief_evening").safe_summary if latest_run("daily_brief_evening") else None,
+            "delivery": delivery_summary("Evening brief ready"),
         },
         {
             "key": "approval_notifications",
@@ -2016,6 +2345,7 @@ def list_automations(db: Session = Depends(get_db), actor: str = Depends(authori
             "source": "telegram-bridge / hey-jarvis / homepage",
             "channels": ["Telegram", "Voice", "Homepage"],
             "summary": f"{pending_notifications} notification(s) waiting for delivery or acknowledgement.",
+            "delivery": delivery_summary(),
         },
         {
             "key": "homelab_health",
@@ -2100,6 +2430,47 @@ def run_automation(automation_key: str, db: Session = Depends(get_db), actor: st
     return run_automation_key(db, automation_key, trigger="manual", actor=actor)
 
 
+@app.post("/api/v1/automations/propose-create")
+def propose_automation_create(payload: AutomationCreateProposal, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    if payload.job_type not in AUTOMATION_JOB_TYPES:
+        raise HTTPException(status_code=400, detail={"error": "unsupported_automation_job_type", "allowed": sorted(AUTOMATION_JOB_TYPES)})
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+    return propose_automation_action(db, actor, "automation.create", payload.model_dump(), payload.idempotency_key)
+
+
+@app.post("/api/v1/automations/{automation_key}/propose-update")
+def propose_automation_update(automation_key: str, payload: AutomationUpdateProposal, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    ensure_default_scheduled_automations(db)
+    record = db.query(ScheduledAutomationRecord).filter_by(automation_key=automation_key).first()
+    if not record:
+        raise HTTPException(status_code=404, detail={"error": "automation_not_found", "key": automation_key})
+    if payload.idempotency_key:
+        existing = db.query(RequestRecord).filter_by(idempotency_key=payload.idempotency_key).first()
+        if existing:
+            return request_response(db, existing)
+    arguments = payload.model_dump(exclude_none=True)
+    arguments["automation_key"] = automation_key
+    return propose_automation_action(db, actor, "automation.update", arguments, payload.idempotency_key)
+
+
+@app.post("/api/v1/automations/{automation_key}/pause")
+def pause_automation(automation_key: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    ensure_default_scheduled_automations(db)
+    record = db.query(ScheduledAutomationRecord).filter_by(automation_key=automation_key).first()
+    if not record:
+        raise HTTPException(status_code=404, detail={"error": "automation_not_found", "key": automation_key})
+    record.status = "paused"
+    record.next_run_at = None
+    record.updated_at = now_utc()
+    record.updated_by = actor
+    audit(db, "automation.paused", actor, new_id("corr"), record.id, {"automation_key": record.automation_key})
+    db.commit()
+    return {"ok": True, "automation": scheduled_automation_response(db, record)}
+
+
 def automation_runner_loop():
     time.sleep(20)
     while True:
@@ -2116,22 +2487,22 @@ def automation_runner_loop():
 
 
 def due_automation_keys(db: Session):
-    local_now = datetime.now(ZoneInfo(settings.user_timezone))
+    ensure_default_scheduled_automations(db)
+    utc_now = now_utc()
     due = []
-    daily_specs = [
-        ("daily_brief_morning", 7, 30),
-        ("homelab_health", 8, 0),
-        ("pihole_dns_health", 8, 5),
-        ("gmail_needs_reply_scan", 8, 45),
-        ("daily_brief_evening", 20, 30),
-    ]
-    for key, hour, minute in daily_specs:
-        if local_now.hour > hour or (local_now.hour == hour and local_now.minute >= minute):
-            if not automation_ran_today(db, key, local_now):
-                due.append(key)
-    if local_now.weekday() == 5 and (local_now.hour > 9 or (local_now.hour == 9 and local_now.minute >= 15)):
-        if not automation_ran_today(db, "drive_migration_scan", local_now):
-            due.append("drive_migration_scan")
+    records = db.query(ScheduledAutomationRecord).filter_by(status="enabled").all()
+    for record in records:
+        local_now = datetime.now(ZoneInfo(record.timezone or settings.user_timezone))
+        if record.schedule_kind == "manual":
+            continue
+        if not record.next_run_at:
+            record.next_run_at = next_scheduled_run(record, local_now)
+            continue
+        if record.next_run_at <= utc_now:
+            if not automation_ran_in_current_window(db, record, local_now):
+                due.append(record.automation_key)
+            record.next_run_at = next_scheduled_run(record, local_now)
+    db.commit()
     return due
 
 
@@ -2148,23 +2519,33 @@ def automation_ran_today(db: Session, key: str, local_now: datetime):
     )
 
 
+def automation_ran_in_current_window(db: Session, record: ScheduledAutomationRecord, local_now: datetime):
+    if record.schedule_kind == "weekly":
+        local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=local_now.weekday())
+    else:
+        local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    utc_start = local_start.astimezone(timezone.utc)
+    return (
+        db.query(AutomationRunRecord)
+        .filter(AutomationRunRecord.automation_key == record.automation_key)
+        .filter(AutomationRunRecord.started_at >= utc_start)
+        .filter(AutomationRunRecord.status.in_(("completed", "running")))
+        .first()
+        is not None
+    )
+
+
 def run_automation_key(db: Session, key: str, trigger: str = "manual", actor: str = "jarvis-core"):
-    allowed = {
-        "daily_brief_morning",
-        "daily_brief_evening",
-        "homelab_health",
-        "pihole_dns_health",
-        "drive_migration_scan",
-        "gmail_needs_reply_scan",
-        "approval_notifications",
-        "notification_delivery",
-        "media_automations",
-    }
-    if key not in allowed:
+    ensure_default_scheduled_automations(db)
+    record = db.query(ScheduledAutomationRecord).filter_by(automation_key=key).first()
+    static_keys = {item["key"] for item in STATIC_AUTOMATIONS}
+    if not record and key == "drive_migration_scan":
+        record = db.query(ScheduledAutomationRecord).filter_by(automation_key="drive_inventory_scan").first()
+    if not record and key not in static_keys:
         raise HTTPException(status_code=404, detail={"error": "automation_not_found", "key": key})
     run = AutomationRunRecord(
         id=new_id("auto"),
-        automation_key=key,
+        automation_key=record.automation_key if record else key,
         status="running",
         trigger=trigger,
         scheduled_for=now_utc() if trigger == "scheduled" else None,
@@ -2173,11 +2554,15 @@ def run_automation_key(db: Session, key: str, trigger: str = "manual", actor: st
     db.add(run)
     db.commit()
     try:
-        output, summary = execute_automation_key(db, key, actor)
+        output, summary = execute_automation_key(db, record.automation_key if record else key, actor, record)
         run.status = "completed"
         run.output = json_safe(output)
         run.safe_summary = summary
         run.completed_at = now_utc()
+        if record:
+            record.last_run_at = run.started_at
+            record.next_run_at = next_scheduled_run(record, datetime.now(ZoneInfo(record.timezone or settings.user_timezone)))
+            record.updated_at = now_utc()
         audit(db, "automation.completed", actor, new_id("corr"), run.id, {"automation_key": key, "trigger": trigger, "summary": summary})
         db.commit()
     except Exception as exc:
@@ -2185,45 +2570,84 @@ def run_automation_key(db: Session, key: str, trigger: str = "manual", actor: st
         run.error = str(exc)[:1000]
         run.safe_summary = f"{key} failed: {str(exc)[:240]}"
         run.completed_at = now_utc()
+        if record:
+            record.last_run_at = run.started_at
+            record.next_run_at = next_scheduled_run(record, datetime.now(ZoneInfo(record.timezone or settings.user_timezone)))
+            record.updated_at = now_utc()
         audit(db, "automation.failed", actor, new_id("corr"), run.id, {"automation_key": key, "trigger": trigger, "error": str(exc)[:240]})
         db.commit()
     return automation_run_response(run)
 
 
-def execute_automation_key(db: Session, key: str, actor: str):
-    if key == "daily_brief_morning":
+def execute_automation_key(db: Session, key: str, actor: str, record: ScheduledAutomationRecord | None = None):
+    job_type = record.job_type if record else key
+    params = record.parameters if record else {}
+    if key == "daily_brief_morning" or (job_type == "daily_brief" and params.get("kind") == "morning"):
         payload = daily_brief("morning", True, db, actor)
         return payload, f"Morning brief saved and queued for delivery: {payload.get('saved_brief_id')}"
-    if key == "daily_brief_evening":
+    if key == "daily_brief_evening" or (job_type == "daily_brief" and params.get("kind") == "evening"):
         payload = daily_brief("evening", True, db, actor)
         return payload, f"Evening brief saved and queued for delivery: {payload.get('saved_brief_id')}"
-    if key == "gmail_needs_reply_scan":
-        payload = run_safe_gmail_inbox_organizer()
-        counts = payload.get("counts") or {}
-        notify_many(
-            db,
-            actor,
-            ("homepage", "telegram"),
-            "Gmail inbox organized",
-            payload.get("text") or "Safe Gmail labels/stars/archive actions completed.",
-            "info",
-            {"automation_key": key, "counts": counts, "mode": "no_spam_no_trash"},
+    if key == "gmail_needs_reply_scan" or job_type == "gmail_needs_reply_scan":
+        max_results = int(params.get("max_results") or 50)
+        payload = call_google_tools("/gmail/cleanup-summary", {"max_results": max_results}, timeout=180)
+        count = len(payload.get("needs_reply") or [])
+        if count:
+            notify_many(db, actor, ("homepage", "telegram"), "Gmail replies to review", f"{count} message(s) may need a reply.", "info", {"automation_key": key, "count": count})
+        return payload, f"Gmail needs-reply scan completed: {count} candidate(s)."
+    if key == "gmail_cleanup_proposal" or job_type == "gmail_cleanup_proposal":
+        payload = GmailCleanupProposal(
+            action_type=params.get("action_type") or "label_classifications",
+            max_results=int(params.get("max_results") or 25),
+            idempotency_key=f"auto-gmail-cleanup-{datetime.now(ZoneInfo(settings.user_timezone)).date().isoformat()}",
         )
-        return payload, payload.get("text") or "Gmail inbox organizer completed."
-    if key == "homelab_health":
+        request = propose_gmail_cleanup(payload, db, actor)
+        return request, "Gmail cleanup proposal created for approval."
+    if key == "homelab_health" or job_type == "homelab_health_check":
         payload = homelab_diagnostics(db, actor)
         failed = len([item for item in payload.get("checks") or [] if not item.get("ok")])
         if failed:
             notify_many(db, actor, ("homepage", "telegram"), "Homelab health attention", f"{failed} check(s) need attention.", "warning", {"automation_key": key})
         return payload, f"Homelab health check completed: {failed} issue(s)."
-    if key == "pihole_dns_health":
+    if key == "pihole_dns_health" or job_type == "pihole_health_check":
         payload = http_health_check("pihole", settings.pihole_url)
         if not payload.get("ok"):
             notify_many(db, actor, ("homepage", "telegram"), "Pi-hole/DNS attention", payload.get("summary") or payload.get("error") or "Pi-hole check failed.", "warning", {"automation_key": key})
         return payload, "Pi-hole/DNS check OK." if payload.get("ok") else "Pi-hole/DNS check needs attention."
-    if key == "drive_migration_scan":
-        payload = call_google_tools("/drive/staging-status", {"max_results": 50}, timeout=60)
-        return payload, f"Drive migration scan completed: {payload.get('total', 0)} staged item(s)."
+    if key in {"drive_migration_scan", "drive_inventory_scan"} or job_type == "drive_inventory_scan":
+        if job_type == "drive_inventory_scan":
+            payload = drive_inventory(DriveInventoryRequest(**params), db, actor)
+            return payload, f"Drive inventory scan completed: {payload.get('total', 0)} item(s) visible."
+        staging = call_google_tools("/drive/staging-status", {"max_results": 50}, timeout=60)
+        nextcloud = call_google_tools("/drive/nextcloud-status", {}, timeout=60)
+        paperless = call_google_tools("/drive/paperless-status", {}, timeout=60)
+        payload = {"staging": staging, "nextcloud": nextcloud.get("nextcloud"), "paperless": paperless.get("paperless")}
+        nc_ok = bool((payload.get("nextcloud") or {}).get("ok"))
+        pl_ok = bool((payload.get("paperless") or {}).get("ok"))
+        return payload, f"Drive migration scan completed: {staging.get('total', 0)} staged item(s), Nextcloud {'OK' if nc_ok else 'WAIT'}, Paperless {'OK' if pl_ok else 'WAIT'}."
+    if key == "downloads_cleanup_proposal" or job_type == "downloads_cleanup_proposal":
+        try:
+            scan_run, scan_job = latest_downloads_scan_job(db, None)
+        except HTTPException:
+            scan_run, scan_job = None, None
+        if scan_job and scan_job.status == "completed":
+            request = propose_downloads_cleanup(
+                DownloadsCleanupProposalRequest(
+                    scan_run_id=scan_run.id if scan_run else None,
+                    max_files=int(params.get("max_files") or 200),
+                    auto_approve_low_risk=False,
+                    idempotency_key=f"auto-downloads-cleanup-{now_utc().date().isoformat()}",
+                ),
+                db,
+                actor,
+            )
+            return request, "Downloads cleanup proposal created for approval."
+        scan = create_downloads_scan(
+            DownloadsScanRequest(max_items=int(params.get("max_items") or 1000), recursive=False, idempotency_key=f"auto-downloads-scan-{now_utc().date().isoformat()}"),
+            db,
+            actor,
+        )
+        return scan, "Downloads cleanup scan queued. Run the automation again after the desktop worker completes the scan to create a proposal."
     if key == "approval_notifications":
         pending = db.query(ApprovalRequestRecord).filter(ApprovalRequestRecord.status == "pending").count()
         return {"pending_approvals": pending}, f"{pending} approval(s) pending."
@@ -2272,6 +2696,107 @@ def create_daily_brief_action(payload: DailyBriefActionCreate, db: Session = Dep
     return {"type": "task", "task": task_response(task)}
 
 
+def propose_automation_action(db: Session, actor: str, tool_name: str, arguments: dict, idempotency_key: str | None):
+    correlation_id = new_id("corr")
+    request = RequestRecord(
+        id=new_id("req"),
+        user_id=actor,
+        source="scheduled-automations",
+        raw_text=automation_action_text(tool_name, arguments),
+        status="awaiting_approval",
+        idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
+    )
+    db.add(request)
+    db.flush()
+    action = ProposedActionRecord(
+        id=new_id("act"),
+        request_id=request.id,
+        tool_name=tool_name,
+        tool_version="1.0",
+        risk_level=RiskLevel.LOW_RISK_WRITE.value,
+        status=ActionStatus.AWAITING_APPROVAL.value,
+        arguments=arguments,
+        preview={
+            "summary": automation_action_text(tool_name, arguments),
+            "changes": ["Creates or changes a Jarvis scheduled automation after approval.", "The automation can be paused from the Core dashboard."],
+            "schedule": arguments.get("schedule"),
+            "job_type": arguments.get("job_type"),
+            "reversible": True,
+        },
+        requires_approval=True,
+    )
+    db.add(action)
+    db.flush()
+    approval = ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="New or changed schedules must be approved before they are enabled.")
+    db.add(approval)
+    audit(db, "request.received", actor, correlation_id, request.id, {"source": "scheduled-automations"})
+    audit_for_action(db, "action.proposed", action, actor, {"tool": tool_name, "risk_level": action.risk_level})
+    audit_for_action(db, "approval.requested", action, actor, {"reason": "schedule_requires_approval"})
+    notify_many(db, actor, ("homepage", "telegram", "voice"), "Automation approval needed", action.preview["summary"], "warning", {"action_id": action.id, "tool": tool_name})
+    db.commit()
+    return request_response(db, request)
+
+
+def automation_action_text(tool_name: str, arguments: dict):
+    if tool_name == "automation.update":
+        return f"Update scheduled automation {arguments.get('automation_key')}"
+    schedule = arguments.get("schedule") or {}
+    return f"Create scheduled automation {arguments.get('name')} ({arguments.get('job_type')}) at {schedule.get('hour', '--')}:{int(schedule.get('minute') or 0):02d}"
+
+
+def execute_automation_management_action(db: Session, action: ProposedActionRecord, actor: str):
+    args = action.arguments or {}
+    if action.tool_name == "automation.create":
+        schedule = args.get("schedule") or {}
+        job_type = args.get("job_type")
+        if job_type not in AUTOMATION_JOB_TYPES:
+            raise RuntimeError(f"unsupported_automation_job_type:{job_type}")
+        key = f"custom_{new_id('auto').replace('auto_', '')}"
+        record = ScheduledAutomationRecord(
+            id=new_id("sched"),
+            automation_key=key,
+            name=args.get("name") or "Custom automation",
+            job_type=job_type,
+            status="enabled",
+            schedule_kind=schedule.get("schedule_kind") or "daily",
+            schedule={k: v for k, v in schedule.items() if k in {"hour", "minute", "weekdays"}},
+            timezone=settings.user_timezone,
+            parameters=args.get("parameters") or {},
+            channels=args.get("channels") or ["Homepage"],
+            requires_approval=True,
+            created_by=actor,
+            updated_by=actor,
+        )
+        record.next_run_at = next_scheduled_run(record, datetime.now(ZoneInfo(record.timezone)))
+        db.add(record)
+        db.flush()
+        return {"automation": scheduled_automation_response(db, record), "summary": f"Automation enabled: {record.name}"}
+    if action.tool_name == "automation.update":
+        key = args.get("automation_key")
+        record = db.query(ScheduledAutomationRecord).filter_by(automation_key=key).first()
+        if not record:
+            raise RuntimeError(f"automation_not_found:{key}")
+        if args.get("name"):
+            record.name = args["name"]
+        if args.get("schedule"):
+            schedule = args["schedule"]
+            record.schedule_kind = schedule.get("schedule_kind") or record.schedule_kind
+            record.schedule = {k: v for k, v in schedule.items() if k in {"hour", "minute", "weekdays"}}
+        if args.get("parameters") is not None:
+            record.parameters = args.get("parameters") or {}
+        if args.get("channels") is not None:
+            record.channels = args.get("channels") or ["Homepage"]
+        if args.get("status"):
+            record.status = args["status"]
+        record.updated_at = now_utc()
+        record.updated_by = actor
+        record.next_run_at = next_scheduled_run(record, datetime.now(ZoneInfo(record.timezone))) if record.status == "enabled" else None
+        db.flush()
+        return {"automation": scheduled_automation_response(db, record), "summary": f"Automation updated: {record.name}"}
+    raise RuntimeError(f"unsupported_automation_management_tool:{action.tool_name}")
+
+
 def execute_action(db: Session, action: ProposedActionRecord, actor: str):
     if action.requires_approval:
         approval = db.query(ApprovalRequestRecord).filter_by(proposed_action_id=action.id).first()
@@ -2281,6 +2806,36 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
     attempt = ExecutionAttemptRecord(id=new_id("exec"), proposed_action_id=action.id, status="running", retry_count=0)
     db.add(attempt)
     audit_for_action(db, "execution.started", action, actor, {"execution_id": attempt.id})
+    if action.tool_name in {"automation.create", "automation.update"}:
+        try:
+            payload = execute_automation_management_action(db, action, actor)
+            attempt.status = "completed"
+            attempt.safe_summary = payload.get("summary")
+            attempt.completed_at = now_utc()
+            result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success", payload={"automation": payload})
+            db.add(result)
+            db.flush()
+            verification = VerificationResultRecord(id=new_id("verify"), execution_result_id=result.id, status="verified", payload={"checked": "scheduled_automation_saved"})
+            db.add(verification)
+            db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "jarvis-core"}))
+            action.status = ActionStatus.COMPLETED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "completed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Automation enabled", attempt.safe_summary or "", "info", {"action_id": action.id})
+            audit_for_action(db, "execution.completed", action, actor, {"execution_id": attempt.id, "provider": "jarvis-core"})
+            audit_for_action(db, "verification.completed", action, actor, {"verification_id": verification.id})
+            return
+        except Exception as exc:
+            attempt.status = "failed"
+            attempt.error_category = "automation_management_failed"
+            attempt.safe_summary = f"Automation update failed: {str(exc)[:240]}"
+            attempt.completed_at = now_utc()
+            action.status = ActionStatus.FAILED.value
+            request = db.get(RequestRecord, action.request_id)
+            request.status = "failed"
+            notify_many(db, actor, ("homepage", "telegram", "voice"), "Automation update failed", str(exc)[:500], "warning", {"action_id": action.id})
+            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "jarvis-core", "error": str(exc)[:240]})
+            return
     if action.tool_name == "codex.run_task":
         try:
             payload = execute_codex_action(action)
@@ -2421,11 +2976,21 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
             result = ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome="success", payload={"paperless_import": payload})
             db.add(result)
             db.flush()
+            imports = payload.get("imports") or []
+            uploaded_count = sum(1 for item in imports if item.get("status") == "uploaded" or (item.get("paperless_api") or {}).get("ok") is True)
+            queued_count = sum(1 for item in imports if item.get("status") == "queued")
             verification = VerificationResultRecord(
                 id=new_id("verify"),
                 execution_result_id=result.id,
-                status="queued",
-                payload={"checked": "paperless_consume_queue", "import_count": len(payload.get("imports") or []), "consume_dir": payload.get("consume_dir")},
+                status="verified" if uploaded_count == len(imports) and imports else "queued",
+                payload={
+                    "checked": "paperless_api_or_consume_queue",
+                    "import_count": len(imports),
+                    "uploaded_count": uploaded_count,
+                    "queued_count": queued_count,
+                    "consume_dir": payload.get("consume_dir"),
+                    "paperless_url": payload.get("paperless_url"),
+                },
             )
             db.add(verification)
             db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "paperless"}))
@@ -4147,24 +4712,34 @@ def http_health_check(name: str, url: str, headers: dict | None = None):
 def drive_destination_services():
     public_base = settings.homelab_public_base_url.rstrip("/")
     public_host = urllib.parse.urlparse(public_base).netloc or "100.79.132.39"
+    try:
+        paperless_import_status = call_google_tools("/drive/paperless-status", {}, timeout=30).get("paperless") or {}
+    except Exception as exc:
+        paperless_import_status = {"ok": False, "error": str(exc)[:240], "mode": "unknown"}
+    try:
+        nextcloud_import_status = call_google_tools("/drive/nextcloud-status", {}, timeout=30).get("nextcloud") or {}
+    except Exception as exc:
+        nextcloud_import_status = {"ok": False, "error": str(exc)[:240], "mode": "unknown"}
     checks = {
         "paperless": http_health_check("paperless", "http://paperless:8000"),
         "nextcloud": http_health_check("nextcloud", "http://nextcloud/status.php", {"Host": public_host}),
-        "docmost": http_health_check("docmost", "http://docmost:3000"),
+        "docmost": http_health_check("docmost", "http://docmost:3000/api/health"),
         "immich": http_health_check("immich", "http://immich-server:2283/api/server/ping"),
     }
     return {
         "paperless": {
             "label": "Paperless",
-            "ready": checks["paperless"].get("ok") is True,
+            "ready": checks["paperless"].get("ok") is True and paperless_import_status.get("ok") is True,
             "check": checks["paperless"],
+            "import_check": paperless_import_status,
             "best_for": "PDFs, receipts, bills, forms, transcripts, contracts, and other official/OCR documents.",
-            "import_path": "approval_required_import_to_paperless_consume_or_api",
+            "import_path": paperless_import_status.get("mode") or "approval_required_import_to_paperless_consume_or_api",
         },
         "nextcloud": {
             "label": "Nextcloud",
-            "ready": checks["nextcloud"].get("ok") is True,
+            "ready": checks["nextcloud"].get("ok") is True and nextcloud_import_status.get("ok") is True,
             "check": checks["nextcloud"],
+            "import_check": nextcloud_import_status,
             "best_for": "General files, folders, spreadsheets, presentations, and private file storage.",
             "import_path": "approval_required_copy_to_nextcloud_storage_or_webdav",
         },

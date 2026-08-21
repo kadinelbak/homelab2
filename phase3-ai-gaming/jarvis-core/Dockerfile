@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY alembic.ini .
 COPY migrations ./migrations
+ARG JARVIS_CORE_SOURCE_VERSION=local
 COPY jarvis_core ./jarvis_core
 
 RUN chown -R appuser:appuser /app

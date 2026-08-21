@@ -178,6 +178,8 @@ services:
       MODRINTH_LOADER: fabric
       MODRINTH_MODPACK_VERSION_TYPE: release
       MODRINTH_FORCE_SYNCHRONIZE: "true"
+      MODRINTH_PROJECTS: |
+        faux-custom-entity-data
       MODRINTH_EXCLUDE_FILES: |
         shut-up-mcd
         bettertrims
@@ -195,7 +197,10 @@ services:
       SPAWN_PROTECTION: 0
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/minecraft-prominence:/data
-    # No network needed – only exposes port to LAN
+    dns:
+      - ${PIHOLE_BIND_IP:-${TAILSCALE_HOST_IP:-1.1.1.1}}
+      - 1.1.1.1
+    # Modrinth startup needs outbound DNS, but only the game port is exposed.
     labels:
       - "com.centurylinklabs.watchtower.enable=false"  # Pin game server version
 
@@ -612,7 +617,11 @@ services:
       NEXTCLOUD_WEBDAV_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
       NEXTCLOUD_WEBDAV_ROOT: ${NEXTCLOUD_WEBDAV_ROOT:-Jarvis/Drive Migration}
       PAPERLESS_CONSUME_DIR: /paperless-consume
+      PAPERLESS_API_URL: http://paperless:8000
       PAPERLESS_PUBLIC_URL: http://${DOMAIN}:8000
+      PAPERLESS_USERNAME: ${PAPERLESS_USERNAME:-admin}
+      PAPERLESS_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:-}
+      PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/google-tools:/data
       - ${DATA_PATH}/phase2-media/data/paperless/consume:/paperless-consume

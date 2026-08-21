@@ -33,7 +33,11 @@ NEXTCLOUD_WEBDAV_PASSWORD = os.environ.get("NEXTCLOUD_WEBDAV_PASSWORD", os.envir
 NEXTCLOUD_WEBDAV_ROOT = os.environ.get("NEXTCLOUD_WEBDAV_ROOT", "Jarvis/Drive Migration")
 PAPERLESS_CONSUME_DIR = Path(os.environ.get("PAPERLESS_CONSUME_DIR", DATA_DIR / "paperless-consume"))
 PAPERLESS_IMPORT_DIR = Path(os.environ.get("PAPERLESS_IMPORT_DIR", DATA_DIR / "drive-migration" / "paperless-import"))
+PAPERLESS_API_URL = os.environ.get("PAPERLESS_API_URL", "http://paperless:8000").rstrip("/")
 PAPERLESS_PUBLIC_URL = os.environ.get("PAPERLESS_PUBLIC_URL", "http://100.79.132.39:8000").rstrip("/")
+PAPERLESS_API_TOKEN = os.environ.get("PAPERLESS_API_TOKEN", "")
+PAPERLESS_USERNAME = os.environ.get("PAPERLESS_USERNAME", "admin")
+PAPERLESS_PASSWORD = os.environ.get("PAPERLESS_PASSWORD", "")
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:18200/oauth/google/callback")
@@ -726,6 +730,129 @@ def paperless_tags_for_manifest(manifest):
     return sorted({tag for tag in tags if tag})
 
 
+def paperless_headers(extra=None):
+    headers = dict(extra or {})
+    if PAPERLESS_API_TOKEN:
+        headers["Authorization"] = f"Token {PAPERLESS_API_TOKEN}"
+    elif PAPERLESS_PASSWORD:
+        raw = f"{PAPERLESS_USERNAME}:{PAPERLESS_PASSWORD}".encode("utf-8")
+        headers["Authorization"] = "Basic " + base64.b64encode(raw).decode("ascii")
+    return headers
+
+
+def paperless_configured():
+    return bool(PAPERLESS_API_URL and (PAPERLESS_API_TOKEN or PAPERLESS_PASSWORD))
+
+
+def paperless_api_request(method, path, payload=None, timeout=60):
+    if not paperless_configured():
+        raise ValueError("paperless_api_credentials_missing")
+    data = None
+    headers = paperless_headers({"Accept": "application/json"})
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(PAPERLESS_API_URL + path, data=data, method=method, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        return json.loads(raw or "{}") if raw else {}
+
+
+def paperless_status():
+    status = {
+        "configured": paperless_configured(),
+        "api_url": PAPERLESS_API_URL,
+        "public_url": PAPERLESS_PUBLIC_URL,
+        "consume_dir": str(PAPERLESS_CONSUME_DIR),
+        "consume_dir_exists": PAPERLESS_CONSUME_DIR.exists(),
+        "token_set": bool(PAPERLESS_API_TOKEN),
+        "password_set": bool(PAPERLESS_PASSWORD),
+        "mode": "api_upload_with_tags" if paperless_configured() else "consume_folder_fallback",
+    }
+    if not paperless_configured():
+        return {**status, "ok": PAPERLESS_CONSUME_DIR.exists(), "warning": "paperless_api_not_configured_using_consume_folder"}
+    try:
+        data = paperless_api_request("GET", "/api/documents/?page_size=1", timeout=30)
+        return {**status, "ok": True, "document_count": data.get("count")}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {**status, "ok": False, "status": exc.code, "error": detail[:500]}
+    except Exception as exc:
+        return {**status, "ok": False, "error": str(exc)[:500]}
+
+
+def paperless_tag_id(name):
+    slug = name.lower().replace("_", "-")
+    query = urllib.parse.urlencode({"name__iexact": name, "page_size": 5})
+    try:
+        data = paperless_api_request("GET", f"/api/tags/?{query}", timeout=30)
+        for item in data.get("results") or []:
+            if str(item.get("name", "")).lower() == name.lower():
+                return item.get("id")
+        created = paperless_api_request("POST", "/api/tags/", {"name": name, "slug": slug}, timeout=30)
+        return created.get("id")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            data = paperless_api_request("GET", f"/api/tags/?{query}", timeout=30)
+            for item in data.get("results") or []:
+                if str(item.get("name", "")).lower() == name.lower():
+                    return item.get("id")
+        raise
+
+
+def multipart_form(fields, files):
+    boundary = f"----jarvis-paperless-{int(time.time() * 1000)}"
+    chunks = []
+    for key, value in fields.items():
+        if isinstance(value, (list, tuple)):
+            values = value
+        else:
+            values = [value]
+        for item in values:
+            chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+            chunks.append(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
+            chunks.append(str(item).encode("utf-8"))
+            chunks.append(b"\r\n")
+    for key, file_info in files.items():
+        filename, content_type, content = file_info
+        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+        chunks.append(f'Content-Disposition: form-data; name="{key}"; filename="{filename}"\r\n'.encode("utf-8"))
+        chunks.append(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        chunks.append(content)
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return boundary, b"".join(chunks)
+
+
+def paperless_upload_document(source_path, manifest, tags):
+    tag_ids = [paperless_tag_id(tag) for tag in tags]
+    tag_ids = [tag_id for tag_id in tag_ids if tag_id is not None]
+    title = str(manifest.get("name") or source_path.name)
+    created = datetime.now(timezone.utc).date().isoformat()
+    fields = {
+        "title": title,
+        "created": created,
+        "tags": tag_ids,
+    }
+    content_type = "application/pdf" if source_path.suffix.lower() == ".pdf" else "application/octet-stream"
+    boundary, body = multipart_form(fields, {"document": (source_path.name, content_type, source_path.read_bytes())})
+    headers = paperless_headers({"Content-Type": f"multipart/form-data; boundary={boundary}", "Accept": "application/json"})
+    request = urllib.request.Request(PAPERLESS_API_URL + "/api/documents/post_document/", data=body, method="POST", headers=headers)
+    with urllib.request.urlopen(request, timeout=180) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        payload = json.loads(raw or "{}") if raw else {}
+        document_id = payload.get("id") or payload.get("task_id") or payload.get("document")
+        return {
+            "ok": response.status in (200, 201, 202),
+            "status": response.status,
+            "paperless_document_id": document_id,
+            "paperless_url": f"{PAPERLESS_PUBLIC_URL}/documents/{document_id}/details" if document_id and PAPERLESS_PUBLIC_URL else PAPERLESS_PUBLIC_URL,
+            "tag_ids": tag_ids,
+            "mode": "api_upload_with_tags",
+            "response": payload,
+        }
+
+
 def paperless_import_from_staging(manifest_paths=None, max_results=50, action_id=None):
     wanted = {str(item) for item in (manifest_paths or []) if str(item).strip()}
     manifests = drive_staging_status(max_results=max_results).get("manifests") or []
@@ -745,18 +872,29 @@ def paperless_import_from_staging(manifest_paths=None, max_results=50, action_id
                 raise ValueError("staged_file_missing")
             tags = paperless_tags_for_manifest(manifest)
             queued_name = f"jarvis-{int(time.time())}-{safe_filename(source_path.name)}"
-            queued_path = PAPERLESS_CONSUME_DIR / queued_name
-            shutil.copy2(source_path, queued_path)
+            queued_path = None
+            api_result = None
+            import_mode = "consume_folder_fallback"
+            if paperless_configured():
+                try:
+                    api_result = paperless_upload_document(source_path, manifest, tags)
+                    import_mode = "api_upload_with_tags"
+                except Exception as exc:
+                    api_result = {"ok": False, "error": str(exc)[:500], "mode": "api_upload_failed_fell_back_to_consume"}
+            if not api_result or api_result.get("ok") is not True:
+                queued_path = PAPERLESS_CONSUME_DIR / queued_name
+                shutil.copy2(source_path, queued_path)
             record = {
                 **manifest,
-                "paperless_consume_path": str(queued_path),
+                "paperless_consume_path": str(queued_path) if queued_path else "",
                 "paperless_import_action_id": action_id,
                 "paperless_public_url": PAPERLESS_PUBLIC_URL,
                 "paperless_tags": tags,
                 "paperless_correspondent": "Google Drive",
                 "queued_at": datetime.now(timezone.utc).isoformat(),
-                "mode": "copy_only_no_google_modifications",
-                "status": "queued",
+                "mode": f"copy_only_no_google_modifications/{import_mode}",
+                "status": "uploaded" if api_result and api_result.get("ok") is True else "queued",
+                "paperless_api": api_result,
             }
             manifest_path = PAPERLESS_IMPORT_DIR / f"{queued_name}.paperless-import.json"
             manifest_path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
@@ -2404,6 +2542,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/drive/nextcloud-status":
                 self.write_json(HTTPStatus.OK, {"ok": True, "nextcloud": nextcloud_webdav_status(), "mode": "read_only"})
+                return
+            if path == "/drive/paperless-status":
+                self.write_json(HTTPStatus.OK, {"ok": True, "paperless": paperless_status(), "mode": "read_only"})
                 return
             if path == "/drive/import-to-nextcloud":
                 result = drive_import_to_nextcloud(

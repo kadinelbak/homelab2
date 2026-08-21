@@ -1,0 +1,8 @@
+[Unit]
+Description=Nextcloud nightly server-side sync and file index scan
+Documentation=file:/home/kadin/homelab2/scripts/nextcloud-nightly-sync.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kadin/homelab2
+ExecStart=/home/kadin/homelab2/scripts/nextcloud-nightly-sync.sh

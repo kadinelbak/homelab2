@@ -15,6 +15,12 @@ networks:
   homelab_internal:
     external: true
 
+secrets:
+  gluetun_wireguard_private_key:
+    file: ${GLUETUN_SECRETS_DIR:-./secrets}/wireguard_private_key
+  gluetun_wireguard_addresses:
+    file: ${GLUETUN_SECRETS_DIR:-./secrets}/wireguard_addresses
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -114,6 +120,16 @@ services:
     networks:
       - homelab_proxy
       - homelab_internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000', timeout=10)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Tools"
@@ -244,7 +260,7 @@ services:
   gluetun:
     image: qmcgaw/gluetun:latest
     container_name: gluetun
-    restart: "no"
+    restart: unless-stopped
     profiles:
       - torrent
     cap_add:
@@ -254,8 +270,8 @@ services:
     environment:
       VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER}
       VPN_TYPE: ${VPN_TYPE}
-      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
-      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
+      WIREGUARD_PRIVATE_KEY_SECRETFILE: /run/secrets/gluetun_wireguard_private_key
+      WIREGUARD_ADDRESSES_SECRETFILE: /run/secrets/gluetun_wireguard_addresses
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: ${VPN_PORT_FORWARDING:-off}
       TZ: ${TZ}
@@ -263,17 +279,18 @@ services:
       HTTPPROXY: "off"
       SHADOWSOCKS: "off"
     ports:
-      - "8097:8097"   # qBittorrent Web UI (access via http://host:8097)
-      - "9696:9696"   # Prowlarr Web UI
-      - "6767:6767"   # Bazarr Web UI
-      - "8989:8989"   # Sonarr Web UI
-      - "7878:7878"   # Radarr Web UI
-      - "8686:8686"   # Lidarr Web UI
-      - "8787:8787"   # Readarr Web UI
-      - "6881:6881"   # qBittorrent TCP
-      - "6881:6881/udp"
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8097:8097"   # qBittorrent Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9696:9696"   # Prowlarr Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:6767:6767"   # Bazarr Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8989:8989"   # Sonarr Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:7878:7878"   # Radarr Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8686:8686"   # Lidarr Web UI
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8787:8787"   # Readarr Web UI
     networks:
       - homelab_proxy   # So NPM can reach the Web UI via Gluetun's IP
+    secrets:
+      - gluetun_wireguard_private_key
+      - gluetun_wireguard_addresses
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
@@ -285,7 +302,7 @@ services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
-    restart: "no"
+    restart: unless-stopped
     profiles:
       - torrent
     network_mode: service:gluetun    # ← All traffic through VPN – DO NOT CHANGE

@@ -14,6 +14,20 @@ CATALOG_FILE = REPO_ROOT / "services.yaml"
 ENV_FILE = REPO_ROOT / ".env"
 
 
+def env_file_paths():
+    configured = os.environ.get("HOMELAB_ENV_FILES", "").strip()
+    if not configured:
+        return [ENV_FILE]
+    paths = []
+    for item in configured.replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        path = Path(item)
+        paths.append(path if path.is_absolute() else REPO_ROOT / path)
+    return paths or [ENV_FILE]
+
+
 def die(message, code=1):
     print(f"ERROR: {message}", file=sys.stderr)
     raise SystemExit(code)
@@ -30,6 +44,13 @@ def load_env(path=ENV_FILE):
         key, value = line.split("=", 1)
         value = value.strip().strip('"').strip("'")
         env[key.strip()] = value
+    return env
+
+
+def load_env_files(paths=None):
+    env = {}
+    for path in paths or env_file_paths():
+        env.update(load_env(path))
     return env
 
 
@@ -58,7 +79,8 @@ def run(cmd, dry_run=False, capture=False):
 class HomelabCtl:
     def __init__(self, dry_run=False):
         self.catalog = load_catalog()
-        self.env = {**os.environ, **load_env()}
+        self.env_files = env_file_paths()
+        self.env = {**os.environ, **load_env_files(self.env_files)}
         self.services = self.catalog["services"]
         self.phases = self.catalog["phases"]
         self.dry_run = dry_run
@@ -94,14 +116,10 @@ class HomelabCtl:
 
     def docker_compose(self, phase, extra):
         phase_info = self.phases[phase]
-        cmd = [
-            "docker",
-            "compose",
-            "--env-file",
-            str(ENV_FILE),
-            "-f",
-            str(REPO_ROOT / phase_info["compose"]),
-        ]
+        cmd = ["docker", "compose"]
+        for env_file in self.env_files:
+            cmd.extend(["--env-file", str(env_file)])
+        cmd.extend(["-f", str(REPO_ROOT / phase_info["compose"])])
         return cmd + extra
 
     def running_containers(self):

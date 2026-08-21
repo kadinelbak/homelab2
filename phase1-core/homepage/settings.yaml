@@ -7,6 +7,18 @@ hideVersion: true
 showStats: true
 statusStyle: dot
 layout:
+  Jarvis:
+    tab: Homelab
+    style: row
+    columns: 4
+  Jarvis Systems:
+    tab: Jarvis
+    style: row
+    columns: 4
+  AI Tools:
+    tab: Jarvis
+    style: row
+    columns: 4
   Core:
     tab: Homelab
     style: row
@@ -20,10 +32,6 @@ layout:
     style: row
     columns: 4
   Media Automations:
-    tab: Homelab
-    style: row
-    columns: 4
-  AI Automations:
     tab: Homelab
     style: row
     columns: 4

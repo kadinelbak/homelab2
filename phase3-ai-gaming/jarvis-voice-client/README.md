@@ -15,7 +15,7 @@ python client.py --diagnose
 python client.py --once
 ```
 
-Use tray mode for normal laptop use. It starts the local SSH tunnel, listens for `hey_jarvis`, and keeps `Ctrl+Alt+J` as a push-to-talk fallback.
+Use tray mode for normal laptop use. It starts the local SSH tunnel, listens for `hey_jarvis`, registers the desktop worker, and keeps `Ctrl+Alt+J` as a push-to-talk fallback.
 
 ```powershell
 python client.py --tray
@@ -25,6 +25,12 @@ From the repo checkout, this launcher starts the same interactive tray app with 
 
 ```powershell
 .\phase3-ai-gaming\jarvis-voice-client\start_tray.ps1
+```
+
+`start_tray.ps1` runs hidden by default so Jarvis lives in the system tray without a terminal window. Use `-Console` only for debugging:
+
+```powershell
+.\phase3-ai-gaming\jarvis-voice-client\start_tray.ps1 -Console
 ```
 
 Use `python client.py --listen` for console wake-word debugging. Run it as a separate command, not appended to `--once`.
@@ -83,6 +89,14 @@ Use worker-only mode to test registration and job claiming without audio:
 ```powershell
 python client.py --worker
 ```
+
+For a hidden worker-only launch, use:
+
+```powershell
+.\phase3-ai-gaming\jarvis-voice-client\start_worker.ps1
+```
+
+Normal tray mode already includes the desktop worker, so do not run `start_worker.ps1` at the same time unless you are intentionally testing worker-only behavior.
 
 ## Start at login
 

@@ -2,12 +2,52 @@
 
 `.env.example` is the source of truth for required configuration. Copy it to `.env`, replace every `CHANGE_ME_*` value, and keep `.env` out of git.
 
+For safer long-term operations, split local values into layered files under
+`config/env/` using the committed `*.example` files as templates. Keep the root
+`.env` as the compatibility file until a phase has been moved cleanly.
+
+Recommended layers:
+
+| File | Purpose |
+| --- | --- |
+| `config/env/.env.shared` | Host, paths, domain, timezone, Tailscale/LAN bind defaults. |
+| `config/env/.env.core` | Postgres, Redis, Authentik, Homepage, Pi-hole, monitoring. |
+| `config/env/.env.media` | Jellyfin, Paperless, Immich, Navidrome, document/photo settings. |
+| `config/env/.env.media-vpn` | Gluetun/qBittorrent non-secret VPN settings and secret-file path. |
+| `config/env/.env.jarvis` | Jarvis Core, Chat, Telegram, Google tools, Codex, Whisper/TTS, AI models. |
+| `config/env/.env.cloud` | Nextcloud, Docmost, Guacamole, n8n, and on-demand apps. |
+
+Actual secret material should use service-specific secret files where supported,
+for example `phase2-media/secrets/wireguard_private_key` instead of raw
+`WIREGUARD_PRIVATE_KEY` in env.
+
 ## Validation
 
 ```bash
 cp .env.example .env
 grep -n "CHANGE_ME" .env
 bash scripts/setup.sh --validate-only
+python3 scripts/homelab-preflight.py phase1-core
+python3 scripts/homelab-preflight.py phase2-media --profile torrent --profile arr
+```
+
+To test layered env files without changing old Compose commands:
+
+```bash
+python3 scripts/homelab-preflight.py phase2-media \
+  --env-file .env \
+  --env-file config/env/.env.shared \
+  --env-file config/env/.env.media \
+  --env-file config/env/.env.media-vpn \
+  --profile torrent \
+  --profile arr
+```
+
+`scripts/homelabctl.py` also supports layered envs with:
+
+```bash
+export HOMELAB_ENV_FILES=.env,config/env/.env.shared,config/env/.env.core,config/env/.env.media,config/env/.env.media-vpn,config/env/.env.jarvis,config/env/.env.cloud
+python3 scripts/homelabctl.py plan always-on
 ```
 
 ## Host and Path Variables
@@ -77,9 +117,25 @@ bash scripts/setup.sh --validate-only
 | `IMMICH_DB_DATABASE_NAME` | Yes for Immich | Dedicated Immich database name. |
 | `VPN_SERVICE_PROVIDER` | Torrent profile | Gluetun VPN provider name. |
 | `VPN_TYPE` | Torrent profile | `wireguard` or `openvpn`. |
-| `WIREGUARD_PRIVATE_KEY` | Torrent profile | WireGuard private key from your VPN provider. |
-| `WIREGUARD_ADDRESSES` | Torrent profile | WireGuard tunnel address/CIDR. |
+| `WIREGUARD_PRIVATE_KEY` | Deprecated | Do not store this in `.env`; use `phase2-media/secrets/wireguard_private_key` or set `GLUETUN_SECRETS_DIR`. |
+| `WIREGUARD_ADDRESSES` | Deprecated | Do not store this in `.env`; use `phase2-media/secrets/wireguard_addresses` or set `GLUETUN_SECRETS_DIR`. |
 | `SERVER_COUNTRIES` | Torrent profile | Gluetun region preference. |
+
+Import a downloaded Mullvad/WireGuard config with:
+
+```bash
+python3 scripts/apply-wireguard-config-env.py \
+  --config /path/to/wireguard.conf \
+  --env-file /home/kadin/homelab2/.env \
+  --provider mullvad \
+  --server-countries Netherlands \
+  --port-forwarding off \
+  --secrets-dir /home/kadin/homelab2/phase2-media/secrets
+```
+
+For Proton VPN, use `--provider protonvpn`, usually
+`--server-countries "United States"`, and `--port-forwarding on` when the Proton
+config was generated with NAT-PMP enabled.
 
 ## Phase 3: AI, Automation, and Gaming
 

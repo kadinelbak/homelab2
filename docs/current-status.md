@@ -112,8 +112,10 @@
   - Live validation delivered a generated evening brief notification and Gmail organizer notification.
 - Drive migration destination workflow is live:
   - Nextcloud WebDAV visibility is verified after approved imports.
-  - Paperless import proposals queue staged Drive documents into the Paperless consume folder after approval.
+  - Paperless is healthy and Jarvis can import through the Paperless API with tags when credentials are configured, with consume-folder fallback.
   - Paperless suggested tags include education, medical, finance, lifeadmin, and drive-migration.
+  - Docmost is now deployed from Phase 4 IaC at `http://100.79.132.39:3004` and reports Postgres/Redis healthy through `/api/health`.
+  - Smart Destinations reports Paperless, Nextcloud, and Docmost as ready routes.
   - Google Drive originals are not moved, archived, deleted, or modified.
 - Gmail cleanup workflow is live:
   - Read-only summary reports top senders, old unread mail, likely newsletters, and likely needs-reply messages.

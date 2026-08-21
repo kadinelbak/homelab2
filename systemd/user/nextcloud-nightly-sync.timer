@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Nextcloud server-side sync nightly
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=nextcloud-nightly-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -18,11 +18,11 @@ if (-not (Test-Path $Python)) {
 $Hidden = $NoWindow -or -not $Console
 
 if ($Hidden -and (Test-Path $Pythonw)) {
-  Start-Process -FilePath $Pythonw -ArgumentList @($Client, "--tray", "--env", $EnvPath) -WorkingDirectory $ClientDir -WindowStyle Hidden
+  Start-Process -FilePath $Pythonw -ArgumentList @($Client, "--worker", "--env", $EnvPath) -WorkingDirectory $ClientDir -WindowStyle Hidden
   exit 0
 } elseif ($Hidden) {
-  Start-Process -FilePath $Python -ArgumentList @($Client, "--tray", "--env", $EnvPath) -WorkingDirectory $ClientDir -WindowStyle Hidden
+  Start-Process -FilePath $Python -ArgumentList @($Client, "--worker", "--env", $EnvPath) -WorkingDirectory $ClientDir -WindowStyle Hidden
   exit 0
 } else {
-  & $Python $Client --tray --env $EnvPath
+  & $Python $Client --worker --env $EnvPath
 }

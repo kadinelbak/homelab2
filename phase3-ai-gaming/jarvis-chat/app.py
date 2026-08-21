@@ -1467,7 +1467,8 @@ function openAutomationsHub() {
   const rows = state.automations || [];
   const active = rows.filter(a => a.status !== 'disabled').length;
   const body = rows.length ? `<div class="hub-grid">${rows.map((a, idx) => automationCard(a, idx)).join('')}</div>` : emptyState('No automation inventory available.');
-  openDrawer('Automations', `${active} available`, body);
+  const actions = `<button class="quick-action approve" title="Create automation" aria-label="Create automation" onclick="createAutomation()">+</button><button class="icon-button" title="Refresh" aria-label="Refresh" onclick="loadAll().then(openAutomationsHub)">&#8635;</button>`;
+  openDrawer('Automations', `${active} available`, body, actions);
 }
 function automationCard(a, idx) {
   const visibleStatus = a.last_status || a.status || 'available';
@@ -1558,15 +1559,67 @@ async function proposeGmailCleanup(actionType, maxResults = 25) {
   status.textContent = 'Gmail cleanup proposed for approval.';
 }
 function openAutomation(a) {
-  const actions = a.key ? `<button class="quick-action approve" title="Run now" aria-label="Run now" onclick="runAutomation('${esc(a.key)}')">&#9654;</button>` : '';
+  const key = esc(a.key || '');
+  const canSchedule = Boolean(a.job_type);
+  const actions = a.key ? [
+    `<button class="quick-action approve" title="Run now" aria-label="Run now" onclick="runAutomation('${key}')">&#9654;</button>`,
+    canSchedule ? `<button class="quick-action" title="Edit schedule" aria-label="Edit schedule" onclick="editAutomation('${key}')">&#9998;</button>` : '',
+    canSchedule && a.status === 'enabled' ? `<button class="quick-action reject" title="Pause schedule" aria-label="Pause schedule" onclick="pauseAutomation('${key}')">&#10074;&#10074;</button>` : '',
+    canSchedule && a.status !== 'enabled' ? `<button class="quick-action approve" title="Resume schedule" aria-label="Resume schedule" onclick="resumeAutomation('${key}')">&#9654;</button>` : ''
+  ].filter(Boolean).join('') : '';
   openDrawer(automationTitle(a), a.status || 'Automation', [
-    row('Category', a.category), row('Mode', a.mode), row('Schedule', a.schedule),
+    row('Category', a.category), row('Job', a.job_type), row('Mode', a.mode), row('Schedule', a.schedule),
     row('Last run', a.last_run || 'Not recorded'), row('Next run', a.next_run || 'Not scheduled by Core'),
-    row('Last status', a.last_status), row('Channels', a.channels), row('Source', a.source), row('Summary', a.summary), row('Last output', a.last_output)
+    row('Last status', a.last_status), row('Channels', a.channels), row('Parameters', a.parameters), row('Summary', a.summary), row('Last output', a.last_output)
   ].join(''), actions);
 }
 async function runAutomation(key) {
   await guarded('Run automation now', () => send('POST', `/api/core/automations/${encodeURIComponent(key)}/run`, {}));
+}
+async function pauseAutomation(key) {
+  await guarded('Pause automation', () => send('POST', `/api/core/automations/${encodeURIComponent(key)}/pause`, {}));
+}
+async function resumeAutomation(key) {
+  await guarded('Resume automation', () => send('POST', `/api/core/automations/${encodeURIComponent(key)}/propose-update`, {status:'enabled', idempotency_key:`automation-resume-${key}-${Date.now()}`}));
+  status.textContent = 'Resume proposed for approval.';
+}
+async function editAutomation(key) {
+  const item = (state.automations || []).find(a => a.key === key);
+  if (!item) return;
+  const current = item.schedule_spec || {};
+  const hour = prompt('Hour, 0-23', current.hour ?? '8');
+  if (hour === null) return;
+  const minute = prompt('Minute, 0-59', current.minute ?? '0');
+  if (minute === null) return;
+  const kind = prompt('Schedule kind: daily, weekly, or manual', current.schedule_kind || 'daily') || 'daily';
+  const payload = {
+    schedule: {schedule_kind: kind, hour: Number(hour), minute: Number(minute), weekdays: current.weekdays || []},
+    idempotency_key: `automation-edit-${key}-${Date.now()}`
+  };
+  await send('POST', `/api/core/automations/${encodeURIComponent(key)}/propose-update`, payload);
+  await loadAll();
+  status.textContent = 'Automation edit proposed for approval.';
+}
+async function createAutomation() {
+  const jobType = prompt('Job type: daily_brief, gmail_needs_reply_scan, gmail_cleanup_proposal, drive_inventory_scan, downloads_cleanup_proposal, homelab_health_check, pihole_health_check', 'daily_brief');
+  if (!jobType) return;
+  const name = prompt('Automation name', displayTitle(jobType));
+  if (!name) return;
+  const hour = prompt('Hour, 0-23', '8');
+  if (hour === null) return;
+  const minute = prompt('Minute, 0-59', '0');
+  if (minute === null) return;
+  const parameters = jobType === 'daily_brief' ? {kind: prompt('Brief kind: morning or evening', 'morning') || 'morning'} : {};
+  await send('POST', '/api/core/automations/propose-create', {
+    name,
+    job_type: jobType,
+    schedule: {schedule_kind:'daily', hour:Number(hour), minute:Number(minute), weekdays:[]},
+    parameters,
+    channels:['Homepage','Telegram'],
+    idempotency_key:`automation-create-${Date.now()}`
+  });
+  await loadAll();
+  status.textContent = 'Automation proposed for approval.';
 }
 function openDiagnostic(d) {
   const name = String(d.name || '').toLowerCase();
@@ -1876,7 +1929,7 @@ function openDriveDestinations() {
   const data = state.driveDestinations || {};
   const actions = `<button title="Refresh" onclick="loadAll().then(openDriveDestinations)">&#8635;</button><button class="primary" title="Propose Nextcloud import" onclick="proposeNextcloudImport()">&#8680;</button>`;
   openDrawer('Smart Destinations', data.summary || 'Destination readiness', [
-    row('Services', data.services), row('Pathway', data.pathway), row('Staged items', data.staged_items)
+    row('Services', data.services), row('Nextcloud visibility check', data.services?.nextcloud?.import_check), row('Paperless import check', data.services?.paperless?.import_check), row('Pathway', data.pathway), row('Staged items', data.staged_items)
   ].join(''), actions);
 }
 function openSmartDestinationItem(item) {
@@ -2276,6 +2329,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/core/desktop/downloads/scans": "/api/v1/desktop/downloads/scans",
             "/api/core/gmail/cleanup-summary": "/api/v1/gmail/cleanup-summary",
             "/api/core/drive/nextcloud-status": "/api/v1/drive/nextcloud-status",
+            "/api/core/drive/paperless-status": "/api/v1/drive/paperless-status",
         }
         if path in core_get_routes:
             if not self.authorized():
@@ -2405,6 +2459,25 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             if len(parts) == 6:
                 status, data = self.core_proxy("POST", f"/api/v1/automations/{parts[4]}/run", self.read_json(), timeout=240)
+                self.write_json(status, data)
+                return
+
+        if path == "/api/core/automations/propose-create":
+            status, data = self.core_proxy("POST", "/api/v1/automations/propose-create", self.read_json(), timeout=120)
+            self.write_json(status, data)
+            return
+
+        if path.startswith("/api/core/automations/") and path.endswith("/propose-update"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/automations/{parts[4]}/propose-update", self.read_json(), timeout=120)
+                self.write_json(status, data)
+                return
+
+        if path.startswith("/api/core/automations/") and path.endswith("/pause"):
+            parts = path.split("/")
+            if len(parts) == 6:
+                status, data = self.core_proxy("POST", f"/api/v1/automations/{parts[4]}/pause", self.read_json(), timeout=120)
                 self.write_json(status, data)
                 return
 

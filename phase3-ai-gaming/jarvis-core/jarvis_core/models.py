@@ -263,6 +263,29 @@ class AutomationRunRecord(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
+class ScheduledAutomationRecord(Base):
+    __tablename__ = "personal_ops_scheduled_automations"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    automation_key: Mapped[str] = mapped_column(String(120), unique=True)
+    name: Mapped[str] = mapped_column(String(160))
+    job_type: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(40), default="paused")
+    schedule_kind: Mapped[str] = mapped_column(String(40), default="daily")
+    schedule: Mapped[dict] = mapped_column(JSON, default=dict)
+    timezone: Mapped[str] = mapped_column(String(80), default="America/New_York")
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    channels: Mapped[list] = mapped_column(JSON, default=list)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    approval_id: Mapped[str | None] = mapped_column(String(40))
+    created_by: Mapped[str] = mapped_column(String(80), default="jarvis-core")
+    updated_by: Mapped[str] = mapped_column(String(80), default="jarvis-core")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class OrchestrationRunRecord(Base):
     __tablename__ = "jarvis_orchestration_runs"
 

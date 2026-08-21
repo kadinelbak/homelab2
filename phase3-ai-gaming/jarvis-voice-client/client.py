@@ -77,6 +77,7 @@ class VoiceConfig:
     desktop_enable_files: bool = True
     desktop_enable_notify: bool = True
     desktop_enable_open_url: bool = True
+    instance_lock_port: int = 18191
 
     @classmethod
     def from_env(cls):
@@ -117,6 +118,7 @@ class VoiceConfig:
             desktop_enable_files=env_bool("JARVIS_DESKTOP_ENABLE_FILES", cls.desktop_enable_files),
             desktop_enable_notify=env_bool("JARVIS_DESKTOP_ENABLE_NOTIFY", cls.desktop_enable_notify),
             desktop_enable_open_url=env_bool("JARVIS_DESKTOP_ENABLE_OPEN_URL", cls.desktop_enable_open_url),
+            instance_lock_port=int(os.environ.get("JARVIS_INSTANCE_LOCK_PORT", cls.instance_lock_port)),
         )
 
 
@@ -156,6 +158,47 @@ def setup_logging(config):
         format="%(asctime)s %(levelname)s %(message)s",
     )
     return log_dir
+
+
+_INSTANCE_LOCKS = []
+
+
+def acquire_instance_lock(config, name="jarvis-voice-client"):
+    try:
+        lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        lock_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        lock_socket.bind(("127.0.0.1", config.instance_lock_port))
+        lock_socket.listen(1)
+        _INSTANCE_LOCKS.append(lock_socket)
+    except OSError:
+        logging.info("%s is already running on lock port %s; exiting duplicate instance", name, config.instance_lock_port)
+        return False
+
+    log_dir = Path(config.log_dir)
+    if not log_dir.is_absolute():
+        log_dir = Path.cwd() / log_dir
+    log_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = open(log_dir / f"{name}.lock", "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_file.close()
+        logging.info("%s is already running; exiting duplicate instance", name)
+        return False
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(str(os.getpid()).encode("ascii"))
+    lock_file.flush()
+    _INSTANCE_LOCKS.append(lock_file)
+    return True
 
 
 def normalized_query(text):
@@ -1155,6 +1198,8 @@ def run_push_to_talk(config):
 
 def run_worker(config):
     setup_logging(config)
+    if not acquire_instance_lock(config):
+        return
     controller = VoiceController(config)
     if not controller.ensure_connected():
         raise RuntimeError("Jarvis Chat unavailable")
@@ -1193,12 +1238,14 @@ def run_threaded(name, target):
 
 
 def run_tray(config):
+    log_dir = setup_logging(config)
+    if not acquire_instance_lock(config):
+        return
     try:
         import pystray
     except ImportError as exc:
         raise RuntimeError("Tray mode needs pystray and Pillow. Run: pip install -r requirements.txt") from exc
 
-    log_dir = setup_logging(config)
     controller = VoiceController(config)
     icon = pystray.Icon("Jarvis", tray_image(controller.state), "Jarvis")
 

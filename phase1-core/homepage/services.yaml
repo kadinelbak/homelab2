@@ -1,3 +1,55 @@
+- Jarvis:
+    - Core Console:
+        icon: si-openai
+        href: http://100.79.132.39:18100/core
+        description: Approvals, automations, Drive, Gmail, tasks, evidence, and diagnostics
+        widget:
+          type: customapi
+          url: http://jarvis_chat:18100/api/core/notifications/summary
+          refreshInterval: 60000
+          display: list
+          mappings:
+            - field: preview
+              label: Jarvis
+    - Chat:
+        icon: mdi-message-text
+        href: http://100.79.132.39:18100
+        description: Conversational Jarvis interface
+    - Open WebUI:
+        icon: open-webui
+        href: http://kadin-main-sys.tail00cf0e.ts.net:8080
+        description: Chat interface for API models and Jarvis tools
+    - Spanish Coach:
+        icon: mdi-translate
+        href: http://100.79.132.39:18120
+        description: Speaking, vocab, listening, stories, and TTS practice
+
+- Jarvis Systems:
+    - Telegram:
+        icon: telegram
+        href: https://t.me/kadjarvis_bot
+        description: Jarvis text and voice-note bot
+    - Codex Worker:
+        icon: si-openai
+        href: http://100.79.132.39:18300/health
+        description: Approval-gated coding worker
+    - Google Tools:
+        icon: google
+        href: http://100.79.132.39:18200/health
+        description: Gmail, Calendar, Drive, Tasks, and Contacts bridge
+    - Jarvis Core API:
+        icon: mdi-api
+        href: http://100.79.132.39:18097/health
+        description: Durable Core API health
+    - Whisper:
+        icon: mdi-microphone
+        href: http://100.79.132.39:18101/health
+        description: Speech-to-text worker
+    - Voice/TTS:
+        icon: mdi-volume-high
+        href: http://100.79.132.39:18100/core
+        description: TTS and Hey Jarvis status in Core diagnostics
+
 - Core:
     - Homepage:
         icon: homepage
@@ -15,6 +67,10 @@
         icon: mdi-tune
         href: http://kadin-main-sys.tail00cf0e.ts.net:5055
         description: Start and stop service groups
+    - Wake-on-LAN API:
+        icon: mdi-power
+        href: http://kadin-main-sys.tail00cf0e.ts.net:9999/health
+        description: Wake endpoint health
     - Authentik:
         icon: authentik
         href: http://kadin-main-sys.tail00cf0e.ts.net:9001
@@ -124,19 +180,7 @@
         href: http://kadin-main-sys.tail00cf0e.ts.net:8097
         description: Torrent client over VPN
 
-- AI Automations:
-    - Jarvis Chat:
-        icon: si-openai
-        href: http://100.79.132.39:18100
-        description: Simple request console for Jarvis
-        widget:
-          type: customapi
-          url: http://jarvis_chat:18100/api/core/notifications/summary
-          refreshInterval: 60000
-          display: list
-          mappings:
-            - field: preview
-              label: Jarvis
+- AI Tools:
     - Media AI:
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:3100
@@ -145,14 +189,6 @@
         icon: si-openai
         href: http://kadin-main-sys.tail00cf0e.ts.net:8095/health
         description: Request routing and worker handoff
-    - Whisper Worker:
-        icon: si-openai
-        href: http://kadin-main-sys.tail00cf0e.ts.net:18101/health
-        description: Speech-to-text worker for Jarvis
-    - Open WebUI:
-        icon: open-webui
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8080
-        description: Chat interface for Ollama
     - SCAD AI Generator:
         icon: mdi-cube-scan
         href: http://kadin-main-sys.tail00cf0e.ts.net:18104
@@ -161,10 +197,6 @@
         icon: n8n
         href: http://kadin-main-sys.tail00cf0e.ts.net:5678
         description: Workflow automation
-    - Wake-on-LAN API:
-        icon: mdi-power
-        href: http://kadin-main-sys.tail00cf0e.ts.net:9999/health
-        description: Wake endpoint health
 
 - Tools:
     - Home Assistant:

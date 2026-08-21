@@ -272,10 +272,14 @@ services:
     container_name: docmost
     profiles: ["docmost", "knowledge"]
     environment:
-      APP_URL: https://wiki.${DOMAIN}
-      APP_SECRET: ${OUTLINE_SECRET_KEY}
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/outline
-      REDIS_URL: redis://:${REDIS_PASSWORD}@homelab_redis:6379
+      APP_URL: ${DOCMOST_APP_URL:-http://${DOMAIN}:3004}
+      APP_SECRET: ${DOCMOST_APP_SECRET}
+      DATABASE_URL: ${DOCMOST_DATABASE_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/docmost?schema=public}
+      REDIS_URL: ${DOCMOST_REDIS_URL:-redis://:${REDIS_PASSWORD}@homelab_redis:6379/6}
+      STORAGE_DRIVER: local
+      FILE_UPLOAD_SIZE_LIMIT: ${DOCMOST_FILE_UPLOAD_SIZE_LIMIT:-50mb}
+      FILE_IMPORT_SIZE_LIMIT: ${DOCMOST_FILE_IMPORT_SIZE_LIMIT:-200mb}
+      DISABLE_TELEMETRY: ${DOCMOST_DISABLE_TELEMETRY:-true}
     volumes:
       - ${DATA_PATH}/phase4-ondemand/data/docmost:/app/data/storage
     ports:
@@ -283,6 +287,16 @@ services:
     networks:
       - homelab_proxy
       - homelab_internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "homepage.group=On-Demand"
