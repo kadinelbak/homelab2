@@ -7,11 +7,11 @@
       "name": "Grafana",
       "description": "Monitoring dashboards",
       "icon": "grafana",
-      "launch_url": "http://${DOMAIN}:30030",
+      "launch_url": "https://${DOMAIN}:30030",
       "client_id_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_ID",
       "client_secret_env": "GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET",
       "redirect_uris": [
-        "http://${DOMAIN}:30030/login/generic_oauth"
+        "https://${DOMAIN}:30030/login/generic_oauth"
       ]
     },
     {
@@ -19,11 +19,11 @@
       "name": "n8n",
       "description": "Workflow automation",
       "icon": "n8n",
-      "launch_url": "http://${DOMAIN}:5678",
+      "launch_url": "https://${DOMAIN}:5678",
       "client_id_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_ID",
       "client_secret_env": "N8N_AUTH_OAUTH2_GENERIC_CLIENT_SECRET",
       "redirect_uris": [
-        "http://${DOMAIN}:5678/rest/oauth2-credential/callback"
+        "https://${DOMAIN}:5678/rest/oauth2-credential/callback"
       ]
     },
     {
@@ -31,11 +31,11 @@
       "name": "Homepage",
       "description": "Homelab service launcher",
       "icon": "homepage",
-      "launch_url": "http://${DOMAIN}:3000",
+      "launch_url": "https://${DOMAIN}:3000",
       "client_id_env": "HOMEPAGE_AUTH_CLIENT_ID",
       "client_secret_env": "HOMEPAGE_AUTH_CLIENT_SECRET",
       "redirect_uris": [
-        "http://${DOMAIN}:3000/api/auth/callback/authentik"
+        "https://${DOMAIN}:3000/api/auth/callback/authentik"
       ]
     },
     {
