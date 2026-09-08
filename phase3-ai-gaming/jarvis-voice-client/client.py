@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import audioop
+import contextlib
 import hashlib
+import io
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -1057,6 +1060,9 @@ class VoiceController:
         self.paused = False
         self.suppress_until = 0.0
         self.on_state_change = None
+        self.last_turn = VoiceTurn()
+        self.last_error = ""
+        self.last_wake_score = 0.0
 
     def set_state(self, state, message=""):
         with self.state_lock:
@@ -1110,6 +1116,15 @@ class VoiceController:
             return None
         try:
             return self._record_turn_locked(trigger)
+        except Exception as exc:
+            self.last_error = str(exc)
+            self.set_state(VoiceState.ERROR, str(exc))
+            logging.exception("voice turn failed: %s", exc)
+            try:
+                self.speaker.print_status(f"Jarvis turn failed: {exc}")
+            except Exception:
+                pass
+            return None
         finally:
             self.turn_lock.release()
 
@@ -1124,6 +1139,7 @@ class VoiceController:
         wav_bytes = self.recorder(self.config)
         logging.info("timing record trigger=%s bytes=%s seconds=%.2f", trigger, len(wav_bytes or b""), time.perf_counter() - start)
         turn = self.session.handle_recording(wav_bytes, greet=False)
+        self.last_turn = turn
         self.suppress_until = time.time() + self.config.post_turn_cooldown_seconds
         self.set_state(VoiceState.LISTENING)
         return turn
@@ -1146,6 +1162,7 @@ class VoiceController:
         for score in listen_for_wake(config=self.config, should_listen=self.should_accept_wake):
             if self.stop_event.is_set():
                 break
+            self.last_wake_score = score
             self.speaker.print_status(f"Wake detected: {score:.2f}")
             self.record_turn("wake")
 
@@ -1212,29 +1229,242 @@ def run_worker(config):
         controller.stop()
 
 
-def tray_image(state):
-    from PIL import Image, ImageDraw
-
-    colors = {
-        VoiceState.DISCONNECTED: "#666666",
+def state_color(state):
+    return {
+        VoiceState.DISCONNECTED: "#6e7681",
         VoiceState.LISTENING: "#2ea043",
         VoiceState.RECORDING: "#d29922",
         VoiceState.PROCESSING: "#58a6ff",
         VoiceState.SPEAKING: "#a371f7",
         VoiceState.PAUSED: "#8b949e",
         VoiceState.ERROR: "#f85149",
-    }
-    image = Image.new("RGB", (64, 64), "#0d1117")
+    }.get(state, "#6e7681")
+
+
+def jarvis_icon_path():
+    # Use the launched script path so the icon also resolves when the client is
+    # packaged or invoked from a Windows scheduled task.
+    return Path(sys.argv[0]).resolve().with_name("jarvis-core.ico")
+
+
+def tray_image(state):
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGBA", (64, 64), "#0d1117")
     draw = ImageDraw.Draw(image)
-    draw.ellipse((12, 12, 52, 52), fill=colors.get(state, "#666666"))
-    draw.ellipse((25, 25, 39, 39), fill="#0d1117")
+    draw.rounded_rectangle((4, 4, 60, 60), radius=14, fill="#111827", outline="#30363d", width=2)
+
+    center = (32, 31)
+    radius = 15
+    mark = "#a7b5d6"
+    for index in range(6):
+        angle = math.radians(index * 60 - 90)
+        x = center[0] + math.cos(angle) * 8
+        y = center[1] + math.sin(angle) * 8
+        box = (x - radius, y - radius, x + radius, y + radius)
+        draw.arc(box, start=index * 60 + 18, end=index * 60 + 235, fill=mark, width=4)
+
+    draw.ellipse((28, 27, 36, 35), fill="#111827", outline=mark, width=2)
+    draw.ellipse((45, 45, 58, 58), fill=state_color(state), outline="#0d1117", width=2)
     return image
 
 
-def run_threaded(name, target):
-    thread = threading.Thread(target=target, name=name, daemon=True)
+def apply_window_icon(root, state):
+    icon_path = jarvis_icon_path()
+    try:
+        if icon_path.exists():
+            root.iconbitmap(default=str(icon_path))
+            return
+    except Exception:
+        pass
+    try:
+        from PIL import ImageTk
+
+        root._jarvis_icon = ImageTk.PhotoImage(tray_image(state))
+        root.iconphoto(True, root._jarvis_icon)
+    except Exception:
+        pass
+
+
+def run_threaded(name, target, daemon=True):
+    thread = threading.Thread(target=target, name=name, daemon=daemon)
     thread.start()
     return thread
+
+
+def open_status_window(controller, config, log_dir):
+    existing = getattr(open_status_window, "_window", None)
+    try:
+        if existing and existing.winfo_exists():
+            existing.after(0, existing.lift)
+            existing.after(0, existing.focus_force)
+            return
+    except Exception:
+        pass
+
+    def start_gui():
+        import tkinter as tk
+        from tkinter import ttk
+
+        root = tk.Tk()
+        open_status_window._window = root
+        root.title("Jarvis")
+        apply_window_icon(root, controller.state)
+        root.geometry("780x620")
+        root.minsize(640, 480)
+        root.configure(bg="#0d1117")
+
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure("TFrame", background="#0d1117")
+        style.configure("Card.TFrame", background="#161b22", relief="solid", borderwidth=1)
+        style.configure("TLabel", background="#0d1117", foreground="#e6edf3", font=("Segoe UI", 10))
+        style.configure("Title.TLabel", background="#0d1117", foreground="#e6edf3", font=("Segoe UI", 16, "bold"))
+        style.configure("Card.TLabel", background="#161b22", foreground="#e6edf3", font=("Segoe UI", 10))
+        style.configure("Muted.TLabel", background="#161b22", foreground="#8b949e", font=("Segoe UI", 9))
+        style.configure("Good.TLabel", background="#161b22", foreground="#3fb950", font=("Segoe UI", 10, "bold"))
+        style.configure("Warn.TLabel", background="#161b22", foreground="#d29922", font=("Segoe UI", 10, "bold"))
+        style.configure("Bad.TLabel", background="#161b22", foreground="#f85149", font=("Segoe UI", 10, "bold"))
+        style.configure("TButton", font=("Segoe UI", 10), padding=8)
+
+        header = ttk.Frame(root, padding=(14, 12))
+        header.pack(fill="x")
+        ttk.Label(header, text="Jarvis Voice Client", style="Title.TLabel").pack(side="left")
+        status_label = ttk.Label(header, text="starting")
+        status_label.pack(side="right")
+
+        body = ttk.Frame(root, padding=(14, 0, 14, 14))
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(2, weight=1)
+
+        def card(parent, title, row, column, colspan=1):
+            frame = ttk.Frame(parent, style="Card.TFrame", padding=12)
+            frame.grid(row=row, column=column, columnspan=colspan, sticky="nsew", padx=6, pady=6)
+            ttk.Label(frame, text=title, style="Card.TLabel", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            return frame
+
+        voice_card = card(body, "Voice", 0, 0)
+        voice_text = ttk.Label(voice_card, text="", style="Card.TLabel", justify="left")
+        voice_text.pack(anchor="w", fill="x", pady=(8, 0))
+
+        server_card = card(body, "Server", 0, 1)
+        server_text = ttk.Label(server_card, text="", style="Card.TLabel", justify="left")
+        server_text.pack(anchor="w", fill="x", pady=(8, 0))
+
+        worker_card = card(body, "Desktop Worker", 1, 0)
+        worker_text = ttk.Label(worker_card, text="", style="Card.TLabel", justify="left")
+        worker_text.pack(anchor="w", fill="x", pady=(8, 0))
+
+        actions_card = card(body, "Controls", 1, 1)
+        buttons = ttk.Frame(actions_card, style="Card.TFrame")
+        buttons.pack(anchor="w", pady=(8, 0))
+
+        def action_button(text, command):
+            ttk.Button(buttons, text=text, command=command).pack(side="left", padx=(0, 6), pady=4)
+
+        def open_core():
+            webbrowser.open(config.chat_url.rstrip("/") + "/core")
+
+        def open_logs_file():
+            path = log_dir / "jarvis-voice-client.log"
+            path.touch(exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(path))
+            else:
+                webbrowser.open(str(path))
+
+        action_button("Talk", lambda: run_threaded("jarvis-gui-push-to-talk", controller.push_to_talk))
+        action_button("Pause" if not controller.paused else "Resume", lambda: controller.resume() if controller.paused else controller.pause())
+        action_button("Core", open_core)
+        action_button("Logs", open_logs_file)
+
+        diagnostics_card = card(body, "Diagnostics", 2, 0, 2)
+        diagnostics_card.rowconfigure(0, weight=1)
+        diagnostics_card.columnconfigure(0, weight=1)
+        diag_text = tk.Text(diagnostics_card, height=14, bg="#0d1117", fg="#c9d1d9", insertbackground="#c9d1d9", relief="flat", wrap="word")
+        diag_text.pack(fill="both", expand=True, pady=(8, 0))
+
+        lower_buttons = ttk.Frame(diagnostics_card, style="Card.TFrame")
+        lower_buttons.pack(fill="x", pady=(8, 0))
+
+        def set_diag(text):
+            diag_text.delete("1.0", "end")
+            diag_text.insert("1.0", text)
+
+        def run_diag():
+            def work():
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    diagnose(config)
+                root.after(0, lambda: set_diag(output.getvalue()))
+
+            run_threaded("jarvis-gui-diagnostics", work)
+
+        def show_features():
+            features = [
+                "Voice: wake word, push-to-talk, transcription, TTS responses",
+                "Core: approvals, scheduled automations, daily briefs, tasks, evidence, maintenance",
+                "Desktop: notifications, open URLs, list/stat/hash/move/quarantine files inside allowed roots",
+                "Gmail: needs-reply scan, cleanup proposals, labels/stars/archive after approval",
+                "Drive: inventory, folder browsing, copy proposals, Nextcloud/Paperless import paths",
+                "Homelab: diagnostics, Pi-hole/DNS health, service status, notifications",
+                "Codex: approval-gated coding tasks through the Codex worker, with modes inspect/plan/patch/test/execute",
+            ]
+            set_diag("\n".join(f"- {item}" for item in features))
+
+        ttk.Button(lower_buttons, text="Run diagnostics", command=run_diag).pack(side="left", padx=(0, 6))
+        ttk.Button(lower_buttons, text="Show features", command=show_features).pack(side="left", padx=(0, 6))
+        ttk.Button(lower_buttons, text="Recent log", command=lambda: set_diag(read_log_tail(log_dir, 80))).pack(side="left", padx=(0, 6))
+
+        def health_summary():
+            try:
+                data = controller.client.health()
+                return f"Jarvis Chat OK\n{config.chat_url}\nauth_required={data.get('auth_required')}"
+            except Exception as exc:
+                return f"Jarvis Chat failed\n{config.chat_url}\n{exc}"
+
+        def refresh():
+            state = controller.state.value if isinstance(controller.state, VoiceState) else str(controller.state)
+            style_name = "Good.TLabel" if state == "listening" else "Warn.TLabel" if state in {"recording", "processing", "speaking", "paused"} else "Bad.TLabel"
+            status_label.configure(text=state, style=style_name)
+            cooldown = max(0, int(controller.suppress_until - time.time()))
+            voice_text.configure(
+                text=(
+                    f"wake: {config.wake_phrase}\n"
+                    f"threshold: {config.wake_threshold} x {config.wake_consecutive_hits}\n"
+                    f"last score: {controller.last_wake_score:.2f}\n"
+                    f"cooldown: {cooldown}s\n"
+                    f"last heard: {controller.last_turn.transcript or 'none'}\n"
+                    f"last said: {controller.last_turn.response_text or controller.state_message or 'none'}"
+                )
+            )
+            server_text.configure(text=health_summary())
+            worker_text.configure(
+                text=(
+                    f"id: {config.desktop_worker_id}\n"
+                    f"enabled: {config.desktop_worker_enabled}\n"
+                    f"roots:\n- " + "\n- ".join(str(root) for root in configured_desktop_roots(config))
+                )
+            )
+            root.after(5000, refresh)
+
+        show_features()
+        refresh()
+        root.mainloop()
+
+    return run_threaded("jarvis-status-gui", start_gui, daemon=False)
+
+
+def read_log_tail(log_dir, lines=80):
+    path = log_dir / "jarvis-voice-client.log"
+    if not path.exists():
+        return "No log file yet."
+    try:
+        return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+    except Exception as exc:
+        return f"Could not read log: {exc}"
 
 
 def run_tray(config):
@@ -1301,6 +1531,7 @@ def run_tray(config):
 
     icon.menu = pystray.Menu(
         pystray.MenuItem(status_text, None, enabled=False),
+        pystray.MenuItem("Open status", lambda *_: open_status_window(controller, config, log_dir)),
         pystray.MenuItem("Push to talk", threaded_action(controller.push_to_talk), enabled=lambda _: config.enable_push_to_talk),
         pystray.MenuItem(pause_text, pause_resume),
         pystray.MenuItem("Restart tunnel", threaded_action(controller.restart_tunnel)),
@@ -1327,6 +1558,13 @@ def run_tray(config):
         run_threaded("jarvis-desktop-worker", controller.desktop_worker.run_forever)
     refresh()
     icon.run()
+
+
+def run_status_gui(config):
+    log_dir = setup_logging(config)
+    controller = VoiceController(config)
+    controller.ensure_connected()
+    open_status_window(controller, config, log_dir)
 
 
 def diagnose(config):
@@ -1382,6 +1620,7 @@ def main():
     parser.add_argument("--listen", action="store_true", help="Listen continuously for the wake phrase.")
     parser.add_argument("--push-to-talk", action="store_true", help="Record one request through the push-to-talk path.")
     parser.add_argument("--tray", action="store_true", help="Run the Windows tray app.")
+    parser.add_argument("--status-gui", action="store_true", help="Open the Jarvis troubleshooting window.")
     parser.add_argument("--worker", action="store_true", help="Run only the Jarvis desktop worker loop.")
     parser.add_argument("--diagnose", action="store_true", help="Check Jarvis Chat, audio devices, and wake model setup.")
     parser.add_argument("--env", default=".env", help="Path to local env config.")
@@ -1392,6 +1631,8 @@ def main():
         diagnose(config)
     elif args.tray:
         run_tray(config)
+    elif args.status_gui:
+        run_status_gui(config)
     elif args.worker:
         run_worker(config)
     elif args.push_to_talk:

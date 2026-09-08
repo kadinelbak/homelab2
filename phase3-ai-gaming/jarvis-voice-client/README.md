@@ -68,6 +68,14 @@ Tray menu actions:
 - Open logs
 - Quit
 
+Choose **Open status** from the tray menu, or run the status window directly,
+to view voice state, recent transcript, server/worker connectivity, and the
+same safe troubleshooting actions without opening a console:
+
+```powershell
+python client.py --status-gui --env .env
+```
+
 Useful config:
 
 ```powershell
