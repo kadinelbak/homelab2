@@ -80,8 +80,6 @@ services:
       JARVIS_VISION_LLM_API_KEY: ${JARVIS_VISION_LLM_API_KEY:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/openwebui:/app/backend/data
-    ports:
-      - "18080:8080"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -145,8 +143,6 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/scad-ai-generator:/data
-    ports:
-      - "${SCAD_AI_BIND_IP:-0.0.0.0}:${SCAD_AI_HOST_PORT:-18104}:8102"
     networks:
       - homelab_internal
     labels:
@@ -242,8 +238,6 @@ services:
       EXECUTIONS_DATA_MAX_AGE: 168    # Keep execution logs 7 days
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/n8n:/home/node/.n8n
-    ports:
-      - "5678:5678"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -799,8 +793,6 @@ services:
       TZ: ${TZ}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/spoolman:/home/app/.local/share/spoolman
-    ports:
-      - "7912:8000"
     networks:
       - homelab_proxy
     labels:
@@ -855,14 +847,13 @@ services:
     profiles: ["stirling-pdf", "tools"]
     environment:
       TZ: ${TZ}
+      # Keep the native login as a break-glass safeguard behind the TLS edge.
       SECURITY_ENABLELOGIN: "${STIRLING_PDF_ENABLE_LOGIN:-true}"
       SECURITY_LOGINMETHOD: ${STIRLING_PDF_LOGIN_METHOD:-normal}
       SECURITY_INITIALLOGIN_USERNAME: ${STIRLING_PDF_INITIAL_USERNAME:-admin}
       SECURITY_INITIALLOGIN_PASSWORD: ${STIRLING_PDF_INITIAL_PASSWORD:-stirling}
     volumes:
       - ${DATA_PATH}/phase3-ai-gaming/data/stirling-pdf:/configs
-    ports:
-      - "8086:8080"
     networks:
       - homelab_proxy
     labels:
@@ -885,8 +876,6 @@ services:
     profiles: ["it-tools", "tools"]
     environment:
       TZ: ${TZ}
-    ports:
-      - "8087:80"
     networks:
       - homelab_proxy
     labels:
@@ -899,9 +888,8 @@ services:
       - "homelab.auth=authentik-proxy"
 
   # ---------------------------------------------------------------------------
-  # WEB GAMES – Local no-ads browser games (Tailscale/port access recommended)
-  # Access target: http://<tailnet-host>:8092
-  # Intentionally NOT attached to homelab_proxy to avoid accidental NPM routing.
+  # WEB GAMES – Local no-ads browser games
+  # Proxy target: web-games:80
   # ---------------------------------------------------------------------------
   web-games:
     image: nginx:1.27-alpine
@@ -910,11 +898,11 @@ services:
     profiles: ["web-games", "gaming"]
     environment:
       TZ: ${TZ}
-    ports:
-      - "8092:80"
     volumes:
       - ./games-portal:/usr/share/nginx/html:ro
       - ./games-portal-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - homelab_proxy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "homepage.group=Gaming"

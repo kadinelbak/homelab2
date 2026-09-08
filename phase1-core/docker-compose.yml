@@ -209,6 +209,53 @@ services:
       homepage.href: http://${DOMAIN}:9001
       homepage.description: Identity provider and SSO
 
+  authentik-tls-edge:
+    image: nginx:1.27-alpine
+    container_name: authentik_tls_edge
+    restart: unless-stopped
+    depends_on:
+      authentik-server:
+        condition: service_healthy
+    volumes:
+      - ./authentik-tls-edge:/etc/nginx/conf.d:ro
+      - ${DATA_PATH}/phase1-core/data/tailscale-certs:/etc/nginx/certs:ro
+    ports:
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:3000:3000"     # Homepage via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:3100:3100"     # Loki via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:30030:30030"   # Grafana via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:5055:5055"     # Homelab Control via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:5678:5678"     # n8n via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:6767:6767"     # Bazarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:7878:7878"     # Radarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:7912:7912"     # Spoolman via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8086:8086"     # Stirling PDF via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8087:8087"     # IT-Tools via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8089:8089"     # Scrutiny via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8090:8090"     # Beszel via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8092:8092"     # Web Games via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8097:8097"     # qBittorrent via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8686:8686"     # Lidarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8787:8787"     # Readarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8989:8989"     # Sonarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9090:9090"     # Prometheus via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9093:9093"     # Alertmanager via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9696:9696"     # Prowlarr via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9999:9999"     # WOL API via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18080:18080"   # Open WebUI via HTTPS + Authentik
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18104:18104"   # SCAD AI Generator via HTTPS + Authentik
+    networks:
+      - homelab_proxy
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      <<: [*common-labels, *critical]
+      homelab.service: authentik-tls-edge
+      homelab.depends_on: authentik-server
+
   authentik-worker:
     image: ghcr.io/goauthentik/server:latest
     container_name: authentik_worker
@@ -259,8 +306,6 @@ services:
     volumes:
       - ${DATA_PATH}/phase1-core/data/homepage:/app/config
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports:
-      - "3000:3000"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -422,8 +467,6 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_PATH}/phase1-core/data/beszel/hub:/beszel_data
-    ports:
-      - "8090:8090"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -473,8 +516,6 @@ services:
       - ${DATA_PATH}/phase1-core/data/scrutiny/influxdb:/opt/scrutiny/influxdb
       - /run/udev:/run/udev:ro
       - /dev:/dev
-    ports:
-      - "8089:8080"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -501,8 +542,6 @@ services:
       - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/prometheus/alert.rules:/etc/prometheus/alert.rules:ro
       - prometheus_data:/prometheus
-    ports:
-      - "9090:9090"
     networks:
       - homelab_internal
       - homelab_proxy
@@ -543,8 +582,6 @@ services:
       - grafana_data:/var/lib/grafana
       - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../monitoring/grafana/provisioning/dashboards:/var/lib/grafana/dashboards:ro
-    ports:
-      - "30030:3000"
     networks:
       - homelab_proxy
       - homelab_internal
@@ -569,8 +606,6 @@ services:
     volumes:
       - ../monitoring/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - loki_data:/loki
-    ports:
-      - "3100:3100"
     networks:
       - homelab_internal
       - homelab_proxy
@@ -620,8 +655,6 @@ services:
     volumes:
       - ../monitoring/alertmanager/config.yml:/etc/alertmanager/config.yml:ro
       - alertmanager_data:/alertmanager
-    ports:
-      - "9093:9093"
     networks:
       - homelab_internal
       - homelab_proxy
@@ -706,8 +739,6 @@ services:
       WOL_MAC_ADDRESS: ${WOL_MAC_ADDRESS}
       WOL_BROADCAST_ADDRESS: ${WOL_BROADCAST_ADDRESS}
       WOL_PORT: ${WOL_PORT}
-    ports:
-      - "9999:9999"
     networks:
       - homelab_internal
       - homelab_proxy
@@ -727,8 +758,6 @@ services:
     image: homelab/control:local
     container_name: homelab_control
     restart: unless-stopped
-    ports:
-      - "5055:5055"
     environment:
       HOMELAB_REPO: /homelab
       HOMELAB_CONTROL_TOKEN: ${HOMELAB_CONTROL_TOKEN}
@@ -736,6 +765,9 @@ services:
     volumes:
       - ../:/homelab:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - homelab_internal
+      - homelab_proxy
     labels:
       <<: [*common-labels, *important]
       homelab.service: homelab-control

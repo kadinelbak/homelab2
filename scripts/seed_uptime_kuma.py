@@ -6,6 +6,7 @@ Usage:
 
 Environment variables supported:
   DOMAIN                   Base host for monitor URLs (default: kadin-main-sys.tail00cf0e.ts.net)
+  DOMAIN                   TLS hostname used by the Authentik edge and monitor URLs
   UPTIME_KUMA_URL          Kuma URL (default: http://127.0.0.1:3001)
   UPTIME_KUMA_USERNAME     Kuma username (used if --username omitted)
   UPTIME_KUMA_PASSWORD     Kuma password (used if --password omitted)
@@ -35,6 +36,7 @@ def http(
     interval: int,
     active: bool = True,
     accepted_statuscodes: list[str] | None = None,
+    ignore_tls: bool = False,
 ) -> dict:
     monitor = {
         "name": name,
@@ -43,6 +45,7 @@ def http(
         "interval": interval,
         "maxretries": 3,
         "active": active,
+        "ignore_tls": ignore_tls,
     }
     if accepted_statuscodes:
         monitor["accepted_statuscodes"] = accepted_statuscodes
@@ -72,38 +75,39 @@ def push(name: str, interval: int, active: bool = True) -> dict:
 
 
 def build_monitors(base_host: str, interval: int, include_ondemand: bool) -> list[dict]:
+    auth_or_login_codes = ["200-399"]
     monitors = [
-        http("Homepage", f"http://{base_host}:3000", interval),
+        http("Homepage", f"https://{base_host}:3000", interval, accepted_statuscodes=auth_or_login_codes),
         http("Nginx Proxy Manager", f"http://{base_host}:81", interval),
         http("Portainer", f"http://{base_host}:9000", interval),
         http("Authentik", f"http://{base_host}:9001/-/health/live/", interval),
-        http("Vaultwarden", f"http://{base_host}:7070", interval),
+        http("Vaultwarden", f"http://{base_host}:7070", interval, accepted_statuscodes=auth_or_login_codes),
         http("ntfy", f"http://{base_host}:8085", interval),
         http("Uptime Kuma", f"http://{base_host}:3001", interval),
-        http("Beszel", f"http://{base_host}:8090", interval),
-        http("Scrutiny", f"http://{base_host}:8089", interval),
-        http("Grafana", f"http://{base_host}:30030", interval),
-        http("Prometheus", f"http://{base_host}:9090", interval),
-        http("Alertmanager", f"http://{base_host}:9093", interval),
-        http("Loki", f"http://{base_host}:3100/ready", interval),
-        http("Jellyfin", f"http://{base_host}:8096", interval),
-        http("Audiobookshelf", f"http://{base_host}:13378", interval),
-        http("Navidrome", f"http://{base_host}:4533", interval),
-        http("Immich", f"http://{base_host}:2283", interval),
-        http("Paperless-ngx", f"http://{base_host}:8000", interval),
-        http("Prowlarr", f"http://{base_host}:9696", interval),
-        http("Bazarr", f"http://{base_host}:6767", interval),
-        http("Open WebUI", f"http://{base_host}:8080", interval),
-        http("n8n", f"http://{base_host}:5678/healthz", interval),
-        http("Home Assistant", f"http://{base_host}:8123", interval),
-        http("Spoolman", f"http://{base_host}:7912", interval),
-        http("Actual Budget", f"http://{base_host}:5006", interval),
-        http("Stirling PDF", f"http://{base_host}:8086", interval),
-        http("IT-Tools", f"http://{base_host}:8087", interval),
-        http("Web Games", f"http://{base_host}:8092", interval, accepted_statuscodes=["200-299", "300-399", "400-499"]),
+        http("Beszel", f"https://{base_host}:8090", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Scrutiny", f"https://{base_host}:8089", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Grafana", f"https://{base_host}:30030", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Prometheus", f"https://{base_host}:9090", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Alertmanager", f"https://{base_host}:9093", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Loki", f"https://{base_host}:3100", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Jellyfin", f"http://{base_host}:8096", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Audiobookshelf", f"http://{base_host}:13378", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Navidrome", f"http://{base_host}:4533", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Immich", f"http://{base_host}:2283", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Paperless-ngx", f"http://{base_host}:8000", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Prowlarr", f"https://{base_host}:9696", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Bazarr", f"https://{base_host}:6767", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Open WebUI", f"https://{base_host}:18080", interval, accepted_statuscodes=auth_or_login_codes),
+        http("n8n", f"https://{base_host}:5678", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Home Assistant", f"http://{base_host}:8123", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Spoolman", f"https://{base_host}:7912", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Actual Budget", f"https://{base_host}:5006", interval, accepted_statuscodes=auth_or_login_codes, ignore_tls=True),
+        http("Stirling PDF", f"https://{base_host}:8086", interval, accepted_statuscodes=auth_or_login_codes),
+        http("IT-Tools", f"https://{base_host}:8087", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Web Games", f"https://{base_host}:8092", interval, accepted_statuscodes=auth_or_login_codes),
         http("Game Server API", f"http://{base_host}:8093/health", interval),
-        http("Hearts Multiplayer", f"http://{base_host}:8094", interval),
-        http("Wake-on-LAN API", f"http://{base_host}:9999/health", interval),
+        http("Hearts Multiplayer", f"http://{base_host}:8094", interval, accepted_statuscodes=auth_or_login_codes),
+        http("Wake-on-LAN API", f"http://{base_host}:9999", interval, accepted_statuscodes=auth_or_login_codes),
         tcp("Minecraft", base_host, 25565, interval),
     ]
 
@@ -164,7 +168,7 @@ def main() -> int:
     parser.add_argument(
         "--base-host",
         default=os.getenv("DOMAIN", "kadin-main-sys.tail00cf0e.ts.net"),
-        help="Host/domain used in monitor URLs",
+        help="TLS host name used in monitor URLs (must match the edge certificate)",
     )
     parser.add_argument(
         "--username",

@@ -275,17 +275,11 @@ services:
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: ${VPN_PORT_FORWARDING:-off}
       TZ: ${TZ}
-      # Expose the qBittorrent Web UI port through Gluetun:
       HTTPPROXY: "off"
       SHADOWSOCKS: "off"
-    ports:
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8097:8097"   # qBittorrent Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:9696:9696"   # Prowlarr Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:6767:6767"   # Bazarr Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8989:8989"   # Sonarr Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:7878:7878"   # Radarr Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8686:8686"   # Lidarr Web UI
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:8787:8787"   # Readarr Web UI
+    # Web UIs are proxied through Authentik in phase1-core.
+    # Keep qBittorrent and Starr apps reachable inside Docker at gluetun:<port>
+    # without exposing direct host bypass ports here.
     networks:
       - homelab_proxy   # So NPM can reach the Web UI via Gluetun's IP
     secrets:

@@ -9,7 +9,7 @@
       "slug": "spoolman",
       "name": "Spoolman",
       "description": "Filament tracking",
-      "external_host": "${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:7912",
+      "external_host": "https://${DOMAIN}:7912",
       "internal_host": "http://spoolman:8000",
       "auth": "authentik_proxy"
     },
@@ -17,9 +17,63 @@
       "slug": "it-tools",
       "name": "IT-Tools",
       "description": "Developer utilities",
-      "external_host": "${TOOLS_PUBLIC_SCHEME:-http}://${DOMAIN}:8087",
+      "external_host": "https://${DOMAIN}:8087",
       "internal_host": "http://it-tools:80",
       "auth": "authentik_proxy"
+    },
+    {
+      "slug": "prowlarr",
+      "name": "Prowlarr",
+      "description": "Indexer aggregator",
+      "external_host": "https://${DOMAIN}:9696",
+      "internal_host": "http://gluetun:9696",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "External"
+    },
+    {
+      "slug": "bazarr",
+      "name": "Bazarr",
+      "description": "Subtitle manager",
+      "external_host": "https://${DOMAIN}:6767",
+      "internal_host": "http://gluetun:6767",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "ProxyOnly"
+    },
+    {
+      "slug": "sonarr",
+      "name": "Sonarr",
+      "description": "TV series automation",
+      "external_host": "https://${DOMAIN}:8989",
+      "internal_host": "http://gluetun:8989",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "External"
+    },
+    {
+      "slug": "radarr",
+      "name": "Radarr",
+      "description": "Movie automation",
+      "external_host": "https://${DOMAIN}:7878",
+      "internal_host": "http://gluetun:7878",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "External"
+    },
+    {
+      "slug": "lidarr",
+      "name": "Lidarr",
+      "description": "Music automation",
+      "external_host": "https://${DOMAIN}:8686",
+      "internal_host": "http://gluetun:8686",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "External"
+    },
+    {
+      "slug": "readarr",
+      "name": "Readarr",
+      "description": "Book automation",
+      "external_host": "https://${DOMAIN}:8787",
+      "internal_host": "http://gluetun:8787",
+      "auth": "authentik_proxy",
+      "upstream_auth_method": "External"
     }
   ]
 }

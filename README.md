@@ -410,6 +410,53 @@ Use:
 - `AI_CONTEXT.md` for fast troubleshooting prompts and context handoff.
 - `scripts/toggle-ondemand.sh logs <service>` for immediate diagnostics.
 
+## 14. Authentik for Starr services
+
+Prowlarr, Sonarr, Radarr, Lidarr, and Readarr can use Authentik as the only
+human-facing login by putting them behind an Authentik Proxy Provider and setting
+their Servarr authentication mode to `External`.
+
+1. Create or update Authentik proxy providers from `config/authentik/proxy-providers.json`.
+   Their external hosts must use the Tailnet HTTPS hostname and the matching
+   TLS-edge port; the manifest uses `https://${DOMAIN}:<port>` for this reason.
+   Because these apps run with `network_mode: service:gluetun`, the proxy
+   upstreams use `http://gluetun:<port>`.
+2. Assign the proxy-provider applications to the Authentik proxy outpost.
+3. First verify the pending XML changes without modifying service data:
+
+```bash
+python3 scripts/configure-servarr-auth.py --dry-run --method External prowlarr sonarr radarr lidarr readarr
+```
+
+4. Stop the Servarr containers:
+
+```bash
+docker stop prowlarr sonarr radarr lidarr readarr
+```
+
+5. Set Servarr to trust the Authentik-protected proxy. The helper keeps the
+   original `config.xml.bak` beside each changed file for break-glass recovery:
+
+```bash
+python3 scripts/configure-servarr-auth.py --method External prowlarr sonarr radarr lidarr readarr
+```
+
+6. Start the containers again:
+
+```bash
+docker start prowlarr sonarr radarr lidarr readarr
+```
+
+7. Restrict direct access to the raw Starr ports so users cannot bypass
+   Authentik. Either remove those published ports, bind them only where your
+   reverse proxy can reach them, or enforce equivalent Tailscale ACLs.
+
+Bazarr is listed in `config/authentik/proxy-providers.json` for proxy-layer
+protection, but it does not use the same Servarr `External` switch. Keep its
+local auth enabled if its raw port remains reachable, or disable Bazarr local
+   auth only after direct bypass access is blocked. Test one authenticated
+   browser session through the TLS edge before changing the next application.
+
 ## 🛠️ Developer Experience
 
 This homelab provides a streamlined developer experience for building, testing, and deploying custom services.
