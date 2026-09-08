@@ -159,7 +159,7 @@ services:
   minecraft:
     image: itzg/minecraft-server:java17
     container_name: minecraft
-    restart: unless-stopped
+    restart: "on-failure:3"
     profiles: ["minecraft", "gaming"]
     tty: true
     stdin_open: true
@@ -173,7 +173,7 @@ services:
       MODRINTH_MODPACK: prominence-2-fabric
       MODRINTH_LOADER: fabric
       MODRINTH_MODPACK_VERSION_TYPE: release
-      MODRINTH_FORCE_SYNCHRONIZE: "true"
+      MODRINTH_FORCE_SYNCHRONIZE: ${MINECRAFT_FORCE_SYNCHRONIZE:-false}
       MODRINTH_PROJECTS: |
         faux-custom-entity-data
       MODRINTH_EXCLUDE_FILES: |
@@ -181,6 +181,7 @@ services:
         bettertrims
         Debugify
         ftbxemicompat-no-ambient
+        quests_teams_fixes
       OPS: ${MINECRAFT_OPS}
       TZ: ${TZ}
       # Biomes O' Plenty & heavy mods need more memory – tune MINECRAFT_MEMORY.

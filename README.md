@@ -170,7 +170,9 @@ docker compose --env-file ../.env up -d
 Critical checks:
 1. For Ollama GPU path, run `docker exec -it ollama nvidia-smi`.
 2. Point Open WebUI to `http://ollama:11434` (already prewired).
-3. Tune Minecraft memory (`MINECRAFT_MEMORY`) to avoid host swapping.
+3. Tune Minecraft memory (`MINECRAFT_MEMORY`) to avoid host swapping. Keep
+   `MINECRAFT_FORCE_SYNCHRONIZE=false` during normal restarts; enable it only
+   when intentionally re-syncing the Modrinth pack.
 4. Confirm n8n can connect to central Postgres (`n8n` database).
 5. For direct HTTP access to n8n, keep `N8N_PROTOCOL=http` and `N8N_SECURE_COOKIE=false`.
 6. Validate Spoolman responds on host port `7912` (container listens on `8000`).
