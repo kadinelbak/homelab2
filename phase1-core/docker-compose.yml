@@ -686,6 +686,42 @@ services:
       homelab.service: node_exporter
       homelab.depends_on: none
 
+  homelab-real-health:
+    build:
+      context: ../monitoring/real-health
+    image: homelab/real-health:local
+    container_name: homelab_real_health
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        while true; do
+          python3 /repo/scripts/homelab_real_health.py \
+            --repo /repo \
+            --env-file /repo/.env \
+            --metrics-dir /metrics \
+            --quiet
+          sleep "${HOMELAB_REAL_HEALTH_INTERVAL_SECONDS:-300}"
+        done
+    environment:
+      TZ: ${TZ}
+      HOMELAB_REAL_HEALTH_INTERVAL_SECONDS: ${HOMELAB_REAL_HEALTH_INTERVAL_SECONDS:-300}
+    volumes:
+      - ..:/repo:ro
+      - ${DATA_PATH}:${DATA_PATH}:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /mnt/backups:/mnt/backups:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DATA_PATH}/phase1-core/data/node-exporter/textfile_collector:/metrics
+    depends_on:
+      - node_exporter
+    labels:
+      <<: [*common-labels, *background]
+      homelab.service: homelab-real-health
+      homelab.depends_on: node_exporter
+
   backup:
     build:
       context: ../backup

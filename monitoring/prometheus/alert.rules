@@ -144,3 +144,105 @@ groups:
         annotations:
           summary: "Backup verification failed"
           description: "The latest backup verification did not complete successfully."
+
+  - name: homelab-real-health.rules
+    interval: 60s
+    rules:
+      - alert: HomelabHealthCollectorStale
+        expr: time() - homelab_real_health_last_run_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Homelab health collector is stale"
+          description: "The host health collector has not written fresh metrics for more than 15 minutes."
+
+      - alert: HomelabHealthCollectorError
+        expr: homelab_real_health_collector_ok == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Homelab health collector had an error"
+          description: "At least one real health check failed to run. Check homelab_real_health.json."
+
+      - alert: DockerContainerUnhealthy
+        expr: homelab_docker_containers_unhealthy > 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Docker reports unhealthy containers"
+          description: "{{ $value }} Docker container(s) are unhealthy."
+
+      - alert: DockerContainerRestarting
+        expr: homelab_docker_containers_restarting > 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Docker reports restarting containers"
+          description: "{{ $value }} Docker container(s) are stuck restarting."
+
+      - alert: ImportantDiskLow
+        expr: homelab_disk_free_percent < 15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.path }}"
+          description: "{{ $labels.path }} has less than 15% free space."
+
+      - alert: ImportantDiskCritical
+        expr: homelab_disk_free_percent < 8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk space on {{ $labels.path }}"
+          description: "{{ $labels.path }} has less than 8% free space."
+
+      - alert: TorrentVpnLeakRisk
+        expr: homelab_vpn_leak_safe == 0 and homelab_vpn_qbittorrent_running == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "qBittorrent VPN leak risk"
+          description: "qBittorrent is running but the VPN containment check is not passing."
+
+      - alert: HomelabTlsCertificateExpiring
+        expr: homelab_tls_cert_days_remaining < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate expiring on {{ $labels.domain }}:{{ $labels.port }}"
+          description: "The certificate has less than 14 days remaining."
+
+      - alert: HomelabTlsCertificateInvalid
+        expr: homelab_tls_cert_valid == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "TLS certificate invalid on {{ $labels.domain }}:{{ $labels.port }}"
+          description: "The certificate could not be validated or is expired."
+
+      - alert: HomelabServiceReadinessFailed
+        expr: homelab_service_ready == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service readiness failed for {{ $labels.service }}"
+          description: "{{ $labels.service }} did not return a healthy readiness response."
+
+      - alert: AuthentikTlsEdgeFailed
+        expr: homelab_authentik_tls_edge_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Authentik TLS edge failed on port {{ $labels.port }}"
+          description: "The HTTPS edge port is not returning a valid Authentik response."
