@@ -133,6 +133,12 @@ create_directories() {
     "${DATA_PATH}/phase3-ai-gaming/data/spoolman"
     "${DATA_PATH}/phase3-ai-gaming/data/actual"
     "${DATA_PATH}/phase3-ai-gaming/data/stirling-pdf"
+    "${DATA_PATH}/phase5-health-data/data/timescaledb"
+    "${DATA_PATH}/phase5-health-data/data/metabase"
+    "${DATA_PATH}/phase5-health-data/raw/fitbit-export"
+    "${DATA_PATH}/phase5-health-data/raw/n1-uploads"
+    "${DATA_PATH}/phase5-health-data/processed"
+    "${DATA_PATH}/phase5-health-data/notebooks"
     "${DATA_PATH}/phase4-ondemand/data/kasm/profiles"
     "${DATA_PATH}/phase4-ondemand/data/guacamole"
     "${DATA_PATH}/phase4-ondemand/data/nextcloud/html"
@@ -177,6 +183,7 @@ fix_permissions() {
     "${DATA_PATH}/phase1-core/data/backup"
     "${DATA_PATH}/phase2-media"
     "${DATA_PATH}/phase3-ai-gaming"
+    "${DATA_PATH}/phase5-health-data"
     "${DATA_PATH}/phase4-ondemand"
     "${DATA_PATH}/shared"
   )
@@ -204,6 +211,7 @@ validate_compose() {
     "phase1-core/docker-compose.yml"
     "phase2-media/docker-compose.yml"
     "phase3-ai-gaming/docker-compose.yml"
+    "phase5-health-data/docker-compose.yml"
     "phase4-ondemand/docker-compose.yml"
   )
 

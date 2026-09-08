@@ -1,3 +1,13 @@
+- Health:
+    - N-of-1 Health Logger:
+        icon: mdi-heart-pulse
+        href: https://kadin-main-sys.tail00cf0e.ts.net:13001
+        description: Private check-ins, interventions, and nutrition labels
+    - Health Metabase:
+        icon: metabase
+        href: http://100.79.132.39:13000
+        description: Private biometric and experiment dashboards
+
 - Jarvis:
     - Core Console:
         icon: si-openai

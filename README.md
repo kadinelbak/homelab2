@@ -78,6 +78,9 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 - `phase4-ondemand/docker-compose.yml`
   - Kasm, Guacamole, Nextcloud, Gitea, Supabase Studio, Kiwix, Docmost, Cal.com, NocoDB
   - All services `restart: "no"` for memory protection
+- `phase5-health-data/docker-compose.yml`
+  - TimescaleDB, Fitbit/Google Health importers, N-of-1 logger, JupyterLab, Metabase
+  - Designed for private Fitbit Inspire 3 analysis from Pixel 9 sync/export data
 - `scripts/setup.sh`
   - One-time bootstrap: dependency checks, directories, networks, ownership
 - `scripts/toggle-ondemand.sh`
@@ -232,6 +235,56 @@ Or use the helper:
 ./scripts/toggle-ondemand.sh down
 ./scripts/toggle-ondemand.sh status
 ```
+
+### Phase 5: Personal Health Data
+
+Keep this private behind Tailscale or trusted LAN access only.
+
+```bash
+cd ../phase5-health-data
+docker compose --env-file ../.env up -d health-db
+```
+
+Import a Fitbit/Google export after unpacking it under
+`${DATA_PATH}/phase5-health-data/raw/fitbit-export`:
+
+```bash
+docker compose --env-file ../.env run --rm health-importer import-export
+```
+
+Start notebooks and dashboards when needed:
+
+```bash
+docker compose --env-file ../.env --profile analysis up -d
+```
+
+For daily Google Health/Fitbit API ingestion, add the private OAuth values from
+`.env.example` to the server's `.env`, then start the sync profile:
+
+```bash
+docker compose --env-file ../.env --profile sync up -d health-sync
+```
+
+The sync imports the most recent two days immediately and then every 24 hours
+to catch delayed phone synchronization. Google OAuth apps left in Testing may
+require reauthorization roughly weekly; keep OAuth credentials and refresh
+tokens only in `.env` and the private health database.
+
+The mobile N-of-1 logger runs continuously with the base stack. It records
+check-ins, interventions, confirmed nutrition labels, and meal entries directly
+to the health database; food-label photos remain in the private health-data
+volume. Metabase reads the same tables and needs no separate sync. After the
+first deployment, refresh Metabase metadata once so it discovers the
+`n1_daily_nutrition`, `n1_experiment_adherence`, and `n1_experiment_day` views.
+
+Phase 5 access URLs:
+- `http://<tailnet-host>:18888` -> Health JupyterLab
+- `http://<tailnet-host>:13000` -> Health Metabase
+- `https://<tailnet-host>:13001` -> N-of-1 Health Logger
+
+The health database is deliberately not exposed on a host port. Set
+`HEALTH_BIND_IP` to the server's Tailscale IP so JupyterLab and Metabase bind to
+Tailscale only.
 
 ## 6. Access and Identity Flow
 

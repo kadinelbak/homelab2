@@ -1,0 +1,193 @@
+# =============================================================================
+# PHASE 5 - PERSONAL HEALTH DATA
+# Fitbit Inspire 3 + Pixel 9 workflow:
+#   Fitbit app sync -> export/API pull -> raw archive -> TimescaleDB -> analysis
+#
+# Prereq: Docker networks from scripts/setup.sh.
+#
+# Run core database:
+#   docker compose --env-file ../.env up -d health-db
+#
+# Import a downloaded Fitbit/Google export copied into:
+#   ${DATA_PATH}/phase5-health-data/raw/fitbit-export
+#   docker compose --env-file ../.env run --rm health-importer import-export
+#
+# Start analysis tools:
+#   docker compose --env-file ../.env --profile analysis up -d
+# =============================================================================
+
+networks:
+  health_private:
+    internal: true
+  health_access:
+
+services:
+  health-db:
+    image: ${HEALTH_DB_IMAGE:-timescale/timescaledb:latest-pg16}
+    container_name: health_timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${HEALTH_DB_NAME:-health}
+      POSTGRES_USER: ${HEALTH_DB_USER:-health}
+      POSTGRES_PASSWORD: ${HEALTH_DB_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - ${DATA_PATH}/phase5-health-data/data/timescaledb:/var/lib/postgresql/data
+      - ./importer/schema.sql:/docker-entrypoint-initdb.d/01-health-schema.sql:ro
+    networks:
+      - health_private
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  health-importer:
+    build:
+      context: ./importer
+    container_name: health_importer
+    restart: "no"
+    profiles: ["importer"]
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
+      HEALTH_RAW_DIR: /health/raw
+      HEALTH_PROCESSED_DIR: /health/processed
+      FITBIT_EXPORT_DIR: /health/raw/fitbit-export
+      GOOGLE_HEALTH_CLIENT_ID: ${GOOGLE_HEALTH_CLIENT_ID:-}
+      GOOGLE_HEALTH_CLIENT_SECRET: ${GOOGLE_HEALTH_CLIENT_SECRET:-}
+      GOOGLE_HEALTH_REFRESH_TOKEN: ${GOOGLE_HEALTH_REFRESH_TOKEN:-}
+    volumes:
+      - ${DATA_PATH}/phase5-health-data/raw:/health/raw
+      - ${DATA_PATH}/phase5-health-data/processed:/health/processed
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+
+  health-sync:
+    build:
+      context: ./importer
+    container_name: health_sync
+    restart: unless-stopped
+    profiles: ["sync"]
+    user: "${PUID}:${PGID}"
+    command: ["sync-loop"]
+    environment:
+      TZ: ${TZ}
+      HEALTH_SYNC_INTERVAL_SECONDS: ${HEALTH_SYNC_INTERVAL_SECONDS:-86400}
+      HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
+      GOOGLE_HEALTH_CLIENT_ID: ${GOOGLE_HEALTH_CLIENT_ID:-}
+      GOOGLE_HEALTH_CLIENT_SECRET: ${GOOGLE_HEALTH_CLIENT_SECRET:-}
+      GOOGLE_HEALTH_REFRESH_TOKEN: ${GOOGLE_HEALTH_REFRESH_TOKEN:-}
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+
+  health-n1-app:
+    build:
+      context: ./n1-app
+    container_name: health_n1_app
+    restart: unless-stopped
+    profiles: ["app", "n1"]
+    environment:
+      TZ: ${TZ}
+      HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
+      HEALTH_N1_UPLOAD_DIR: /health/uploads
+    volumes:
+      - ${DATA_PATH}/phase5-health-data/raw/n1-uploads:/health/uploads
+    ports:
+      - "${HEALTH_N1_BIND_IP:-127.0.0.1}:${HEALTH_N1_HOST_PORT:-13001}:8000"
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Health"
+      - "homepage.name=N-of-1 Health Logger"
+      - "homepage.icon=mdi-heart-pulse"
+      - "homepage.href=${HEALTH_N1_PUBLIC_URL}"
+      - "homepage.description=Private check-ins, interventions, and nutrition labels"
+
+  health-n1-reminders:
+    build:
+      context: ./n1-app
+    container_name: health_n1_reminders
+    restart: unless-stopped
+    profiles: ["app", "n1"]
+    command: ["python", "-m", "n1_app.reminders"]
+    environment:
+      TZ: ${TZ}
+      HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
+      JARVIS_TELEGRAM_BOT_TOKEN: ${JARVIS_TELEGRAM_BOT_TOKEN:-}
+      JARVIS_TELEGRAM_ALLOWED_CHAT_IDS: ${JARVIS_TELEGRAM_ALLOWED_CHAT_IDS:-}
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  health-jupyter:
+    build:
+      context: ./jupyter
+    container_name: health_jupyter
+    restart: unless-stopped
+    profiles: ["analysis"]
+    user: root
+    environment:
+      TZ: ${TZ}
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: ${HEALTH_JUPYTER_TOKEN}
+      GRANT_SUDO: "yes"
+      NB_UID: ${PUID}
+      NB_GID: ${PGID}
+      HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
+    volumes:
+      - ${DATA_PATH}/phase5-health-data/notebooks:/home/jovyan/work
+      - ./notebooks:/home/jovyan/examples:ro
+      - ${DATA_PATH}/phase5-health-data/raw:/home/jovyan/health/raw:ro
+      - ${DATA_PATH}/phase5-health-data/processed:/home/jovyan/health/processed
+    ports:
+      - "${HEALTH_BIND_IP:-127.0.0.1}:${HEALTH_JUPYTER_HOST_PORT:-18888}:8888"
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Health"
+      - "homepage.name=Health JupyterLab"
+      - "homepage.icon=jupyter"
+      - "homepage.href=http://${DOMAIN}:${HEALTH_JUPYTER_HOST_PORT:-18888}"
+      - "homepage.description=Private notebooks for health analysis"
+
+  health-metabase:
+    image: metabase/metabase:latest
+    container_name: health_metabase
+    restart: unless-stopped
+    profiles: ["analysis", "metabase"]
+    environment:
+      TZ: ${TZ}
+      MB_DB_FILE: /metabase-data/metabase.db
+    volumes:
+      - ${DATA_PATH}/phase5-health-data/data/metabase:/metabase-data
+    ports:
+      - "${HEALTH_BIND_IP:-127.0.0.1}:${HEALTH_METABASE_HOST_PORT:-13000}:3000"
+    networks:
+      - health_private
+      - health_access
+    depends_on:
+      - health-db
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "homepage.group=Health"
+      - "homepage.name=Health Metabase"
+      - "homepage.icon=metabase"
+      - "homepage.href=http://${DOMAIN}:${HEALTH_METABASE_HOST_PORT:-13000}"
+      - "homepage.description=Private dashboards for Fitbit and lab trends"
