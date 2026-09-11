@@ -95,6 +95,9 @@ services:
       TZ: ${TZ}
       HEALTH_DATABASE_URL: postgresql://${HEALTH_DB_USER:-health}:${HEALTH_DB_PASSWORD}@health-db:5432/${HEALTH_DB_NAME:-health}
       HEALTH_N1_UPLOAD_DIR: /health/uploads
+      DOMAIN: ${DOMAIN}
+      HEALTH_METABASE_HOST_PORT: ${HEALTH_METABASE_HOST_PORT:-13000}
+      HEALTH_METABASE_EXPERIMENT_DASHBOARD_URL: ${HEALTH_METABASE_EXPERIMENT_DASHBOARD_URL:-}
     volumes:
       - ${DATA_PATH}/phase5-health-data/raw/n1-uploads:/health/uploads
     ports:

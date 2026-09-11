@@ -1,1 +1,58 @@
-{% extends 'base.html' %}{% block content %}<h1>Experiments</h1><div class="card"><h2>New experiment</h2><form action="/experiments" method="post"><label>Name<input name="name" placeholder="No caffeine after noon" required></label><label>Hypothesis<textarea name="hypothesis" placeholder="This improves sleep duration."></textarea></label><label>Primary outcome<input name="primary_outcome" placeholder="Sleep duration"></label><div class="grid"><label>Start<input type="date" name="starts_on"></label><label>End<input type="date" name="ends_on"></label></div><label>Status<select name="status"><option value="draft">Draft</option><option value="active">Active</option></select></label><label>First condition<input name="initial_condition" value="Baseline"></label><button>Create experiment</button></form></div><div class="card"><h2>Scheduled intervention</h2><form action="/templates" method="post"><label>Name<input name="name" placeholder="Magnesium glycinate" required></label><div class="grid"><label>Dose<input name="dose" placeholder="200"></label><label>Unit<input name="unit" placeholder="mg"></label></div><label>Daily reminder time(s), comma-separated<input name="scheduled_times" placeholder="21:00"></label><div class="grid"><label>Active from<input type="date" name="active_from"></label><label>Active until<input type="date" name="active_until"></label></div><label>Experiment<select name="experiment_id"><option value="">None</option>{% for e in experiments %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></label><label>Notes<textarea name="notes"></textarea></label><button>Add scheduled intervention</button></form></div>{% for e in experiments %}<div class="card"><h2>{{ e.name }}</h2><p class="muted">{{ e.status }}{% if e.primary_outcome %} · Outcome: {{ e.primary_outcome }}{% endif %}</p><p>{{ e.hypothesis or '' }}</p><p class="muted">Conditions: {% for c in e.conditions %}{{ c.name }} ({{ c.kind }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% if e.status != 'archived' %}<details><summary>Add condition</summary><form action="/experiments/{{ e.id }}/conditions" method="post"><label>Name<input name="name" placeholder="Intervention A" required></label><label>Type<select name="kind"><option value="intervention">Intervention</option><option value="baseline">Baseline</option><option value="washout">Washout</option></select></label><div class="grid"><label>Start<input type="date" name="starts_on"></label><label>End<input type="date" name="ends_on"></label></div><label>Notes<input name="notes"></label><button>Add condition</button></form></details><form class="inline" action="/experiments/{{ e.id }}/archive" method="post"><button class="secondary">Archive experiment</button></form>{% endif %}</div>{% endfor %}<div class="card"><h2>Active interventions</h2>{% for t in templates %}<div class="row"><div><strong>{{ t.name }}</strong><br><span class="muted">{{ t.scheduled_times|join(', ') }}{% if t.experiment_name %} · {{ t.experiment_name }}{% endif %}</span></div>{% if t.is_active %}<form class="inline" action="/templates/{{ t.id }}/archive" method="post"><button class="secondary">Archive</button></form>{% else %}<span class="muted">Archived</span>{% endif %}</div>{% else %}<p class="muted">None yet.</p>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<h1>Experiments</h1>
+{% if metabase_dashboard_url %}
+<p><a class="metabase-link" href="{{ metabase_dashboard_url }}" target="_blank" rel="noopener">Open Health Overview in Metabase ↗</a></p>
+{% endif %}
+
+<details class="card" open>
+  <summary><strong>New experiment</strong></summary>
+  <form action="/experiments" method="post" data-reactive>
+    <label>Name<input name="name" placeholder="No caffeine after noon" required></label>
+    <label>Hypothesis<textarea name="hypothesis" placeholder="This improves sleep duration."></textarea></label>
+    <label>Primary outcome<input name="primary_outcome" placeholder="Sleep duration"></label>
+    <div class="grid"><label>Start<input type="date" name="starts_on"></label><label>End<input type="date" name="ends_on"></label></div>
+    <label>Status<select name="status"><option value="draft">Draft</option><option value="active">Active</option></select></label>
+    <label>First condition<input name="initial_condition" value="Baseline"></label>
+    <button type="submit">Create experiment</button>
+  </form>
+</details>
+
+<details class="card">
+  <summary><strong>Scheduled intervention</strong></summary>
+  <form action="/templates" method="post" data-reactive>
+    <label>Name<input name="name" placeholder="Magnesium glycinate" required></label>
+    <div class="grid"><label>Dose<input name="dose" placeholder="200"></label><label>Unit<input name="unit" placeholder="mg"></label></div>
+    <label>Daily reminder time(s), comma-separated<input name="scheduled_times" placeholder="21:00"></label>
+    <div class="grid"><label>Active from<input type="date" name="active_from"></label><label>Active until<input type="date" name="active_until"></label></div>
+    <label>Experiment<select name="experiment_id"><option value="">None</option>{% for e in experiments %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></label>
+    <label>Notes<textarea name="notes"></textarea></label>
+    <button type="submit">Add scheduled intervention</button>
+  </form>
+</details>
+
+{% if experiments %}<div class="toolbar"><input data-experiment-filter type="search" placeholder="Filter experiments" aria-label="Filter experiments"></div>{% endif %}
+{% for e in experiments %}
+<article class="card experiment-card" data-experiment-card>
+  <h2>{{ e.name }}</h2>
+  <p class="muted">{{ e.status }}{% if e.primary_outcome %} · Outcome: {{ e.primary_outcome }}{% endif %}</p>
+  <p>{{ e.hypothesis or '' }}</p>
+  <p class="muted">Conditions: {% for c in e.conditions %}{{ c.name }} ({{ c.kind }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% if metabase_dashboard_url %}<p><a class="metabase-link" href="{{ metabase_dashboard_url }}?experiment_id={{ e.id }}" target="_blank" rel="noopener">View this experiment in Metabase ↗</a></p>{% endif %}
+  {% if e.status != 'archived' %}
+  <details><summary>Add condition</summary><form action="/experiments/{{ e.id }}/conditions" method="post" data-reactive>
+    <label>Name<input name="name" placeholder="Intervention A" required></label>
+    <label>Type<select name="kind"><option value="intervention">Intervention</option><option value="baseline">Baseline</option><option value="washout">Washout</option></select></label>
+    <div class="grid"><label>Start<input type="date" name="starts_on"></label><label>End<input type="date" name="ends_on"></label></div>
+    <label>Notes<input name="notes"></label><button type="submit">Add condition</button>
+  </form></details>
+  <form class="inline" action="/experiments/{{ e.id }}/archive" method="post" data-reactive><button class="secondary" type="submit">Archive experiment</button></form>
+  {% endif %}
+</article>
+{% else %}<p class="muted">No experiments yet. Create one above.</p>{% endfor %}
+
+<div class="card"><h2>Active interventions</h2>{% for t in templates %}
+  <div class="row"><div><strong>{{ t.name }}</strong><br><span class="muted">{{ t.scheduled_times|join(', ') }}{% if t.experiment_name %} · {{ t.experiment_name }}{% endif %}</span></div>
+  {% if t.is_active %}<form class="inline" action="/templates/{{ t.id }}/archive" method="post" data-reactive><button class="secondary" type="submit">Archive</button></form>{% else %}<span class="muted">Archived</span>{% endif %}</div>
+{% else %}<p class="muted">None yet.</p>{% endfor %}</div>
+{% endblock %}

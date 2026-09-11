@@ -40,6 +40,18 @@ def optional_date(value: str | None) -> date | None:
 def render(request: Request, name: str, **context: Any):
     return templates.TemplateResponse(request, name, context)
 
+
+def metabase_experiment_dashboard_url() -> str | None:
+    """Return the user-facing dashboard URL without exposing any credentials."""
+    configured = os.environ.get("HEALTH_METABASE_EXPERIMENT_DASHBOARD_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    domain = os.environ.get("DOMAIN", "").strip()
+    if not domain:
+        return None
+    port = os.environ.get("HEALTH_METABASE_HOST_PORT", "13000")
+    return f"http://{domain}:{port}/dashboard/2-health-overview"
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -85,7 +97,13 @@ def experiments(request: Request):
         subject = owner(conn)
         rows = conn.execute("SELECT e.*, COALESCE(json_agg(c ORDER BY c.id) FILTER (WHERE c.id IS NOT NULL),'[]') AS conditions FROM experiments e LEFT JOIN experiment_conditions c ON c.experiment_id=e.id WHERE e.subject_id=%s GROUP BY e.id ORDER BY e.created_at DESC", (subject["id"],)).fetchall()
         templates_rows = conn.execute("SELECT t.*, e.name AS experiment_name FROM intervention_templates t LEFT JOIN experiments e ON e.id=t.experiment_id WHERE t.subject_id=%s ORDER BY t.is_active DESC,t.name", (subject["id"],)).fetchall()
-    return render(request, "experiments.html", experiments=rows, templates=templates_rows)
+    return render(
+        request,
+        "experiments.html",
+        experiments=rows,
+        templates=templates_rows,
+        metabase_dashboard_url=metabase_experiment_dashboard_url(),
+    )
 
 @app.post("/experiments")
 def create_experiment(name: str = Form(...), hypothesis: str = Form(""), primary_outcome: str = Form(""), starts_on: str = Form(""), ends_on: str = Form(""), status: str = Form("draft"), initial_condition: str = Form("Baseline")):
