@@ -88,7 +88,8 @@ using the same client and the activity, health-metrics, and sleep read-only
 scopes. Do not paste the token into chat or commit it. On the server, run
 `python3 scripts/update_google_health_refresh_token.py`, paste it into the
 hidden prompt, then restart `health_sync` with the health Compose file and its
-normal `.env` file. The legacy Fitbit Web API is scheduled for shutdown on
+normal `.env` file. If Google Cloud issued a replacement client secret too, add
+`--client-secret` so both values are updated in hidden prompts. The legacy Fitbit Web API is scheduled for shutdown on
 September 30, 2026; this stack uses Google Health instead.
 
 6. Start analysis tools when needed:
