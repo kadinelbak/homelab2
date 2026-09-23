@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block content %}
+<h1>Wearable sync</h1>
+<p class="muted">Use this only when the Google Health importer says its refresh token expired. The token never belongs in this page, chat, or Git.</p>
+<div class="card"><h2>1. Create a replacement token</h2><p><a class="metabase-link" href="https://developers.google.com/oauthplayground/" target="_blank" rel="noopener">Open Google OAuth Playground ↗</a></p><p class="muted">In the gear menu, select <strong>Use your own OAuth credentials</strong>, then use the existing client from the kad-health project.</p><p><a class="metabase-link" href="https://console.cloud.google.com/auth/clients?project=kad-health" target="_blank" rel="noopener">Open kad-health OAuth clients ↗</a></p></div>
+<div class="card"><h2>2. Request the same read-only scopes</h2><code>googlehealth.activity_and_fitness.readonly</code><br><code>googlehealth.health_metrics_and_measurements.readonly</code><br><code>googlehealth.sleep.readonly</code><p class="muted">Authorize with your Google account, then exchange the authorization code for tokens.</p></div>
+<div class="card"><h2>3. Save it privately on the server</h2><p class="muted">Run this in your terminal. It prompts for the refresh token without echoing it.</p><pre>ssh kadin@100.79.132.39 'cd /home/kadin/homelab2 &amp;&amp; python3 scripts/update_google_health_refresh_token.py'</pre><p class="muted">After saving it, return here and tell Codex “token updated” so the daily importer can be restarted and verified.</p></div>
+{% endblock %}

@@ -53,6 +53,10 @@ def metabase_experiment_dashboard_url() -> str | None:
     port = os.environ.get("HEALTH_METABASE_HOST_PORT", "13000")
     return f"http://{domain}:{port}/dashboard/2-health-overview"
 
+@app.get("/sync")
+def sync_help(request: Request):
+    return render(request, "sync.html")
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
