@@ -38,6 +38,7 @@ def optional_date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
 
 def render(request: Request, name: str, **context: Any):
+    context.setdefault("metabase_dashboard_url", metabase_experiment_dashboard_url())
     return templates.TemplateResponse(request, name, context)
 
 
@@ -160,6 +161,31 @@ def create_event(name: str=Form(...), occurred_at: str=Form(...), dose: str=Form
         moment=datetime.fromisoformat(occurred_at).replace(tzinfo=ZoneInfo(subject["timezone"])).astimezone(timezone.utc)
         conn.execute("INSERT INTO intervention_events (subject_id,experiment_id,name,occurred_at,dose,unit,adherence,notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",(subject["id"],int(experiment_id) if experiment_id else None,name,moment,dose or None,unit or None,adherence,notes or None)); conn.commit()
     return RedirectResponse("/",status_code=303)
+
+CONTEXT_CATEGORIES = (("illness", "Illness"), ("travel", "Travel"), ("alcohol", "Alcohol"), ("injury", "Injury"), ("medication", "Medication change"), ("stress", "High stress"), ("other", "Other"))
+
+@app.get("/contexts")
+def contexts(request: Request):
+    with connect() as conn:
+        subject = owner(conn)
+        rows = conn.execute("SELECT * FROM context_events WHERE subject_id=%s ORDER BY starts_at DESC LIMIT 100", (subject["id"],)).fetchall()
+    return render(request, "contexts.html", contexts=rows, categories=CONTEXT_CATEGORIES, now=local_now(subject))
+
+@app.post("/contexts")
+def create_context(category: str=Form(...), label: str=Form(...), starts_at: str=Form(...), ends_at: str=Form(""), notes: str=Form("")):
+    allowed = {value for value, _ in CONTEXT_CATEGORIES}
+    if category not in allowed:
+        raise HTTPException(422, "Unknown context category")
+    with connect() as conn:
+        subject = owner(conn)
+        zone = ZoneInfo(subject["timezone"])
+        start = datetime.fromisoformat(starts_at).replace(tzinfo=zone).astimezone(timezone.utc)
+        end = datetime.fromisoformat(ends_at).replace(tzinfo=zone).astimezone(timezone.utc) if ends_at else None
+        if end and end < start:
+            raise HTTPException(422, "End must be after start")
+        conn.execute("INSERT INTO context_events (subject_id,category,label,starts_at,ends_at,notes) VALUES (%s,%s,%s,%s,%s,%s)", (subject["id"], category, label, start, end, notes or None))
+        conn.commit()
+    return RedirectResponse("/contexts", status_code=303)
 
 @app.get("/food")
 def food(request: Request):

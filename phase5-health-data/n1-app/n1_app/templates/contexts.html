@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% block content %}
+<h1>Context periods</h1>
+<p class="muted">Tag confounders such as illness, travel, alcohol, injury, or high stress. These are separate from interventions, so they can be filtered during analysis.</p>
+<div class="card"><h2>Add a time range</h2><form action="/contexts" method="post">
+  <label>Category<select name="category">{% for value,label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+  <label>Label<input name="label" placeholder="Cold with fever" required></label>
+  <div class="grid"><label>Started<input type="datetime-local" name="starts_at" value="{{ now.strftime('%Y-%m-%dT%H:%M') }}" required></label><label>Ended (leave blank if ongoing)<input type="datetime-local" name="ends_at"></label></div>
+  <label>Notes<textarea name="notes" placeholder="Symptoms, severity, or anything relevant"></textarea></label><button>Save context period</button>
+</form></div>
+<div class="card"><h2>Recent context periods</h2>{% for item in contexts %}<div class="row"><div><strong>{{ item.category|capitalize }} · {{ item.label }}</strong><br><span class="muted">{{ item.starts_at.strftime('%b %-d, %-I:%M %p') }}{% if item.ends_at %} → {{ item.ends_at.strftime('%b %-d, %-I:%M %p') }}{% else %} · ongoing{% endif %}</span>{% if item.notes %}<br><span class="muted">{{ item.notes }}</span>{% endif %}</div></div>{% else %}<p class="muted">No context periods yet.</p>{% endfor %}</div>
+{% endblock %}

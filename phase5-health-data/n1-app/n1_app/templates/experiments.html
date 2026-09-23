@@ -2,7 +2,7 @@
 {% block content %}
 <h1>Experiments</h1>
 {% if metabase_dashboard_url %}
-<p><a class="metabase-link" href="{{ metabase_dashboard_url }}" target="_blank" rel="noopener">Open Health Overview in Metabase ↗</a></p>
+<p><a class="metabase-link" href="{{ metabase_dashboard_url }}" target="_blank" rel="noopener">Open Fitbit &amp; N-of-1 analytics in Metabase ↗</a></p>
 {% endif %}
 
 <details class="card" open>
@@ -38,7 +38,7 @@
   <p class="muted">{{ e.status }}{% if e.primary_outcome %} · Outcome: {{ e.primary_outcome }}{% endif %}</p>
   <p>{{ e.hypothesis or '' }}</p>
   <p class="muted">Conditions: {% for c in e.conditions %}{{ c.name }} ({{ c.kind }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
-  {% if metabase_dashboard_url %}<p><a class="metabase-link" href="{{ metabase_dashboard_url }}?experiment_id={{ e.id }}" target="_blank" rel="noopener">View this experiment in Metabase ↗</a></p>{% endif %}
+  {% if metabase_dashboard_url %}<p><a class="metabase-link" href="{{ metabase_dashboard_url }}" target="_blank" rel="noopener">Analyze in Metabase ↗</a></p>{% endif %}
   {% if e.status != 'archived' %}
   <details><summary>Add condition</summary><form action="/experiments/{{ e.id }}/conditions" method="post" data-reactive>
     <label>Name<input name="name" placeholder="Intervention A" required></label>

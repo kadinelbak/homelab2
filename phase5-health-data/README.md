@@ -79,6 +79,18 @@ versioned. After the initial deployment, refresh Metabase's database metadata
 once to discover `n1_daily_nutrition`, `n1_experiment_adherence`, and
 `n1_experiment_day`. New rows appear in those views automatically.
 
+### Google Health reauthorization
+
+The Google Health OAuth application currently uses Testing-mode authorization,
+so its refresh token can expire. When the `health_sync` container reports a
+Google token-refresh failure, create a replacement token in OAuth Playground
+using the same client and the activity, health-metrics, and sleep read-only
+scopes. Do not paste the token into chat or commit it. On the server, run
+`python3 scripts/update_google_health_refresh_token.py`, paste it into the
+hidden prompt, then restart `health_sync` with the health Compose file and its
+normal `.env` file. The legacy Fitbit Web API is scheduled for shutdown on
+September 30, 2026; this stack uses Google Health instead.
+
 6. Start analysis tools when needed:
 
 ```bash
