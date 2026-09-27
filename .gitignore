@@ -43,3 +43,7 @@ env/
 # Backups
 *.bak
 *.backup
+
+# Scratch files
+test.txt
+scad-preview-check.png
