@@ -41,6 +41,7 @@ services:
     build:
       context: ./weather-proxy
     container_name: weather_proxy
+    mem_limit: 128m
     restart: unless-stopped
     environment:
       WEATHER_DATA_DIR: /data
@@ -55,6 +56,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: homelab_postgres
+    mem_limit: 1536m
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -81,6 +83,7 @@ services:
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
     container_name: postgres_exporter
+    mem_limit: 128m
     restart: unless-stopped
     environment:
       DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/postgres?sslmode=disable
@@ -97,6 +100,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: homelab_redis
+    mem_limit: 512m
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     environment:
@@ -120,6 +124,7 @@ services:
   redis-exporter:
     image: oliver006/redis_exporter:v1.62.0
     container_name: redis_exporter
+    mem_limit: 128m
     restart: unless-stopped
     environment:
       REDIS_ADDR: redis://homelab_redis:6379
@@ -137,6 +142,13 @@ services:
   npm:
     image: jc21/nginx-proxy-manager:2.11.3
     container_name: npm
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "/usr/bin/check-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -167,6 +179,7 @@ services:
   authentik-server:
     image: ghcr.io/goauthentik/server:latest
     container_name: authentik_server
+    mem_limit: 1536m
     restart: unless-stopped
     command: server
     environment:
@@ -212,6 +225,7 @@ services:
   authentik-tls-edge:
     image: nginx:1.27-alpine
     container_name: authentik_tls_edge
+    mem_limit: 128m
     restart: unless-stopped
     depends_on:
       authentik-server:
@@ -259,6 +273,7 @@ services:
   authentik-worker:
     image: ghcr.io/goauthentik/server:latest
     container_name: authentik_worker
+    mem_limit: 1g
     restart: unless-stopped
     command: worker
     environment:
@@ -295,6 +310,7 @@ services:
   homepage:
     image: ghcr.io/gethomepage/homepage:v0.9.11
     container_name: homepage
+    mem_limit: 384m
     restart: unless-stopped
     environment:
       HOMEPAGE_ALLOWED_HOSTS: ${DOMAIN},${DOCKER_HOST_IP},localhost,127.0.0.1
@@ -322,6 +338,7 @@ services:
   pihole:
     image: pihole/pihole:latest
     container_name: pihole
+    mem_limit: 512m
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -358,6 +375,7 @@ services:
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
+    mem_limit: 512m
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -379,6 +397,7 @@ services:
   vaultwarden:
     image: vaultwarden/server:1.35.0
     container_name: vaultwarden
+    mem_limit: 384m
     restart: unless-stopped
     environment:
       DOMAIN: https://${DOMAIN}:4443
@@ -418,6 +437,13 @@ services:
   ntfy:
     image: binwiederhier/ntfy:v2.11.0
     container_name: ntfy
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O - | grep -Eo '\"healthy\"\\s*:\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     command: serve
     environment:
@@ -447,6 +473,7 @@ services:
   uptime-kuma:
     image: louislam/uptime-kuma:1.23.13
     container_name: uptime_kuma
+    mem_limit: 512m
     restart: unless-stopped
     network_mode: host
     volumes:
@@ -464,6 +491,7 @@ services:
   beszel-hub:
     image: henrygd/beszel:latest
     container_name: beszel_hub
+    mem_limit: 384m
     restart: unless-stopped
     volumes:
       - ${DATA_PATH}/phase1-core/data/beszel/hub:/beszel_data
@@ -483,6 +511,7 @@ services:
   beszel-agent:
     image: henrygd/beszel-agent-nvidia:latest
     container_name: beszel_agent
+    mem_limit: 256m
     restart: unless-stopped
     network_mode: host
     environment:
@@ -503,6 +532,7 @@ services:
   scrutiny:
     image: ghcr.io/analogj/scrutiny:v0.8.1-omnibus
     container_name: scrutiny
+    mem_limit: 1g
     restart: unless-stopped
     privileged: true
     cap_add:
@@ -532,6 +562,13 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: homelab_prometheus
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -558,6 +595,13 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     container_name: homelab_grafana
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
@@ -601,6 +645,7 @@ services:
   loki:
     image: grafana/loki:3.1.0
     container_name: homelab_loki
+    mem_limit: 1g
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki-config.yaml"]
     volumes:
@@ -622,6 +667,7 @@ services:
   promtail:
     image: grafana/promtail:3.1.0
     container_name: homelab_promtail
+    mem_limit: 256m
     restart: unless-stopped
     command: ["-config.file=/etc/promtail/promtail-config.yaml"]
     volumes:
@@ -641,6 +687,13 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: homelab_alertmanager
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     command:
       - --config.file=/etc/alertmanager/config.yml
@@ -671,6 +724,13 @@ services:
   node_exporter:
     image: prom/node-exporter:v1.8.1
     container_name: homelab_node_exporter
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9100/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     pid: host
     command:
@@ -691,6 +751,7 @@ services:
       context: ../monitoring/real-health
     image: homelab/real-health:local
     container_name: homelab_real_health
+    mem_limit: 256m
     restart: unless-stopped
     network_mode: host
     command:
@@ -727,6 +788,7 @@ services:
       context: ../backup
     image: homelab/backup:local
     container_name: homelab_backup
+    mem_limit: 1g
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -768,6 +830,7 @@ services:
       context: ../wol-api
     image: homelab/wol-api:local
     container_name: homelab_wol_api
+    mem_limit: 128m
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -793,6 +856,7 @@ services:
       context: ../homelab-control
     image: homelab/control:local
     container_name: homelab_control
+    mem_limit: 320m
     restart: unless-stopped
     environment:
       HOMELAB_REPO: /homelab
@@ -817,6 +881,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: homelab_cadvisor
+    mem_limit: 384m
     restart: unless-stopped
     privileged: true
     devices:
@@ -836,6 +901,7 @@ services:
   watchtower:
     image: containrrr/watchtower:latest
     container_name: watchtower
+    mem_limit: 256m
     restart: unless-stopped
     command:
       - --label-enable
