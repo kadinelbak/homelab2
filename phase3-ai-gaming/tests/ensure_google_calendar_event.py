@@ -4,7 +4,7 @@ import os
 import urllib.request
 
 
-BASE_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
+BASE_URL = os.environ.get("JARVIS_ASSISTANT_URL", "http://jarvis-core:8097/api/v1/assistant").rstrip("/")
 TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 TITLE = os.environ.get("CALENDAR_EVENT_TITLE", "i eat pizza").strip()
 WHEN = os.environ.get("CALENDAR_EVENT_WHEN", "today at 8:00 PM").strip()

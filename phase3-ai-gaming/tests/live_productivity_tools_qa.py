@@ -7,7 +7,7 @@ import urllib.request
 import uuid
 
 
-ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://127.0.0.1:8095").rstrip("/")
+ORCHESTRATOR_URL = os.environ.get("JARVIS_ASSISTANT_URL", "http://127.0.0.1:18097/api/v1/assistant").rstrip("/")
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://127.0.0.1:18200").rstrip("/")
 CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://127.0.0.1:18300").rstrip("/")
 TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", os.environ.get("GOOGLE_TOOLS_TOKEN", ""))

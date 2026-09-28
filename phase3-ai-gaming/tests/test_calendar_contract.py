@@ -13,7 +13,7 @@ def load(name, path):
     return module
 
 
-core = load("jarvis_core", ROOT / "ai-orchestrator" / "app.py")
+core = load("jarvis_router", ROOT / "jarvis-core" / "jarvis_core" / "router.py")
 worker = load("google_worker", ROOT / "google-tools-worker" / "app.py")
 telegram = load("telegram_bridge", ROOT / "telegram-bridge" / "app.py")
 

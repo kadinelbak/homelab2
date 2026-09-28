@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 
 
-BASE_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://127.0.0.1:8095").rstrip("/")
+BASE_URL = os.environ.get("JARVIS_ASSISTANT_URL", "http://127.0.0.1:18097/api/v1/assistant").rstrip("/")
 TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 
 
