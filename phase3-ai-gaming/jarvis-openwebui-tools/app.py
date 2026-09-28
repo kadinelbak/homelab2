@@ -8,10 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("JARVIS_OPENWEBUI_TOOLS_PORT", "18400"))
-ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
-ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
-JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN", ORCHESTRATOR_TOKEN)
+JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN") or os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 DEFAULT_RUNTIME_SECONDS = int(os.environ.get("JARVIS_OPENWEBUI_DEFAULT_RUNTIME_SECONDS", "1800"))
 DEFAULT_COST_USD = float(os.environ.get("JARVIS_OPENWEBUI_DEFAULT_COST_USD", "0"))
 
@@ -29,34 +27,6 @@ def read_json(handler):
     length = int(handler.headers.get("Content-Length", "0") or "0")
     raw = handler.rfile.read(length) if length else b"{}"
     return json.loads(raw.decode("utf-8") or "{}")
-
-
-def orchestrator_headers():
-    headers = {"Content-Type": "application/json"}
-    if ORCHESTRATOR_TOKEN:
-        headers["Authorization"] = f"Bearer {ORCHESTRATOR_TOKEN}"
-    return headers
-
-
-def call_orchestrator(method, path, payload=None, timeout=240):
-    body = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(
-        ORCHESTRATOR_URL + path,
-        data=body,
-        method=method,
-        headers=orchestrator_headers(),
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read().decode("utf-8") or "{}"
-            return response.status, json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8") or "{}"
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = {"ok": False, "error": raw or str(exc)}
-        return exc.code, data
 
 
 def core_headers():
@@ -160,13 +130,13 @@ def jarvis_request(payload):
     }
     if not body["capability"]:
         body.pop("capability")
-    status, planned = call_orchestrator("POST", "/requests", body, timeout=240)
+    status, planned = call_assistant("POST", "/requests", body, timeout=240)
     if status >= 400:
         return status, planned
     executed_actions = []
     for action in planned.get("actions") or []:
         if action.get("permissions", {}).get("may_execute"):
-            execute_status, executed = call_orchestrator(
+            execute_status, executed = call_assistant(
                 "POST",
                 f"/actions/{action['action_id']}/execute",
                 {},
@@ -178,6 +148,10 @@ def jarvis_request(payload):
         else:
             executed_actions.append(action)
     return HTTPStatus.OK, planned_response(planned, {"actions": executed_actions})
+
+
+def call_assistant(method, path, payload=None, timeout=240):
+    return call_core(method, "/api/v1/assistant" + path, payload, timeout=timeout)
 
 
 def jarvis_core_capture(payload):
@@ -265,7 +239,7 @@ def jarvis_get_request(payload):
     request_id = str(payload.get("request_id") or "").strip()
     if not request_id:
         return HTTPStatus.BAD_REQUEST, {"ok": False, "error": "request_id is required"}
-    status, data = call_orchestrator("GET", f"/requests/{request_id}", None, timeout=60)
+    status, data = call_assistant("GET", f"/requests/{request_id}", None, timeout=60)
     return status, data
 
 
@@ -273,10 +247,10 @@ def jarvis_approve_action(payload):
     action_id = str(payload.get("action_id") or "").strip()
     if not action_id:
         return HTTPStatus.BAD_REQUEST, {"ok": False, "error": "action_id is required"}
-    status, approved = call_orchestrator("POST", f"/actions/{action_id}/approve", {}, timeout=60)
+    status, approved = call_assistant("POST", f"/actions/{action_id}/approve", {}, timeout=60)
     if status >= 400:
         return status, approved
-    status, executed = call_orchestrator("POST", f"/actions/{action_id}/execute", {}, timeout=DEFAULT_RUNTIME_SECONDS + 30)
+    status, executed = call_assistant("POST", f"/actions/{action_id}/execute", {}, timeout=DEFAULT_RUNTIME_SECONDS + 30)
     if status >= 400:
         return status, executed
     action = executed.get("action") or {}
@@ -289,17 +263,14 @@ def jarvis_approve_action(payload):
 
 
 def capabilities():
-    return call_orchestrator("GET", "/capabilities", None, timeout=60)
+    return call_assistant("GET", "/capabilities", None, timeout=60)
 
 
 def bridge_health():
-    status, data = call_orchestrator("GET", "/health", None, timeout=30)
     core_status, core_data = call_core("GET", "/api/v1/health", None, timeout=30)
     return HTTPStatus.OK, {
-        "ok": status < 400 and data.get("ok") is True and core_status < 400 and core_data.get("ok") is True,
+        "ok": core_status < 400 and core_data.get("ok") is True,
         "service": "jarvis-openwebui-tools",
-        "orchestrator_status": status,
-        "orchestrator": data,
         "core_status": core_status,
         "core": core_data,
     }

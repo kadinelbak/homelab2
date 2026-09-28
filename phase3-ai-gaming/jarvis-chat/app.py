@@ -13,10 +13,9 @@ from zoneinfo import ZoneInfo
 
 HOST = os.environ.get("JARVIS_CHAT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("JARVIS_CHAT_PORT", "8096"))
-ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
-JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN", ORCHESTRATOR_TOKEN)
+JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN") or ORCHESTRATOR_TOKEN
 CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
 CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN", ORCHESTRATOR_TOKEN)
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
@@ -346,7 +345,7 @@ def page():
     <header>
       <div>
         <h1>Jarvis Chat</h1>
-        <div class="status" id="health">Checking orchestrator...</div>
+        <div class="status" id="health">Checking Jarvis Core...</div>
       </div>
       <nav class="nav" aria-label="Jarvis navigation">
         <a href="/core" title="Open Core approvals, Codex jobs, diagnostics, tasks, evidence, maintenance, and daily briefs">Core Console</a>
@@ -602,9 +601,9 @@ def page():
       try {{
         const res = await fetch('/health');
         const data = await res.json();
-        healthEl.textContent = data.ok && data.orchestrator?.ok
-          ? `Ready. Orchestrator has ${{data.orchestrator.capabilities}} capabilities.`
-          : 'Jarvis Chat is up, orchestrator not ready.';
+        healthEl.textContent = data.ok && data.core?.ok
+          ? 'Ready. Jarvis Core is healthy.'
+          : 'Jarvis Chat is up, Jarvis Core not ready.';
       }} catch (err) {{
         healthEl.textContent = `Health check failed: ${{err.message}}`;
       }}
@@ -2078,13 +2077,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("Authorization", "") == f"Bearer {token}"
 
     def proxy(self, method, path, payload=None):
+        # Assistant requests, actions and profile live in jarvis-core under /api/v1/assistant.
         body = json.dumps(payload or {}).encode("utf-8") if method == "POST" else None
         req = urllib.request.Request(
-            ORCHESTRATOR_URL + path,
+            JARVIS_CORE_URL + ("/api/v1/health" if path == "/health" else "/api/v1/assistant" + path),
             data=body,
             method=method,
             headers={
-                "Authorization": f"Bearer {ORCHESTRATOR_TOKEN}",
+                "Authorization": f"Bearer {JARVIS_CORE_TOKEN}",
                 "Content-Type": "application/json",
             },
         )
@@ -2295,8 +2295,8 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "auth_required": bool(configured_token()),
-                    "orchestrator_status": status,
-                    "orchestrator": data,
+                    "core_status": status,
+                    "core": data,
                 },
             )
             return
