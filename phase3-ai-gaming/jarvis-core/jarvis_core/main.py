@@ -1081,7 +1081,7 @@ def get_request(request_id: str, db: Session = Depends(get_db), actor: str = Dep
     return request_response(db, record)
 
 
-# ai-orchestrator compatible API; clients move here before ai-orchestrator is retired.
+# Assistant request API (formerly ai-orchestrator); same request and action shapes.
 @app.post("/api/v1/assistant/requests", status_code=202)
 def create_assistant_request(payload: dict, db: Session = Depends(get_db), actor: str = Depends(authorize)):
     correlation_id = new_id("corr")

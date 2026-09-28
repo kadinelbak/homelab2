@@ -17,8 +17,8 @@ components:
     status: implemented
     notes: Tailscale-facing browser console for Core state, approvals, inbox, Drive, Gmail cleanup, automations, and worker/run visibility.
   ai_orchestrator:
-    status: implemented
-    notes: Existing compatibility layer and model/tool routing remain in place.
+    status: retired
+    notes: Routing moved into jarvis-core /api/v1/assistant (jarvis_core/router.py); service removed.
   google_tools_worker:
     status: implemented
     notes: Gmail, Calendar, Tasks, Contacts, Drive metadata/download support; writes remain approval-gated through Core.

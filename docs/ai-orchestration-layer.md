@@ -1,16 +1,15 @@
 # AI Orchestration Layer
 
-The active orchestration layer is `ai-orchestrator`, a Phase 3 HTTP service for turning natural-language requests into structured, approval-aware action contracts and local Ollama fallback responses.
+Request routing lives in `jarvis-core` (`jarvis_core/router.py`), exposed as the assistant API under `/api/v1/assistant`. It turns natural-language requests into structured, approval-aware action contracts and LLM responses. The separate `ai-orchestrator` service was retired in September 2026; its state file is left in `phase3-ai-gaming/ai-orchestrator/state/` as a backup.
 
-It does not require n8n. Jarvis Chat sends requests directly to `ai-orchestrator`, which routes requests to a capability, stores the planned action, and either executes a local Ollama response or prepares an approval-gated action proposal for a future worker service.
+It does not require n8n. Jarvis Chat, Telegram and the Open WebUI tools send requests to jarvis-core, which routes each request to a capability, stores the planned action in Postgres, and either executes it or puts it in the normal jarvis-core approval queue.
 
 ## Service
 
-- Container: `ai_orchestrator`
-- Compose profile: `orchestration`
-- Internal URL: `http://ai-orchestrator:8095`
-- Host URL over Tailscale: `http://<tailscale-host-or-ip>:8095`
-- Data: `${DATA_PATH}/phase3-ai-gaming/data/ai-orchestrator`
+- Container: `jarvis_core`
+- Internal URL: `http://jarvis-core:8097/api/v1/assistant`
+- Host URL: `http://127.0.0.1:18097/api/v1/assistant`
+- Data: jarvis-core Postgres (`jarvis_requests`, `jarvis_proposed_actions`, tool names `assistant.<capability>`)
 
 ## GUI
 
@@ -48,7 +47,7 @@ Jarvis Chat remains available as a debugging/admin console:
 http://<tailscale-host-or-ip>:18100
 ```
 
-Jarvis Chat is a small request console that sends requests directly to `ai-orchestrator`, shows the planned action, and gives you Approve and Queue Execution buttons.
+Jarvis Chat is a small request console that sends requests to jarvis-core, shows the planned action, and gives you Approve and Queue Execution buttons.
 
 Jarvis Chat now behaves like a lightweight chat for assistant and drafting requests. Level-0 assistant requests execute through local Ollama and return text directly. Higher-level actions still show an approval flow, then fall back to a local Ollama action proposal until a dedicated connector is wired.
 
@@ -148,7 +147,7 @@ The `codex-worker` service is the approval-gated coding backend for Jarvis. Jarv
 Runtime shape:
 
 ```text
-Telegram / Jarvis Chat -> ai-orchestrator -> approval gate -> codex-worker -> /workspace
+Telegram / Jarvis Chat -> jarvis-core -> approval gate -> codex-worker -> /workspace
 ```
 
 Useful endpoints:
@@ -244,25 +243,28 @@ The `n8n` Compose profile remains available for separate automation experiments,
 ## Endpoints
 
 ```text
-GET  /health
-GET  /capabilities
-POST /requests
-GET  /requests/{request_id}
-POST /actions/{action_id}/approve
-POST /actions/{action_id}/execute
+GET  /api/v1/health
+GET  /api/v1/assistant/capabilities
+POST /api/v1/assistant/requests
+GET  /api/v1/assistant/requests/{request_id}
+POST /api/v1/assistant/actions/{action_id}/approve
+POST /api/v1/assistant/actions/{action_id}/execute
+GET  /api/v1/assistant/profile
+POST /api/v1/assistant/profile
+POST /api/v1/assistant/profile/notes
 ```
 
-All endpoints except `/health` and `/capabilities` require:
+All endpoints except `/api/v1/health` require:
 
 ```text
-Authorization: Bearer <AI_ORCHESTRATOR_TOKEN>
+Authorization: Bearer <JARVIS_CORE_TOKEN>
 ```
 
 ## Example Request
 
 ```bash
-curl -s http://localhost:8095/requests \
-  -H "Authorization: Bearer $AI_ORCHESTRATOR_TOKEN" \
+curl -s http://127.0.0.1:18097/api/v1/assistant/requests \
+  -H "Authorization: Bearer $JARVIS_CORE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "request": "Add a project filtering control to my portfolio repo",
@@ -280,11 +282,11 @@ curl -s http://localhost:8095/requests \
 The response includes one planned action. Approve it before execution handoff:
 
 ```bash
-curl -s -X POST http://localhost:8095/actions/<action_id>/approve \
-  -H "Authorization: Bearer $AI_ORCHESTRATOR_TOKEN"
+curl -s -X POST http://127.0.0.1:18097/api/v1/assistant/actions/<action_id>/approve \
+  -H "Authorization: Bearer $JARVIS_CORE_TOKEN"
 
-curl -s -X POST http://localhost:8095/actions/<action_id>/execute \
-  -H "Authorization: Bearer $AI_ORCHESTRATOR_TOKEN"
+curl -s -X POST http://127.0.0.1:18097/api/v1/assistant/actions/<action_id>/execute \
+  -H "Authorization: Bearer $JARVIS_CORE_TOKEN"
 ```
 
 When a dedicated worker is not implemented yet, execution returns a local Ollama fallback draft or action proposal. The next step is to add real connectors for email, calendar, tasks, contacts, expenses, coding, CAD, Home Assistant, and media actions.
