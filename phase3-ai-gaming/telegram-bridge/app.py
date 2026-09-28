@@ -21,10 +21,8 @@ ALLOWED_CHAT_IDS = {
     for item in os.environ.get("JARVIS_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
     if item.strip()
 }
-ORCHESTRATOR_URL = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8095").rstrip("/")
-ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
-JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN", ORCHESTRATOR_TOKEN)
+JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN") or os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 OPEN_WEBUI_URL = os.environ.get("OPEN_WEBUI_URL", "http://open-webui:8080").rstrip("/")
@@ -549,21 +547,6 @@ def forget(chat_id):
     save_memory(memory)
 
 
-def post_json(url, payload=None, timeout=240):
-    body = json.dumps(payload or {}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {ORCHESTRATOR_TOKEN}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8") or "{}")
-
-
 def get_json(url, headers=None, timeout=60):
     req = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -864,15 +847,15 @@ def plan_request(chat_id, text):
         "limits": {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
         "permissions": {"may_execute": False, "may_publish": False},
     }
-    return post_json(ORCHESTRATOR_URL + "/requests", payload)
+    return core_post("/api/v1/assistant/requests", payload, timeout=240)
 
 
 def execute_action(action_id):
-    return post_json(ORCHESTRATOR_URL + f"/actions/{action_id}/execute", {})
+    return core_post(f"/api/v1/assistant/actions/{action_id}/execute", {}, timeout=240)
 
 
 def approve_and_execute(action_id):
-    post_json(ORCHESTRATOR_URL + f"/actions/{action_id}/approve", {})
+    core_post(f"/api/v1/assistant/actions/{action_id}/approve", {})
     return execute_action(action_id)
 
 
@@ -896,7 +879,7 @@ def build_briefing(chat_id, kind="morning"):
         "limits": {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
         "permissions": {"may_execute": False, "may_publish": False},
     }
-    planned = post_json(ORCHESTRATOR_URL + "/requests", payload)
+    planned = core_post("/api/v1/assistant/requests", payload, timeout=240)
     action = (planned.get("actions") or [{}])[0]
     if not action.get("permissions", {}).get("may_execute"):
         return summarize_plan(planned)
@@ -920,15 +903,15 @@ def send_briefing(chat_id, kind="morning"):
 
 
 def get_profile():
-    return get_json(ORCHESTRATOR_URL + "/profile", headers={"Authorization": f"Bearer {ORCHESTRATOR_TOKEN}"}, timeout=60)
+    return core_get("/api/v1/assistant/profile", timeout=60)
 
 
 def update_profile(updates):
-    return post_json(ORCHESTRATOR_URL + "/profile", {"updates": updates})
+    return core_post("/api/v1/assistant/profile", {"updates": updates})
 
 
 def profile_note(operation, **payload):
-    return post_json(ORCHESTRATOR_URL + "/profile/notes", {"operation": operation, **payload})
+    return core_post("/api/v1/assistant/profile/notes", {"operation": operation, **payload})
 
 
 def profile_summary(profile):
@@ -1105,8 +1088,9 @@ def handle_command(chat_id, text):
             "Use /forget to clear this chat's memory."
         )
     if command == "/health":
-        data = get_json(ORCHESTRATOR_URL + "/health", timeout=60)
-        return f"Jarvis Core OK: {data.get('ok')} | capabilities: {data.get('capabilities')}"
+        data = core_get("/api/v1/health", timeout=60)
+        capabilities = core_get("/api/v1/assistant/capabilities", timeout=60).get("capabilities") or []
+        return f"Jarvis Core OK: {data.get('ok')} | capabilities: {len(capabilities)}"
     if command == "/notifications":
         data = core_get("/api/v1/notifications?channel=telegram&status=pending", timeout=60)
         items = data.get("notifications") or []
