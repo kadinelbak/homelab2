@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from . import assistant
 from .config import settings
 from .contracts import ActionStatus, REGISTERED_TOOLS, RiskLevel, parse_calendar_request, redact, requires_approval
 from .database import get_db
@@ -1078,6 +1079,80 @@ def get_request(request_id: str, db: Session = Depends(get_db), actor: str = Dep
     if not record:
         raise HTTPException(status_code=404, detail={"error": "request_not_found"})
     return request_response(db, record)
+
+
+# ai-orchestrator compatible API; clients move here before ai-orchestrator is retired.
+@app.post("/api/v1/assistant/requests", status_code=202)
+def create_assistant_request(payload: dict, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    correlation_id = new_id("corr")
+    planned = assistant.plan_request(db, payload, actor, correlation_id)
+    request_id = planned["request"]["request_id"]
+    audit(db, "request.received", actor, correlation_id, request_id, {"request_id": request_id, "source": payload.get("source")})
+    for item in planned["actions"]:
+        audit(db, "action.proposed", actor, correlation_id, item["action_id"], {"tool": item["tool"], "capability": item["capability"]})
+    db.commit()
+    return planned
+
+
+@app.get("/api/v1/assistant/requests/{request_id}")
+def get_assistant_request(request_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    data = assistant.get_request(db, request_id)
+    if not data:
+        raise HTTPException(status_code=404, detail={"error": "request_not_found"})
+    return data
+
+
+def assistant_action_or_404(db: Session, action_id: str) -> ProposedActionRecord:
+    action = db.get(ProposedActionRecord, action_id)
+    if not action or not assistant.is_assistant_action(action):
+        raise HTTPException(status_code=404, detail={"error": "action_not_found"})
+    return action
+
+
+@app.post("/api/v1/assistant/actions/{action_id}/approve")
+def approve_assistant_action(action_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    action = assistant_action_or_404(db, action_id)
+    data = assistant.approve(db, action, actor)
+    audit_for_action(db, "approval.granted", action, actor, {"action_id": action.id})
+    db.commit()
+    return {"ok": True, "action": data}
+
+
+@app.post("/api/v1/assistant/actions/{action_id}/execute", status_code=202)
+def execute_assistant_action(action_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    action = assistant_action_or_404(db, action_id)
+    if not assistant.action_dict(action).get("permissions", {}).get("may_execute"):
+        raise HTTPException(status_code=409, detail={"error": "approval_required"})
+    execute_action(db, action, actor)
+    db.commit()
+    return {"ok": True, "action": assistant.action_dict(action)}
+
+
+@app.get("/api/v1/assistant/capabilities")
+def assistant_capabilities(actor: str = Depends(authorize)):
+    return assistant.capabilities()
+
+
+def assistant_profile_call(path: str, payload: dict):
+    try:
+        return call_google_tools(path, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"ok": False, "error": str(exc)[:240]})
+
+
+@app.get("/api/v1/assistant/profile")
+def get_assistant_profile(actor: str = Depends(authorize)):
+    return assistant_profile_call("/profile/get", {})
+
+
+@app.post("/api/v1/assistant/profile")
+def update_assistant_profile(payload: dict, actor: str = Depends(authorize)):
+    return assistant_profile_call("/profile/update", payload)
+
+
+@app.post("/api/v1/assistant/profile/notes")
+def update_assistant_profile_notes(payload: dict, actor: str = Depends(authorize)):
+    return assistant_profile_call("/profile/notes", payload)
 
 
 @app.get("/api/v1/approvals")
@@ -2806,6 +2881,24 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
     attempt = ExecutionAttemptRecord(id=new_id("exec"), proposed_action_id=action.id, status="running", retry_count=0)
     db.add(attempt)
     audit_for_action(db, "execution.started", action, actor, {"execution_id": attempt.id})
+    if assistant.is_assistant_action(action):
+        try:
+            data = assistant.run(db, action)
+            result_payload = data.get("result") or {}
+            attempt.status = "completed" if result_payload.get("status") == "completed" else "failed"
+            attempt.safe_summary = str(result_payload.get("summary") or result_payload.get("text") or "")[:240]
+        except Exception as exc:
+            result_payload = {"status": "failed", "error": str(exc)[:500]}
+            attempt.status = "failed"
+            attempt.error_category = "assistant_action_failed"
+            attempt.safe_summary = f"Assistant action failed: {str(exc)[:240]}"
+            action.status = ActionStatus.FAILED.value
+            db.get(RequestRecord, action.request_id).status = "failed"
+        attempt.completed_at = now_utc()
+        outcome = "success" if attempt.status == "completed" else "failure"
+        db.add(ExecutionResultRecord(id=new_id("result"), execution_attempt_id=attempt.id, outcome=outcome, payload={"assistant": result_payload}))
+        audit_for_action(db, f"execution.{attempt.status}", action, actor, {"execution_id": attempt.id, "provider": "assistant"})
+        return
     if action.tool_name in {"automation.create", "automation.update"}:
         try:
             payload = execute_automation_management_action(db, action, actor)
