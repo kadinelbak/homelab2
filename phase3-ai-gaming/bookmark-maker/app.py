@@ -1,0 +1,302 @@
+"""Bookmark maker: silhouette image -> printable bookmark STL.
+
+Pipeline: Pillow threshold -> potrace (SVG) -> OpenSCAD (extrude onto a bookmark base) -> STL.
+"""
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from PIL import Image, ImageDraw, ImageOps
+
+PORT = int(os.environ.get("BOOKMARK_PORT", "8105"))
+DATA_DIR = Path(os.environ.get("BOOKMARK_DATA_DIR", "/data"))
+JOBS_DIR = DATA_DIR / "jobs"
+KEEP_DAYS = float(os.environ.get("BOOKMARK_KEEP_DAYS", "7"))
+OPENSCAD_TIMEOUT = int(os.environ.get("BOOKMARK_OPENSCAD_TIMEOUT", "120"))
+MAX_UPLOAD = 15 * 1024 * 1024
+MAX_TRACE_PX = 1200
+PAD_PX = 4
+STYLES = ("raised", "cut", "engraved")
+JOB_RE = re.compile(r"^[0-9a-f]{12}$")
+
+# name: (default, min, max)
+PARAMS = {
+    "width": (50.0, 20.0, 120.0),
+    "length": (150.0, 60.0, 250.0),
+    "thickness": (2.0, 0.8, 6.0),
+    "corner": (4.0, 0.0, 15.0),
+    "margin": (4.0, 1.0, 15.0),
+    "art_height": (60.0, 10.0, 200.0),  # max height of the art area at the top
+    "depth": (0.8, 0.2, 3.0),  # raised height or engrave depth
+    "hole": (1.0, 0.0, 1.0),  # tassel hole on/off
+    "hole_d": (5.0, 2.0, 10.0),
+    "threshold": (128.0, 1.0, 254.0),
+    "invert": (0.0, 0.0, 1.0),
+}
+
+
+def parse_params(query):
+    params = {}
+    for name, (default, lo, hi) in PARAMS.items():
+        try:
+            value = float(query.get(name, [default])[0])
+        except ValueError:
+            value = default
+        params[name] = min(max(value, lo), hi)
+    style = query.get("style", ["raised"])[0]
+    params["style"] = style if style in STYLES else "raised"
+    return params
+
+
+def silhouette_bitmap(data, threshold, invert, fill_holes=False):
+    """Return a 1-bit image where art is black, cropped to the art."""
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+    img = img.convert("RGBA")
+    white = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    gray = Image.alpha_composite(white, img).convert("L")
+    gray.thumbnail((MAX_TRACE_PX, MAX_TRACE_PX))
+    art = gray.point(lambda p: 255 if (p < threshold) != bool(invert) else 0)
+    box = art.getbbox()
+    if not box:
+        raise ValueError("No art found. Try moving the threshold slider or toggling invert.")
+    art = art.crop(box)
+    if fill_holes:
+        # Cut-through: holes inside the art would print as loose islands, so keep only the outline.
+        art = ImageOps.expand(art, border=1, fill=0)
+        ImageDraw.floodfill(art, (0, 0), 128)
+        art = art.point(lambda p: 0 if p == 128 else 255).crop((1, 1, art.width - 1, art.height - 1))
+    # potrace traces black pixels; pad so shapes touching the edge still close.
+    bitmap = ImageOps.expand(ImageOps.invert(art), border=PAD_PX, fill=255).convert("1")
+    return bitmap
+
+
+def trace(bitmap, job_dir):
+    pbm = job_dir / "art.pbm"
+    svg = job_dir / "art.svg"
+    bitmap.save(pbm)
+    subprocess.run(
+        ["potrace", str(pbm), "-s", "--turdsize", "8", "--alphamax", "1", "-o", str(svg)],
+        check=True, capture_output=True, timeout=60,
+    )
+    return svg
+
+
+def layout(params, art_w_px, art_h_px):
+    w, length, margin = params["width"], params["length"], params["margin"]
+    top = margin + (params["hole_d"] + margin if params["hole"] else 0)
+    box_w = w - 2 * margin
+    box_h = min(params["art_height"], length - top - margin)
+    scale = min(box_w / art_w_px, box_h / art_h_px)
+    art_w, art_h = art_w_px * scale, art_h_px * scale
+    return {
+        "svg_w": round((art_w_px + 2 * PAD_PX) * scale, 3),  # traced SVG incl. padding, for the page preview
+        "svg_h": round((art_h_px + 2 * PAD_PX) * scale, 3),
+        "art_w": round(art_w, 3),
+        "art_h": round(art_h, 3),
+        "art_cx": round(w / 2, 3),
+        "art_cy": round(length - top - art_h / 2, 3),
+        "hole_cy": round(length - margin - params["hole_d"] / 2, 3),
+    }
+
+
+def bookmark_scad(params, lay):
+    p = {**params, **lay}
+    art = 'translate([{art_cx}, {art_cy}]) resize([{art_w}, {art_h}]) import("art.svg", center=true);'.format(**p)
+    hole = (
+        "translate([{w2}, {hole_cy}, -1]) cylinder(d={hole_d}, h={thickness} + 2, $fn=48);".format(w2=p["width"] / 2, **p)
+        if p["hole"] else ""
+    )
+    if p["style"] == "raised":
+        body = f"union() {{ base(); linear_extrude({p['thickness'] + p['depth']}) art(); }}"
+    elif p["style"] == "cut":
+        body = f"difference() {{ base(); translate([0, 0, -1]) linear_extrude({p['thickness'] + 2}) art(); }}"
+    else:  # engraved: art sunk into the top face, flush top
+        body = (
+            f"difference() {{ base(); translate([0, 0, {p['thickness'] - p['depth']}]) "
+            f"linear_extrude({p['depth'] + 1}) art(); }}"
+        )
+    r = min(p["corner"], p["width"] / 2 - 0.01)
+    return f"""// generated by bookmark-maker
+module art() {{ {art} }}
+module outline() {{
+  if ({r} > 0) offset(r={r}, $fn=48) offset(delta=-{r}) square([{p['width']}, {p['length']}]);
+  else square([{p['width']}, {p['length']}]);
+}}
+module base() {{
+  difference() {{
+    linear_extrude({p['thickness']}) outline();
+    {hole}
+  }}
+}}
+{body}
+"""
+
+
+def make_bookmark(data, params):
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True)
+    bitmap = silhouette_bitmap(data, params["threshold"], params["invert"], params["style"] == "cut")
+    trace(bitmap, job_dir)
+    lay = layout(params, bitmap.width - 2 * PAD_PX, bitmap.height - 2 * PAD_PX)
+    scad = job_dir / "bookmark.scad"
+    scad.write_text(bookmark_scad(params, lay))
+    started = time.time()
+    proc = subprocess.run(
+        ["openscad", "-o", "bookmark.stl", "bookmark.scad"],
+        cwd=job_dir, capture_output=True, text=True, timeout=OPENSCAD_TIMEOUT,
+    )
+    stl = job_dir / "bookmark.stl"
+    if proc.returncode != 0 or not stl.exists():
+        raise RuntimeError("OpenSCAD failed: " + proc.stderr.strip()[-800:])
+    result = {
+        "id": job_id,
+        "svg": f"/jobs/{job_id}/art.svg",
+        "stl": f"/jobs/{job_id}/bookmark.stl",
+        "seconds": round(time.time() - started, 1),
+        "params": params,
+        "layout": lay,
+    }
+    (job_dir / "job.json").write_text(json.dumps(result, indent=2))
+    return result
+
+
+def cleanup_old_jobs():
+    if not JOBS_DIR.exists():
+        return
+    cutoff = time.time() - KEEP_DAYS * 86400
+    for job in JOBS_DIR.iterdir():
+        if job.is_dir() and job.stat().st_mtime < cutoff:
+            shutil.rmtree(job, ignore_errors=True)
+
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookmark Maker</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--fg:#1d1d1f;--muted:#6b6b70;--line:#dcdad5;--accent:#2f6f5e}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--card:#202023;--fg:#ececee;--muted:#9a9aa0;--line:#38383d;--accent:#6cc3a8}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px;display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 280px}
+@media (max-width:760px){main{grid-template-columns:1fr}}
+h1{grid-column:1/-1;margin:0;font-size:22px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+label{display:block;margin:10px 0 4px;color:var(--muted);font-size:13px}
+input[type=number],select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.check{display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--fg)}
+input[type=range]{width:100%}
+button,a.btn{display:inline-block;margin-top:14px;padding:9px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;font-weight:600;text-decoration:none;cursor:pointer}
+button:disabled{opacity:.5}#msg{color:var(--muted);margin-top:10px;min-height:1.4em}
+#preview{display:flex;justify-content:center;align-items:center;min-height:420px}
+#preview svg{max-height:560px;width:auto}
+</style></head><body><main>
+<h1>Bookmark Maker</h1>
+<section><div id="preview"><p style="color:var(--muted)">Upload a silhouette (PNG or JPEG) to start.</p></div></section>
+<section>
+<label for="file">Image</label><input id="file" type="file" accept="image/png,image/jpeg">
+<label for="style">Style</label>
+<select id="style"><option value="raised">Raised</option><option value="cut">Cut-through</option><option value="engraved">Engraved (flush top)</option></select>
+<div class="row"><div><label for="width">Width mm</label><input id="width" type="number" value="50" step="1"></div>
+<div><label for="length">Length mm</label><input id="length" type="number" value="150" step="1"></div></div>
+<div class="row"><div><label for="thickness">Thickness mm</label><input id="thickness" type="number" value="2" step="0.2"></div>
+<div><label for="depth">Raise / engrave mm</label><input id="depth" type="number" value="0.8" step="0.2"></div></div>
+<label for="art_height">Max art height mm</label><input id="art_height" type="number" value="60" step="5">
+<label for="threshold">Threshold <span id="tv">128</span></label><input id="threshold" type="range" min="1" max="254" value="128">
+<label class="check"><input id="invert" type="checkbox"> Invert (light art on dark background)</label>
+<label class="check"><input id="hole" type="checkbox"> Tassel hole</label>
+<button id="go" disabled>Make bookmark</button>
+<div id="msg"></div><div id="dl"></div>
+</section></main>
+<script>
+const $=id=>document.getElementById(id);
+const fields=["style","width","length","thickness","depth","art_height","threshold"];
+$("threshold").oninput=()=>$("tv").textContent=$("threshold").value;
+$("file").onchange=()=>{$("go").disabled=!$("file").files.length;};
+function draw(r){
+  const p=r.params,l=r.layout,W=p.width,L=p.length,c=Math.min(p.corner,W/2);
+  const y=v=>L-v;
+  const hole=p.hole?`<circle cx="${W/2}" cy="${y(l.hole_cy)}" r="${p.hole_d/2}" fill="var(--bg)"/>`:"";
+  $("preview").innerHTML=`<svg viewBox="-2 -2 ${W+4} ${L+4}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${W}" height="${L}" rx="${c}" fill="var(--accent)" opacity=".35" stroke="var(--accent)" stroke-width=".4"/>${hole}
+    <image href="${r.svg}" x="${l.art_cx-l.svg_w/2}" y="${y(l.art_cy)-l.svg_h/2}" width="${l.svg_w}" height="${l.svg_h}" preserveAspectRatio="none" opacity="${p.style==="raised"?1:.6}"/></svg>`;
+}
+$("go").onclick=async()=>{
+  const q=new URLSearchParams();fields.forEach(f=>q.set(f,$(f).value));
+  q.set("invert",$("invert").checked?1:0);q.set("hole",$("hole").checked?1:0);
+  $("go").disabled=true;$("msg").textContent="Tracing and building...";$("dl").innerHTML="";
+  try{
+    const res=await fetch("/api/make?"+q,{method:"POST",body:$("file").files[0]});
+    const r=await res.json();if(!res.ok)throw new Error(r.error||res.statusText);
+    draw(r);$("msg").textContent=`Done in ${r.seconds}s. Art ${r.layout.art_w.toFixed(1)} x ${r.layout.art_h.toFixed(1)} mm.`;
+    $("dl").innerHTML=`<a class="btn" href="${r.stl}" download="bookmark-${p_name()}.stl">Download STL</a>`;
+  }catch(e){$("msg").textContent=e.message;}
+  $("go").disabled=false;
+};
+function p_name(){return ($("file").files[0].name.replace(/\\.[^.]+$/,"")||"art")+"-"+$("style").value;}
+</script></body></html>
+"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def send(self, status, body, ctype):
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_json(self, status, payload):
+        self.send(status, json.dumps(payload).encode(), "application/json")
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/":
+            return self.send(200, PAGE.encode(), "text/html; charset=utf-8")
+        if path == "/health":
+            ok = bool(shutil.which("openscad") and shutil.which("potrace"))
+            return self.send_json(200 if ok else 503, {"ok": ok})
+        parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "jobs" and JOB_RE.match(parts[1]):
+            ctypes = {"art.svg": "image/svg+xml", "bookmark.stl": "model/stl", "bookmark.scad": "text/plain"}
+            target = JOBS_DIR / parts[1] / parts[2]
+            if parts[2] in ctypes and target.is_file():
+                return self.send(200, target.read_bytes(), ctypes[parts[2]])
+        self.send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        if url.path != "/api/make":
+            return self.send_json(404, {"error": "not found"})
+        size = int(self.headers.get("Content-Length") or 0)
+        if not 0 < size <= MAX_UPLOAD:
+            return self.send_json(400, {"error": "Upload a PNG or JPEG up to 15 MB."})
+        data = self.rfile.read(size)
+        cleanup_old_jobs()
+        try:
+            result = make_bookmark(data, parse_params(parse_qs(url.query)))
+        except (ValueError, OSError) as exc:
+            return self.send_json(400, {"error": str(exc)})
+        except (RuntimeError, subprocess.SubprocessError) as exc:
+            return self.send_json(500, {"error": str(exc)})
+        self.send_json(200, result)
+
+    def log_message(self, fmt, *args):
+        print("%s %s" % (self.address_string(), fmt % args), flush=True)
+
+
+def main():
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"bookmark-maker listening on :{PORT}", flush=True)
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

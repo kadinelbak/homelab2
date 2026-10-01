@@ -203,6 +203,10 @@
         icon: mdi-cube-scan
         href: http://kadin-main-sys.tail00cf0e.ts.net:18104
         description: Batch OpenSCAD generation and preview
+    - Bookmark Maker:
+        icon: mdi-bookmark-outline
+        href: http://kadin-main-sys.tail00cf0e.ts.net:18105
+        description: Silhouette image to bookmark STL
     - n8n:
         icon: n8n
         href: http://kadin-main-sys.tail00cf0e.ts.net:5678
