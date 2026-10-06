@@ -1,21 +1,21 @@
 # Bookmark Maker
 
-Upload a silhouette (PNG/JPEG), pick a style, download a printable bookmark STL for Bambu Studio.
+Upload a silhouette (SVG, PNG or JPEG) and download a flat, single-color bookmark STL for Bambu Studio. The silhouette sits on top of a standard bookmark body and can overhang its sides.
 
-Pipeline: Pillow threshold → `potrace` (SVG) → OpenSCAD (extrude onto a rounded bookmark base) → STL. No AI, no CAD GUI.
+Pipeline: `rsvg-convert` (SVG only) → Pillow threshold → `potrace` → OpenSCAD → STL. No AI, no CAD GUI.
 
-Styles (single color):
+Options:
 
-- **Raised**: art sits on top of the base (`depth` mm higher).
-- **Cut-through**: art is cut out of the base like a stencil. Holes inside the art are filled so no loose islands print.
-- **Engraved**: art is sunk `depth` mm into the top face (flush top).
+- **Body**: Paperclip (a U-shaped slot leaves a springy center tongue that clips over a page) or Solid.
+- **Bottom**: Round or Point.
+- Defaults: body 24 × 110 mm, 1.5 mm thick, silhouette up to 50 × 60 mm, sinking 6 mm into the top of the body. Clip rail 3 mm, gap 3 mm.
 
-Defaults: 50 × 150 × 2 mm, art at the top up to 60 mm tall, optional tassel hole.
+Any part of the silhouette that doesn't touch the rest (a floating dot, say) prints as a loose piece, so pick silhouettes where everything connects.
 
 ## API
 
 - `GET /` - upload page.
-- `GET /health` - checks `openscad` and `potrace` are installed.
-- `POST /api/make?style=raised&width=50&length=150&thickness=2&depth=0.8&art_height=60&threshold=128&invert=0&hole=1` - body is the raw image; returns JSON with `stl` and `svg` URLs.
+- `GET /health` - checks `openscad`, `potrace` and `rsvg-convert` are installed.
+- `POST /api/make?style=clip&bottom=round&width=24&length=110&thickness=1.5&art_width=50&art_height=60&overlap=6&rail=3&gap=3&threshold=128&invert=0` - body is the raw file; returns JSON with `stl` and `preview` (outline SVG) URLs.
 
 Jobs are kept under `/data/jobs` for 7 days (`BOOKMARK_KEEP_DAYS`).

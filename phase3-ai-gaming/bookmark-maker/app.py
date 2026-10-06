@@ -1,6 +1,8 @@
-"""Bookmark maker: silhouette image -> printable bookmark STL.
+"""Bookmark maker: silhouette (SVG/PNG/JPEG) -> flat clip bookmark STL.
 
-Pipeline: Pillow threshold -> potrace (SVG) -> OpenSCAD (extrude onto a bookmark base) -> STL.
+Pipeline: rsvg-convert (SVG only) -> Pillow threshold -> potrace (SVG) -> OpenSCAD -> STL.
+The silhouette sits on top of a flat bookmark body and overhangs its sides; the body is
+either a paperclip-style clip (U-shaped slot leaving a springy center tongue) or solid.
 """
 import io
 import json
@@ -14,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageOps
 
 PORT = int(os.environ.get("BOOKMARK_PORT", "8105"))
 DATA_DIR = Path(os.environ.get("BOOKMARK_DATA_DIR", "/data"))
@@ -24,20 +26,19 @@ OPENSCAD_TIMEOUT = int(os.environ.get("BOOKMARK_OPENSCAD_TIMEOUT", "120"))
 MAX_UPLOAD = 15 * 1024 * 1024
 MAX_TRACE_PX = 1200
 PAD_PX = 4
-STYLES = ("raised", "cut", "engraved")
 JOB_RE = re.compile(r"^[0-9a-f]{12}$")
+CHOICES = {"style": ("clip", "solid"), "bottom": ("round", "point")}
 
-# name: (default, min, max)
+# name: (default, min, max), all mm except threshold/invert
 PARAMS = {
-    "width": (50.0, 20.0, 120.0),
-    "length": (150.0, 60.0, 250.0),
-    "thickness": (2.0, 0.8, 6.0),
-    "corner": (4.0, 0.0, 15.0),
-    "margin": (4.0, 1.0, 15.0),
-    "art_height": (60.0, 10.0, 200.0),  # max height of the art area at the top
-    "depth": (0.8, 0.2, 3.0),  # raised height or engrave depth
-    "hole": (1.0, 0.0, 1.0),  # tassel hole on/off
-    "hole_d": (5.0, 2.0, 10.0),
+    "width": (24.0, 12.0, 60.0),  # bookmark body width
+    "length": (110.0, 40.0, 250.0),  # bookmark body length, below the art
+    "thickness": (1.5, 0.8, 4.0),
+    "art_width": (50.0, 15.0, 120.0),  # max silhouette width (may overhang the body)
+    "art_height": (60.0, 10.0, 150.0),  # max silhouette height
+    "overlap": (6.0, 0.0, 40.0),  # how far the silhouette sinks into the top of the body
+    "rail": (3.0, 1.5, 8.0),  # clip: width of the outer frame
+    "gap": (3.0, 1.0, 6.0),  # clip: width of the U-shaped slot
     "threshold": (128.0, 1.0, 254.0),
     "invert": (0.0, 0.0, 1.0),
 }
@@ -51,14 +52,28 @@ def parse_params(query):
         except ValueError:
             value = default
         params[name] = min(max(value, lo), hi)
-    style = query.get("style", ["raised"])[0]
-    params["style"] = style if style in STYLES else "raised"
+    for name, options in CHOICES.items():
+        value = query.get(name, [options[0]])[0]
+        params[name] = value if value in options else options[0]
     return params
 
 
-def silhouette_bitmap(data, threshold, invert, fill_holes=False):
-    """Return a 1-bit image where art is black, cropped to the art."""
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+def load_image(data, job_dir):
+    head = data[:512].lstrip().lower()
+    if head.startswith(b"<?xml") or b"<svg" in head:
+        src = job_dir / "upload.svg"
+        src.write_bytes(data)
+        png = job_dir / "upload.png"
+        subprocess.run(
+            ["rsvg-convert", "--width", str(MAX_TRACE_PX), "--keep-aspect-ratio", "-o", str(png), str(src)],
+            check=True, capture_output=True, timeout=60,
+        )
+        data = png.read_bytes()
+    return ImageOps.exif_transpose(Image.open(io.BytesIO(data)))
+
+
+def silhouette_bitmap(img, threshold, invert):
+    """Return a 1-bit image where art is black, cropped to the art and padded."""
     img = img.convert("RGBA")
     white = Image.new("RGBA", img.size, (255, 255, 255, 255))
     gray = Image.alpha_composite(white, img).convert("L")
@@ -66,100 +81,87 @@ def silhouette_bitmap(data, threshold, invert, fill_holes=False):
     art = gray.point(lambda p: 255 if (p < threshold) != bool(invert) else 0)
     box = art.getbbox()
     if not box:
-        raise ValueError("No art found. Try moving the threshold slider or toggling invert.")
-    art = art.crop(box)
-    if fill_holes:
-        # Cut-through: holes inside the art would print as loose islands, so keep only the outline.
-        art = ImageOps.expand(art, border=1, fill=0)
-        ImageDraw.floodfill(art, (0, 0), 128)
-        art = art.point(lambda p: 0 if p == 128 else 255).crop((1, 1, art.width - 1, art.height - 1))
+        raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
     # potrace traces black pixels; pad so shapes touching the edge still close.
-    bitmap = ImageOps.expand(ImageOps.invert(art), border=PAD_PX, fill=255).convert("1")
-    return bitmap
+    return ImageOps.expand(ImageOps.invert(art.crop(box)), border=PAD_PX, fill=255).convert("1")
 
 
 def trace(bitmap, job_dir):
     pbm = job_dir / "art.pbm"
-    svg = job_dir / "art.svg"
     bitmap.save(pbm)
     subprocess.run(
-        ["potrace", str(pbm), "-s", "--turdsize", "8", "--alphamax", "1", "-o", str(svg)],
+        ["potrace", str(pbm), "-s", "--turdsize", "8", "--alphamax", "1", "-o", str(job_dir / "art.svg")],
         check=True, capture_output=True, timeout=60,
     )
-    return svg
 
 
 def layout(params, art_w_px, art_h_px):
-    w, length, margin = params["width"], params["length"], params["margin"]
-    top = margin + (params["hole_d"] + margin if params["hole"] else 0)
-    box_w = w - 2 * margin
-    box_h = min(params["art_height"], length - top - margin)
-    scale = min(box_w / art_w_px, box_h / art_h_px)
+    scale = min(params["art_width"] / art_w_px, params["art_height"] / art_h_px)
     art_w, art_h = art_w_px * scale, art_h_px * scale
+    overlap = min(params["overlap"], art_h * 0.8)
     return {
-        "svg_w": round((art_w_px + 2 * PAD_PX) * scale, 3),  # traced SVG incl. padding, for the page preview
-        "svg_h": round((art_h_px + 2 * PAD_PX) * scale, 3),
         "art_w": round(art_w, 3),
         "art_h": round(art_h, 3),
-        "art_cx": round(w / 2, 3),
-        "art_cy": round(length - top - art_h / 2, 3),
-        "hole_cy": round(length - margin - params["hole_d"] / 2, 3),
+        "art_cy": round(params["length"] - overlap + art_h / 2, 3),
+        "total_w": round(max(art_w, params["width"]), 1),
+        "total_h": round(params["length"] - overlap + art_h, 1),
     }
 
 
-def bookmark_scad(params, lay):
+def bookmark_scad(params, lay, three_d=True):
     p = {**params, **lay}
-    art = 'translate([{art_cx}, {art_cy}]) resize([{art_w}, {art_h}]) import("art.svg", center=true);'.format(**p)
-    hole = (
-        "translate([{w2}, {hole_cy}, -1]) cylinder(d={hole_d}, h={thickness} + 2, $fn=48);".format(w2=p["width"] / 2, **p)
-        if p["hole"] else ""
+    w, length = p["width"], p["length"]
+    if p["style"] == "clip" and w - 2 * (p["rail"] + p["gap"]) < 3:
+        raise ValueError("Body is too narrow for the clip. Widen it or reduce the rail/gap.")
+    # Clip slot stops below the silhouette so the top of the body stays solid.
+    slot_top = length - p["overlap"] - p["rail"]
+    if p["bottom"] == "round":
+        outline = f"hull() {{ translate([0, {w / 2}]) circle(d={w}); translate([-{w / 2}, {w / 2}]) square([{w}, top - {w / 2}]); }}"
+    else:
+        outline = f"polygon([[-{w / 2}, top], [{w / 2}, top], [{w / 2}, {w * 0.9}], [0, 0], [-{w / 2}, {w * 0.9}]]);"
+    clip = (
+        f"""difference() {{
+      intersection() {{ offset(delta=-{p['rail']}) outline({length}); translate([-{w}, -1]) square([{2 * w}, {slot_top + 1}]); }}
+      offset(delta=-{p['rail'] + p['gap']}) outline({length + 100});
+    }}"""
+        if p["style"] == "clip" else ""
     )
-    if p["style"] == "raised":
-        body = f"union() {{ base(); linear_extrude({p['thickness'] + p['depth']}) art(); }}"
-    elif p["style"] == "cut":
-        body = f"difference() {{ base(); translate([0, 0, -1]) linear_extrude({p['thickness'] + 2}) art(); }}"
-    else:  # engraved: art sunk into the top face, flush top
-        body = (
-            f"difference() {{ base(); translate([0, 0, {p['thickness'] - p['depth']}]) "
-            f"linear_extrude({p['depth'] + 1}) art(); }}"
-        )
-    r = min(p["corner"], p["width"] / 2 - 0.01)
+    shape = f"""union() {{
+  difference() {{ outline({length}); {clip} }}
+  translate([0, {p['art_cy']}]) resize([{p['art_w']}, {p['art_h']}]) import("art.svg", center=true);
+}}"""
+    body = f"linear_extrude({p['thickness']}) {shape}" if three_d else shape
     return f"""// generated by bookmark-maker
-module art() {{ {art} }}
-module outline() {{
-  if ({r} > 0) offset(r={r}, $fn=48) offset(delta=-{r}) square([{p['width']}, {p['length']}]);
-  else square([{p['width']}, {p['length']}]);
-}}
-module base() {{
-  difference() {{
-    linear_extrude({p['thickness']}) outline();
-    {hole}
-  }}
-}}
+$fn = 64;
+module outline(top) {{ {outline} }}
 {body}
 """
+
+
+def openscad(job_dir, scad_name, out_name):
+    proc = subprocess.run(
+        ["openscad", "-o", out_name, scad_name],
+        cwd=job_dir, capture_output=True, text=True, timeout=OPENSCAD_TIMEOUT,
+    )
+    if proc.returncode != 0 or not (job_dir / out_name).exists():
+        raise RuntimeError("OpenSCAD failed: " + proc.stderr.strip()[-800:])
 
 
 def make_bookmark(data, params):
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True)
-    bitmap = silhouette_bitmap(data, params["threshold"], params["invert"], params["style"] == "cut")
+    bitmap = silhouette_bitmap(load_image(data, job_dir), params["threshold"], params["invert"])
     trace(bitmap, job_dir)
     lay = layout(params, bitmap.width - 2 * PAD_PX, bitmap.height - 2 * PAD_PX)
-    scad = job_dir / "bookmark.scad"
-    scad.write_text(bookmark_scad(params, lay))
     started = time.time()
-    proc = subprocess.run(
-        ["openscad", "-o", "bookmark.stl", "bookmark.scad"],
-        cwd=job_dir, capture_output=True, text=True, timeout=OPENSCAD_TIMEOUT,
-    )
-    stl = job_dir / "bookmark.stl"
-    if proc.returncode != 0 or not stl.exists():
-        raise RuntimeError("OpenSCAD failed: " + proc.stderr.strip()[-800:])
+    (job_dir / "outline.scad").write_text(bookmark_scad(params, lay, three_d=False))
+    openscad(job_dir, "outline.scad", "outline.svg")
+    (job_dir / "bookmark.scad").write_text(bookmark_scad(params, lay))
+    openscad(job_dir, "bookmark.scad", "bookmark.stl")
     result = {
         "id": job_id,
-        "svg": f"/jobs/{job_id}/art.svg",
+        "preview": f"/jobs/{job_id}/outline.svg",
         "stl": f"/jobs/{job_id}/bookmark.stl",
         "seconds": round(time.time() - started, 1),
         "params": params,
@@ -178,6 +180,10 @@ def cleanup_old_jobs():
             shutil.rmtree(job, ignore_errors=True)
 
 
+def number_field(name, label, step):
+    return f'<div><label for="{name}">{label}</label><input id="{name}" type="number" value="{PARAMS[name][0]:g}" step="{step}"></div>'
+
+
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bookmark Maker</title>
@@ -185,7 +191,7 @@ PAGE = """<!doctype html>
 :root{--bg:#f6f5f2;--card:#fff;--fg:#1d1d1f;--muted:#6b6b70;--line:#dcdad5;--accent:#2f6f5e}
 @media (prefers-color-scheme:dark){:root{--bg:#161618;--card:#202023;--fg:#ececee;--muted:#9a9aa0;--line:#38383d;--accent:#6cc3a8}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
-main{max-width:980px;margin:0 auto;padding:24px 16px;display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 280px}
+main{max-width:980px;margin:0 auto;padding:24px 16px;display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 300px}
 @media (max-width:760px){main{grid-template-columns:1fr}}
 h1{grid-column:1/-1;margin:0;font-size:22px}
 section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
@@ -195,54 +201,46 @@ input[type=number],select{width:100%;padding:6px 8px;border:1px solid var(--line
 input[type=range]{width:100%}
 button,a.btn{display:inline-block;margin-top:14px;padding:9px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;font-weight:600;text-decoration:none;cursor:pointer}
 button:disabled{opacity:.5}#msg{color:var(--muted);margin-top:10px;min-height:1.4em}
-#preview{display:flex;justify-content:center;align-items:center;min-height:420px}
-#preview svg{max-height:560px;width:auto}
+#preview{display:flex;justify-content:center;align-items:center;min-height:440px}
+#preview img{max-height:600px;max-width:100%;background:#fff;border-radius:6px;padding:8px}
 </style></head><body><main>
 <h1>Bookmark Maker</h1>
-<section><div id="preview"><p style="color:var(--muted)">Upload a silhouette (PNG or JPEG) to start.</p></div></section>
+<section><div id="preview"><p style="color:var(--muted)">Upload a silhouette (SVG, PNG or JPEG) to start.</p></div></section>
 <section>
-<label for="file">Image</label><input id="file" type="file" accept="image/png,image/jpeg">
-<label for="style">Style</label>
-<select id="style"><option value="raised">Raised</option><option value="cut">Cut-through</option><option value="engraved">Engraved (flush top)</option></select>
-<div class="row"><div><label for="width">Width mm</label><input id="width" type="number" value="50" step="1"></div>
-<div><label for="length">Length mm</label><input id="length" type="number" value="150" step="1"></div></div>
-<div class="row"><div><label for="thickness">Thickness mm</label><input id="thickness" type="number" value="2" step="0.2"></div>
-<div><label for="depth">Raise / engrave mm</label><input id="depth" type="number" value="0.8" step="0.2"></div></div>
-<label for="art_height">Max art height mm</label><input id="art_height" type="number" value="60" step="5">
+<label for="file">Silhouette</label><input id="file" type="file" accept=".svg,image/svg+xml,image/png,image/jpeg">
+<div class="row"><div><label for="style">Body</label><select id="style"><option value="clip">Paperclip</option><option value="solid">Solid</option></select></div>
+<div><label for="bottom">Bottom</label><select id="bottom"><option value="round">Round</option><option value="point">Point</option></select></div></div>
+<div class="row">FIELDS_BODY</div>
+<div class="row">FIELDS_ART</div>
+<div class="row">FIELDS_CLIP</div>
 <label for="threshold">Threshold <span id="tv">128</span></label><input id="threshold" type="range" min="1" max="254" value="128">
-<label class="check"><input id="invert" type="checkbox"> Invert (light art on dark background)</label>
-<label class="check"><input id="hole" type="checkbox"> Tassel hole</label>
+<label class="check"><input id="invert" type="checkbox"> Invert (light silhouette on dark background)</label>
 <button id="go" disabled>Make bookmark</button>
 <div id="msg"></div><div id="dl"></div>
 </section></main>
 <script>
 const $=id=>document.getElementById(id);
-const fields=["style","width","length","thickness","depth","art_height","threshold"];
+const fields=["style","bottom","width","length","thickness","art_width","art_height","overlap","rail","gap","threshold"];
 $("threshold").oninput=()=>$("tv").textContent=$("threshold").value;
 $("file").onchange=()=>{$("go").disabled=!$("file").files.length;};
-function draw(r){
-  const p=r.params,l=r.layout,W=p.width,L=p.length,c=Math.min(p.corner,W/2);
-  const y=v=>L-v;
-  const hole=p.hole?`<circle cx="${W/2}" cy="${y(l.hole_cy)}" r="${p.hole_d/2}" fill="var(--bg)"/>`:"";
-  $("preview").innerHTML=`<svg viewBox="-2 -2 ${W+4} ${L+4}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="${W}" height="${L}" rx="${c}" fill="var(--accent)" opacity=".35" stroke="var(--accent)" stroke-width=".4"/>${hole}
-    <image href="${r.svg}" x="${l.art_cx-l.svg_w/2}" y="${y(l.art_cy)-l.svg_h/2}" width="${l.svg_w}" height="${l.svg_h}" preserveAspectRatio="none" opacity="${p.style==="raised"?1:.6}"/></svg>`;
-}
 $("go").onclick=async()=>{
-  const q=new URLSearchParams();fields.forEach(f=>q.set(f,$(f).value));
-  q.set("invert",$("invert").checked?1:0);q.set("hole",$("hole").checked?1:0);
+  const q=new URLSearchParams();fields.forEach(f=>q.set(f,$(f).value));q.set("invert",$("invert").checked?1:0);
   $("go").disabled=true;$("msg").textContent="Tracing and building...";$("dl").innerHTML="";
   try{
     const res=await fetch("/api/make?"+q,{method:"POST",body:$("file").files[0]});
     const r=await res.json();if(!res.ok)throw new Error(r.error||res.statusText);
-    draw(r);$("msg").textContent=`Done in ${r.seconds}s. Art ${r.layout.art_w.toFixed(1)} x ${r.layout.art_h.toFixed(1)} mm.`;
-    $("dl").innerHTML=`<a class="btn" href="${r.stl}" download="bookmark-${p_name()}.stl">Download STL</a>`;
+    $("preview").innerHTML=`<img alt="Bookmark outline" src="${r.preview}">`;
+    $("msg").textContent=`Done in ${r.seconds}s. Bookmark ${r.layout.total_w} x ${r.layout.total_h} mm.`;
+    const name=($("file").files[0].name.replace(/\\.[^.]+$/,"")||"bookmark")+"-bookmark.stl";
+    $("dl").innerHTML=`<a class="btn" href="${r.stl}" download="${name}">Download STL</a>`;
   }catch(e){$("msg").textContent=e.message;}
   $("go").disabled=false;
 };
-function p_name(){return ($("file").files[0].name.replace(/\\.[^.]+$/,"")||"art")+"-"+$("style").value;}
 </script></body></html>
-"""
+""".replace("FIELDS_BODY", number_field("width", "Body width mm", 1) + number_field("length", "Body length mm", 5)) \
+   .replace("FIELDS_ART", number_field("art_width", "Art width mm", 1) + number_field("art_height", "Max art height mm", 1)) \
+   .replace("FIELDS_CLIP", number_field("thickness", "Thickness mm", 0.1) + number_field("overlap", "Art overlap mm", 1)
+            + number_field("rail", "Clip rail mm", 0.5) + number_field("gap", "Clip gap mm", 0.5))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -261,11 +259,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             return self.send(200, PAGE.encode(), "text/html; charset=utf-8")
         if path == "/health":
-            ok = bool(shutil.which("openscad") and shutil.which("potrace"))
+            ok = all(shutil.which(tool) for tool in ("openscad", "potrace", "rsvg-convert"))
             return self.send_json(200 if ok else 503, {"ok": ok})
         parts = path.strip("/").split("/")
         if len(parts) == 3 and parts[0] == "jobs" and JOB_RE.match(parts[1]):
-            ctypes = {"art.svg": "image/svg+xml", "bookmark.stl": "model/stl", "bookmark.scad": "text/plain"}
+            ctypes = {
+                "outline.svg": "image/svg+xml",
+                "art.svg": "image/svg+xml",
+                "bookmark.stl": "model/stl",
+                "bookmark.scad": "text/plain",
+            }
             target = JOBS_DIR / parts[1] / parts[2]
             if parts[2] in ctypes and target.is_file():
                 return self.send(200, target.read_bytes(), ctypes[parts[2]])
@@ -277,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "not found"})
         size = int(self.headers.get("Content-Length") or 0)
         if not 0 < size <= MAX_UPLOAD:
-            return self.send_json(400, {"error": "Upload a PNG or JPEG up to 15 MB."})
+            return self.send_json(400, {"error": "Upload an SVG, PNG or JPEG up to 15 MB."})
         data = self.rfile.read(size)
         cleanup_old_jobs()
         try:
