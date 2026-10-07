@@ -390,3 +390,16 @@ class OrchestrationEventRecord(Base):
     event_type: Mapped[str] = mapped_column(String(120))
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PersonNoteRecord(Base):
+    __tablename__ = "people_notes"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    person: Mapped[str] = mapped_column(String(120))
+    person_key: Mapped[str] = mapped_column(String(120), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    text: Mapped[str] = mapped_column(Text)
+    source_text: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(80))
+    noted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
