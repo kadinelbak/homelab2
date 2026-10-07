@@ -1,7 +1,7 @@
 """people notes
 
-Revision ID: 0006_people_notes
-Revises: 0005_scheduled_automations
+Revision ID: 0007_people_notes
+Revises: 0006_journal_entries
 Create Date: 2026-10-07
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0006_people_notes"
-down_revision = "0005_scheduled_automations"
+revision = "0007_people_notes"
+down_revision = "0006_journal_entries"
 branch_labels = None
 depends_on = None
 
