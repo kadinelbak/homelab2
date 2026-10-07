@@ -166,7 +166,7 @@ def create_event(name: str=Form(...), occurred_at: str=Form(...), dose: str=Form
         conn.execute("INSERT INTO intervention_events (subject_id,experiment_id,name,occurred_at,dose,unit,adherence,notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",(subject["id"],int(experiment_id) if experiment_id else None,name,moment,dose or None,unit or None,adherence,notes or None)); conn.commit()
     return RedirectResponse("/",status_code=303)
 
-CONTEXT_CATEGORIES = (("illness", "Illness"), ("travel", "Travel"), ("alcohol", "Alcohol"), ("injury", "Injury"), ("medication", "Medication change"), ("stress", "High stress"), ("other", "Other"))
+CONTEXT_CATEGORIES = (("illness", "Illness"), ("travel", "Travel"), ("alcohol", "Alcohol"), ("injury", "Injury"), ("medication", "Medication change"), ("stress", "High stress"), ("sleep", "Sleep deprived"), ("other", "Other"))
 
 @app.get("/contexts")
 def contexts(request: Request):
@@ -188,6 +188,13 @@ def create_context(category: str=Form(...), label: str=Form(...), starts_at: str
         if end and end < start:
             raise HTTPException(422, "End must be after start")
         conn.execute("INSERT INTO context_events (subject_id,category,label,starts_at,ends_at,notes) VALUES (%s,%s,%s,%s,%s,%s)", (subject["id"], category, label, start, end, notes or None))
+        conn.commit()
+    return RedirectResponse("/contexts", status_code=303)
+
+@app.post("/contexts/{context_id}/delete")
+def delete_context(context_id: int):
+    with connect() as conn:
+        conn.execute("DELETE FROM context_events WHERE id=%s AND subject_id=%s", (context_id, owner(conn)["id"]))
         conn.commit()
     return RedirectResponse("/contexts", status_code=303)
 
