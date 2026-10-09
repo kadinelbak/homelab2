@@ -105,6 +105,10 @@ def wants_core_voice(text):
         "read notifications",
         "what notifications",
         "approve ",
+        "note about ",
+        "people note",
+        "what do i know about ",
+        "profile of ",
     )
     return any(term in lowered for term in terms)
 
@@ -2161,6 +2165,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def core_voice_request(self, text):
         lowered = text.lower()
+        for phrase in ("what do i know about ", "profile of "):
+            if phrase in lowered:
+                import urllib.parse
+
+                name = lowered.split(phrase, 1)[1].strip(" .?!")
+                status, data = self.core_proxy("GET", f"/api/v1/people/{urllib.parse.quote(name)}")
+                if status in {404, 409}:
+                    detail = data.get("detail") or {}
+                    matches = ", ".join(detail.get("matches") or [])
+                    return HTTPStatus.OK, {"ok": True, "text": f"Which one: {matches}?" if matches else f"I don't have notes about {name} yet."}
+                return status, data
+        if "note about " in lowered or "people note" in lowered:
+            status, data = self.core_proxy("POST", "/api/v1/people/notes", {"text": text, "source": "voice"}, timeout=120)
+            if status == 422:
+                return HTTPStatus.OK, {"ok": True, "text": "Who is that note about? Try: note about Sam, then what happened."}
+            return status, data
         if "morning brief" in lowered:
             return self.core_proxy("GET", "/api/v1/daily-brief?kind=morning&save=true", timeout=240)
         if "evening recap" in lowered:

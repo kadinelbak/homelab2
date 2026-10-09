@@ -12,10 +12,10 @@ from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from . import assistant
+from . import assistant, people
 from .config import settings
 from .contracts import ActionStatus, REGISTERED_TOOLS, RiskLevel, parse_calendar_request, redact, requires_approval
 from .database import get_db
@@ -40,6 +40,7 @@ from .models import (
     OrchestrationJobRecord,
     OrchestrationRunRecord,
     OutboxEventRecord,
+    PersonNoteRecord,
     ProjectRecord,
     ProposedActionRecord,
     RequestRecord,
@@ -181,6 +182,12 @@ class TaskUpdate(BaseModel):
 class UnifiedCapture(BaseModel):
     text: str
     idempotency_key: str | None = None
+
+
+class PeopleNoteCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    person: str | None = Field(default=None, max_length=120)
+    source: str = "api"
 
 
 class JournalCreate(BaseModel):
@@ -1973,6 +1980,66 @@ def unified_capture(payload: UnifiedCapture, db: Session = Depends(get_db), acto
     db.add(task)
     db.commit()
     return {"type": "task", "task": task_response(task), "confidence": 0.72}
+
+
+@app.post("/api/v1/people/notes")
+def add_people_note(payload: PeopleNoteCreate, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    known = [row[0] for row in db.query(PersonNoteRecord.person).distinct().all()]
+    facts = []
+    try:
+        result = call_openai_compatible_model(configured_model_profile("fast"), people.build_prompt(payload.text, known), people.SYSTEM_PROMPT, [], 1200, 0.1)
+        facts = people.parse_facts(result["content"], payload.person)
+    except Exception:
+        facts = []
+    if not facts:
+        person = payload.person or people.guess_person(payload.text)
+        if not person:
+            raise HTTPException(status_code=422, detail={"error": "person_not_found", "message": "Say who the note is about, e.g. 'note about Sam: ...'."})
+        facts = [{"person": person[:120], "kind": "other", "text": payload.text}]
+    canonical = {people.person_key(name): name for name in known}
+    saved = []
+    for fact in facts:
+        key = people.person_key(fact["person"])
+        record = PersonNoteRecord(id=new_id("pnote"), person=canonical.setdefault(key, fact["person"]), person_key=key, kind=fact["kind"], text=fact["text"], source_text=payload.text, source=payload.source[:80])
+        db.add(record)
+        saved.append({"person": record.person, "kind": record.kind, "text": record.text})
+    audit(db, "people.note_added", actor, new_id("corr"), None, {"people": sorted({item["person"] for item in saved}), "facts": len(saved)})
+    db.commit()
+    names = ", ".join(sorted({item["person"] for item in saved}))
+    return {"ok": True, "facts": saved, "text": f"Noted {len(saved)} thing{'s' if len(saved) != 1 else ''} about {names}."}
+
+
+@app.get("/api/v1/people")
+def list_people(db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    rows = db.query(PersonNoteRecord.person_key, func.min(PersonNoteRecord.person), func.count(PersonNoteRecord.id), func.max(PersonNoteRecord.noted_at)).group_by(PersonNoteRecord.person_key).all()
+    items = [{"person": name, "note_count": count, "last_noted_at": last.isoformat() if last else None} for _, name, count, last in rows]
+    return {"people": sorted(items, key=lambda item: item["last_noted_at"] or "", reverse=True)}
+
+
+@app.get("/api/v1/people/{name}")
+def get_person(name: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    key = people.person_key(name)
+    notes = db.query(PersonNoteRecord).filter(PersonNoteRecord.person_key == key).all()
+    if not notes:
+        keys = {row[0] for row in db.query(PersonNoteRecord.person_key).filter(PersonNoteRecord.person_key.like(f"{key}%")).distinct().all()}
+        if len(keys) > 1:
+            raise HTTPException(status_code=409, detail={"error": "ambiguous_person", "matches": sorted(keys)})
+        if keys:
+            notes = db.query(PersonNoteRecord).filter(PersonNoteRecord.person_key == keys.pop()).all()
+    if not notes:
+        raise HTTPException(status_code=404, detail={"error": "person_not_found", "message": f"No notes about {name} yet."})
+    return people.organize(notes[0].person, notes)
+
+
+@app.delete("/api/v1/people/notes/{note_id}")
+def delete_people_note(note_id: str, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    record = db.get(PersonNoteRecord, note_id)
+    if not record:
+        raise HTTPException(status_code=404, detail={"error": "note_not_found"})
+    db.delete(record)
+    audit(db, "people.note_deleted", actor, new_id("corr"), note_id, {"person": record.person})
+    db.commit()
+    return {"ok": True}
 
 
 JOURNAL_SYSTEM_PROMPT = (
