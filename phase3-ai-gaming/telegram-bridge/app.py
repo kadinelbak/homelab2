@@ -813,7 +813,55 @@ def transcribe_telegram_file(file_id):
             pass
 
 
-def handle_transcribed_voice(chat_id, update_id, media):
+JOURNAL_ARM_SECONDS = 600
+JOURNAL_ARMED = {}
+
+
+def journal_armed(chat_id):
+    return JOURNAL_ARMED.pop(chat_id, 0) > time.time()
+
+
+def journal_entry_text(entry):
+    lines = [f"Journal saved: {entry.get('title') or 'Untitled'} ({entry.get('entry_date')})"]
+    if entry.get("mood"):
+        lines.append(f"Mood: {entry['mood']}")
+    if entry.get("summary"):
+        lines.append(entry["summary"])
+    for key, label in (("highlights", "Highlights"), ("people", "People"), ("gratitude", "Grateful for"), ("todos", "Follow up")):
+        if entry.get(key):
+            lines.append(f"{label}: " + "; ".join(entry[key]))
+    if entry.get("structured_ok") is False:
+        lines.append("(Saved the transcript only; structuring failed.)")
+    return "\n".join(lines)
+
+
+def save_journal(chat_id, text, source):
+    try:
+        entry = core_post("/api/v1/journal", {"text": text, "source": source}, timeout=180).get("entry") or {}
+    except Exception as exc:
+        print(f"telegram journal error: {exc}", flush=True)
+        return f"I could not save that journal entry: {exc}"
+    return journal_entry_text(entry)
+
+
+def journal_list_text(rest):
+    days = int(rest) if rest.isdigit() else 7
+    params = {"days": days} if rest.isdigit() or not rest else {"days": 3650, "q": rest}
+    entries = core_get("/api/v1/journal?" + urllib.parse.urlencode(params), timeout=60).get("entries") or []
+    if not entries:
+        return "No journal entries found."
+    lines = []
+    for entry in entries[:15]:
+        line = f"{entry.get('entry_date')} - {entry.get('title')}"
+        if entry.get("mood"):
+            line += f" [{entry['mood']}]"
+        if entry.get("summary"):
+            line += f"\n  {entry['summary']}"
+        lines.append(line)
+    return "\n\n".join(lines)
+
+
+def handle_transcribed_voice(chat_id, update_id, media, journal=False):
     try:
         text = transcribe_telegram_file(media["file_id"])
     except Exception as exc:
@@ -824,6 +872,9 @@ def handle_transcribed_voice(chat_id, update_id, media):
         send_message(chat_id, "I could not make out that voice note.")
         return
     send_message(chat_id, f"Heard: {text}")
+    if journal:
+        send_message(chat_id, save_journal(chat_id, text, "telegram-voice"))
+        return
     try:
         job_id = enqueue_job(update_id, chat_id, text)
     except Exception as exc:
@@ -1085,6 +1136,7 @@ def handle_command(chat_id, text):
             "Use /notifications to read pending Jarvis Core notifications.\n"
             "Use /brief, /brief morning, or /brief evening for Calendar/Gmail/Tasks briefing.\n"
             "Use /city, /setcity, /watchrepo, /unwatchrepo, /briefprefs, /rememberbrief, and /forgetbrief to manage briefing context.\n"
+            "Use /journal, then send a voice note, to save a diary entry. /journals [days or search] reads them back.\n"
             "Use /forget to clear this chat's memory."
         )
     if command == "/health":
@@ -1158,6 +1210,13 @@ def handle_command(chat_id, text):
         payload = {"id": int(target)} if target.isdigit() else {"text": target}
         profile_note("delete", **payload)
         return "Removed matching briefing note."
+    if command == "/journal":
+        if rest.strip():
+            return save_journal(chat_id, rest.strip(), "telegram-text")
+        JOURNAL_ARMED[chat_id] = time.time() + JOURNAL_ARM_SECONDS
+        return "Journal mode: send your voice note (or text) and I'll file it as a journal entry."
+    if command == "/journals":
+        return journal_list_text(rest.strip())
     if command == "/forget":
         forget(chat_id)
         return "Forgot this Telegram chat's recent Jarvis context."
@@ -1180,7 +1239,7 @@ def handle_update(update):
     text = (message.get("text") or "").strip()
     if not text and (message.get("voice") or message.get("audio")):
         send_message(chat_id, "Transcribing voice note...")
-        handle_transcribed_voice(chat_id, update_id, message.get("voice") or message.get("audio"))
+        handle_transcribed_voice(chat_id, update_id, message.get("voice") or message.get("audio"), journal=journal_armed(chat_id))
         return
     elif not text and message.get("document"):
         send_message(chat_id, "Sending document to Paperless...")
@@ -1193,6 +1252,9 @@ def handle_update(update):
 
     if text.startswith("/"):
         send_message(chat_id, handle_command(chat_id, text))
+        return
+    if journal_armed(chat_id):
+        send_message(chat_id, save_journal(chat_id, text, "telegram-text"))
         return
     if enqueue_job(update_id, chat_id, text):
         send_message(chat_id, "Working on it...")

@@ -35,6 +35,7 @@ from .models import (
     NotificationRecord,
     ArtifactRecord,
     JobDependencyRecord,
+    JournalEntryRecord,
     OrchestrationEventRecord,
     OrchestrationJobRecord,
     OrchestrationRunRecord,
@@ -187,6 +188,12 @@ class PeopleNoteCreate(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     person: str | None = Field(default=None, max_length=120)
     source: str = "api"
+
+
+class JournalCreate(BaseModel):
+    text: str = Field(min_length=1)
+    source: str = "manual"
+    entry_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class EvidenceCreate(BaseModel):
@@ -2033,6 +2040,76 @@ def delete_people_note(note_id: str, db: Session = Depends(get_db), actor: str =
     audit(db, "people.note_deleted", actor, new_id("corr"), note_id, {"person": record.person})
     db.commit()
     return {"ok": True}
+
+
+JOURNAL_SYSTEM_PROMPT = (
+    "You turn a spoken diary entry into a structured journal entry. "
+    "Reply with only a JSON object with these keys: "
+    '"title" (short, under 80 chars), "summary" (2-3 sentences, first person), '
+    '"mood" (one or two words), "highlights" (list of key moments), '
+    '"people" (list of names mentioned), "gratitude" (list), "todos" (list of things to follow up on), '
+    '"tags" (list of short lowercase topics). Use empty lists when nothing fits. Do not invent details.'
+)
+JOURNAL_LIST_KEYS = ("highlights", "people", "gratitude", "todos", "tags")
+
+
+def structure_journal_text(text_value: str) -> dict:
+    result = call_openai_compatible_model(
+        profile=configured_model_profile("fast"),
+        prompt=text_value,
+        system=JOURNAL_SYSTEM_PROMPT,
+        images=[],
+        max_tokens=800,
+        temperature=0.2,
+    )
+    content = result["content"].strip()
+    start, end = content.find("{"), content.rfind("}")
+    data = json.loads(content[start : end + 1]) if start != -1 and end > start else {}
+    structured = {"title": str(data.get("title") or "").strip(), "summary": str(data.get("summary") or "").strip(), "mood": str(data.get("mood") or "").strip()}
+    for key in JOURNAL_LIST_KEYS:
+        value = data.get(key) or []
+        structured[key] = [str(item).strip() for item in value if str(item).strip()] if isinstance(value, list) else []
+    return structured
+
+
+def journal_response(record: JournalEntryRecord):
+    return {
+        "id": record.id,
+        "entry_date": record.entry_date,
+        "title": record.title,
+        "transcript": record.transcript,
+        "source": record.source,
+        "created_at": record.created_at,
+        **(record.structured or {}),
+    }
+
+
+@app.post("/api/v1/journal")
+def create_journal_entry(payload: JournalCreate, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    text_value = payload.text.strip()
+    try:
+        structured = structure_journal_text(text_value)
+        structured["structured_ok"] = True
+    except Exception as exc:
+        # Never lose an entry: keep the transcript even when the model is down.
+        structured = {"structured_ok": False, "error": str(exc)[:300]}
+    entry_date = payload.entry_date or datetime.now(ZoneInfo(settings.user_timezone)).date().isoformat()
+    title = structured.get("title") or (text_value[:77] + "..." if len(text_value) > 80 else text_value)
+    record = JournalEntryRecord(id=new_id("jrnl"), entry_date=entry_date, title=title[:240], transcript=text_value, structured=structured, source=payload.source[:80])
+    db.add(record)
+    audit(db, "journal.created", actor, new_id("corr"), record.id, {"source": record.source, "structured_ok": structured["structured_ok"]})
+    db.commit()
+    return {"entry": journal_response(record)}
+
+
+@app.get("/api/v1/journal")
+def list_journal_entries(days: int = 7, q: str | None = None, limit: int = 20, db: Session = Depends(get_db), actor: str = Depends(authorize)):
+    since = (datetime.now(ZoneInfo(settings.user_timezone)).date() - timedelta(days=max(0, days - 1))).isoformat()
+    query = db.query(JournalEntryRecord).filter(JournalEntryRecord.entry_date >= since)
+    if q:
+        query = query.filter(JournalEntryRecord.transcript.ilike(f"%{q}%"))
+    rows = query.order_by(JournalEntryRecord.entry_date.desc(), JournalEntryRecord.created_at.desc()).limit(max(1, min(limit, 100))).all()
+    return {"entries": [journal_response(row) for row in rows]}
 
 
 @app.get("/api/v1/daily-brief")

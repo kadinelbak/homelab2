@@ -248,6 +248,18 @@ class DailyBriefRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class JournalEntryRecord(Base):
+    __tablename__ = "personal_ops_journal_entries"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    entry_date: Mapped[str] = mapped_column(String(10))
+    title: Mapped[str] = mapped_column(String(240))
+    transcript: Mapped[str] = mapped_column(Text)
+    structured: Mapped[dict] = mapped_column(JSON, default=dict)
+    source: Mapped[str] = mapped_column(String(80), default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AutomationRunRecord(Base):
     __tablename__ = "personal_ops_automation_runs"
 

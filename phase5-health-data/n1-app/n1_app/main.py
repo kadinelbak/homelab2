@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -166,14 +166,49 @@ def create_event(name: str=Form(...), occurred_at: str=Form(...), dose: str=Form
         conn.execute("INSERT INTO intervention_events (subject_id,experiment_id,name,occurred_at,dose,unit,adherence,notes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",(subject["id"],int(experiment_id) if experiment_id else None,name,moment,dose or None,unit or None,adherence,notes or None)); conn.commit()
     return RedirectResponse("/",status_code=303)
 
-CONTEXT_CATEGORIES = (("illness", "Illness"), ("travel", "Travel"), ("alcohol", "Alcohol"), ("injury", "Injury"), ("medication", "Medication change"), ("stress", "High stress"), ("other", "Other"))
+CONTEXT_CATEGORIES = (("illness", "Illness"), ("travel", "Travel"), ("alcohol", "Alcohol"), ("injury", "Injury"), ("medication", "Medication change"), ("stress", "High stress"), ("sleep", "Sleep deprived"), ("other", "Other"))
+
+MONTH_METRICS = (("resting_heart_rate", "Resting HR", "bpm"), ("hrv", "HRV", "ms"), ("sleep_hours", "Sleep", "h"), ("steps", "Steps", ""))
+
+def month_days(conn, subject, first: date) -> list[dict[str, Any]]:
+    last = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+    tz = subject["timezone"]
+    days = {first.fromordinal(n): {} for n in range(first.toordinal(), last.toordinal())}
+    # Sum steps per source first so overlapping sources are not double counted.
+    for row in conn.execute("""
+        SELECT d, metric_type, max(v) AS v FROM (
+          SELECT (ts AT TIME ZONE %s)::date AS d, metric_type, source,
+                 CASE WHEN metric_type='steps' THEN sum(value) ELSE avg(value) END AS v
+          FROM metric_samples
+          WHERE metric_type IN ('resting_heart_rate','hrv','steps') AND ts >= (%s::date AT TIME ZONE %s) AND ts < (%s::date AT TIME ZONE %s)
+          GROUP BY 1,2,3) per_source GROUP BY 1,2""", (tz, first, tz, last, tz)).fetchall():
+        days[row["d"]][row["metric_type"]] = row["v"]
+    for row in conn.execute("SELECT date_of_sleep AS d, max(minutes_asleep)/60.0 AS v FROM sleep_sessions WHERE is_main_sleep IS NOT FALSE AND date_of_sleep >= %s AND date_of_sleep < %s GROUP BY 1", (first, last)).fetchall():
+        days[row["d"]]["sleep_hours"] = row["v"]
+    for row in conn.execute("SELECT day, contexts FROM n1_context_days WHERE subject_id=%s AND day >= %s AND day < %s", (subject["id"], first, last)).fetchall():
+        days[row["day"]]["contexts"] = row["contexts"]
+    return [{"day": d, **v} for d, v in days.items()]
+
+def chart_points(days: list[dict[str, Any]], key: str) -> str:
+    values = [d.get(key) for d in days if d.get(key) is not None]
+    if not values:
+        return ""
+    low, high = min(values), max(values)
+    span = (high - low) or 1
+    return " ".join(f"{i + 0.5:.1f},{36 - 32 * (d[key] - low) / span:.1f}" for i, d in enumerate(days) if d.get(key) is not None)
 
 @app.get("/contexts")
-def contexts(request: Request):
+def contexts(request: Request, month: str = ""):
     with connect() as conn:
         subject = owner(conn)
         rows = conn.execute("SELECT * FROM context_events WHERE subject_id=%s ORDER BY starts_at DESC LIMIT 100", (subject["id"],)).fetchall()
-    return render(request, "contexts.html", contexts=rows, categories=CONTEXT_CATEGORIES, now=local_now(subject))
+        now = local_now(subject)
+        first = date.fromisoformat(month + "-01") if month else now.date().replace(day=1)
+        days = month_days(conn, subject, first)
+    charts = [(label, unit, chart_points(days, key), [d.get(key) for d in days]) for key, label, unit in MONTH_METRICS]
+    prev_month = (first.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    next_month = date(first.year + first.month // 12, first.month % 12 + 1, 1).strftime("%Y-%m")
+    return render(request, "contexts.html", contexts=rows, categories=CONTEXT_CATEGORIES, now=now, first=first, days=days, charts=charts, prev_month=prev_month, next_month=next_month)
 
 @app.post("/contexts")
 def create_context(category: str=Form(...), label: str=Form(...), starts_at: str=Form(...), ends_at: str=Form(""), notes: str=Form("")):
@@ -188,6 +223,13 @@ def create_context(category: str=Form(...), label: str=Form(...), starts_at: str
         if end and end < start:
             raise HTTPException(422, "End must be after start")
         conn.execute("INSERT INTO context_events (subject_id,category,label,starts_at,ends_at,notes) VALUES (%s,%s,%s,%s,%s,%s)", (subject["id"], category, label, start, end, notes or None))
+        conn.commit()
+    return RedirectResponse(f"/contexts?month={starts_at[:7]}", status_code=303)
+
+@app.post("/contexts/{context_id}/delete")
+def delete_context(context_id: int):
+    with connect() as conn:
+        conn.execute("DELETE FROM context_events WHERE id=%s AND subject_id=%s", (context_id, owner(conn)["id"]))
         conn.commit()
     return RedirectResponse("/contexts", status_code=303)
 
