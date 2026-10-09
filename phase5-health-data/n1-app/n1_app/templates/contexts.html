@@ -1,11 +1,35 @@
 {% extends 'base.html' %}{% block content %}
 <h1>Context periods</h1>
-<p class="muted">Tag confounders such as illness, travel, alcohol, injury, or high stress. These are separate from interventions, so they can be filtered during analysis.</p>
+<p class="muted">Tag confounders such as illness, travel, alcohol, injury, high stress, or sleep deprivation. Past dates work, so you can back-tag old data. These are separate from interventions, so they can be filtered during analysis.</p>
+<div class="card month"><div class="toolbar"><a class="metabase-link" href="/contexts?month={{ prev_month }}">← Prev</a><h2>{{ first.strftime('%B %Y') }}</h2><a class="metabase-link" href="/contexts?month={{ next_month }}">Next →</a></div>
+  <p class="muted">Click a start day, then an end day, to fill in the form below. Shaded days are already tagged.</p>
+  {% for label, unit, points, values in charts %}<div class="chart"><span class="muted">{{ label }}</span><svg viewBox="0 0 {{ days|length }} 40" preserveAspectRatio="none">{% for d in days %}{% if d.contexts %}<rect x="{{ loop.index0 }}" y="0" width="1" height="40" class="tagged"><title>{{ d.contexts }}</title></rect>{% endif %}{% endfor %}<rect class="pick" y="0" height="40" width="0"></rect>{% if points %}<polyline points="{{ points }}"></polyline>{% endif %}</svg></div>{% endfor %}
+  <div class="days" style="grid-template-columns:repeat({{ days|length }},1fr)">{% for d in days %}{% set i = loop.index0 %}<button type="button" class="day{% if d.contexts %} tagged{% endif %}" data-day="{{ d.day.isoformat() }}" data-index="{{ loop.index0 }}" title="{{ d.day.strftime('%a %b %-d') }}{% for label, unit, points, values in charts %}{% if values[i] is not none %} · {{ label }} {{ '%.0f'|format(values[i]) if unit != 'h' else '%.1f'|format(values[i]) }}{{ unit }}{% endif %}{% endfor %}{% if d.contexts %} · {{ d.contexts }}{% endif %}">{{ d.day.day }}</button>{% endfor %}</div>
+</div>
 <div class="card"><h2>Add a time range</h2><form action="/contexts" method="post">
   <label>Category<select name="category">{% for value,label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
   <label>Label<input name="label" placeholder="Cold with fever" required></label>
   <div class="grid"><label>Started<input type="datetime-local" name="starts_at" value="{{ now.strftime('%Y-%m-%dT%H:%M') }}" required></label><label>Ended (leave blank if ongoing)<input type="datetime-local" name="ends_at"></label></div>
   <label>Notes<textarea name="notes" placeholder="Symptoms, severity, or anything relevant"></textarea></label><button>Save context period</button>
 </form></div>
-<div class="card"><h2>Recent context periods</h2>{% for item in contexts %}<div class="row"><div><strong>{{ item.category|capitalize }} · {{ item.label }}</strong><br><span class="muted">{{ item.starts_at.strftime('%b %-d, %-I:%M %p') }}{% if item.ends_at %} → {{ item.ends_at.strftime('%b %-d, %-I:%M %p') }}{% else %} · ongoing{% endif %}</span>{% if item.notes %}<br><span class="muted">{{ item.notes }}</span>{% endif %}</div></div>{% else %}<p class="muted">No context periods yet.</p>{% endfor %}</div>
+<div class="card"><h2>Recent context periods</h2>{% for item in contexts %}<div class="row"><div><strong>{{ item.category|capitalize }} · {{ item.label }}</strong><br><span class="muted">{{ item.starts_at.strftime('%b %-d, %-I:%M %p') }}{% if item.ends_at %} → {{ item.ends_at.strftime('%b %-d, %-I:%M %p') }}{% else %} · ongoing{% endif %}</span>{% if item.notes %}<br><span class="muted">{{ item.notes }}</span>{% endif %}</div><form action="/contexts/{{ item.id }}/delete" method="post"><button>Delete</button></form></div>{% else %}<p class="muted">No context periods yet.</p>{% endfor %}</div>
+<script>
+(() => {
+  const start = document.querySelector('[name=starts_at]'), end = document.querySelector('[name=ends_at]');
+  const days = [...document.querySelectorAll('.day')];
+  let first = null;
+  const shade = (a, b) => {
+    days.forEach(d => d.classList.toggle('picked', +d.dataset.index >= a && +d.dataset.index <= b));
+    document.querySelectorAll('.pick').forEach(r => { r.setAttribute('x', a); r.setAttribute('width', b - a + 1); });
+  };
+  days.forEach(d => d.addEventListener('click', () => {
+    const i = +d.dataset.index;
+    if (first === null) { first = d; start.value = d.dataset.day + 'T00:00'; end.value = ''; shade(i, i); return; }
+    let [a, b] = [first, d].sort((x, y) => x.dataset.index - y.dataset.index);
+    start.value = a.dataset.day + 'T00:00'; end.value = b.dataset.day + 'T23:59';
+    shade(+a.dataset.index, +b.dataset.index); first = null;
+    document.querySelector('[name=label]').focus();
+  }));
+})();
+</script>
 {% endblock %}
