@@ -97,11 +97,16 @@ def _store_sleep(conn, record, source_file, run_id, counts):
     if not start or not end: return
     log_id = record.get("name") or hashlib.sha256(f"{start}:{end}".encode()).hexdigest()
     summary = payload.get("summary") or {}
-    session = {"source": SOURCE, "log_id": log_id, "date_of_sleep": _ts(end).date(), "start_time": _ts(start), "end_time": _ts(end), "duration_seconds": int((_ts(end)-_ts(start)).total_seconds()), "efficiency": None, "minutes_asleep": _int(summary.get("minutesAsleep")), "minutes_awake": _int(summary.get("minutesAwake")), "is_main_sleep": True, "source_file": source_file, "metadata": summary, "import_run_id": run_id}
+    stages = [st for st in payload.get("stages") or [] if st.get("startTime") and st.get("endTime")]
+    asleep, awake = _int(summary.get("minutesAsleep")), _int(summary.get("minutesAwake"))
+    if asleep is None and stages:
+        # Some nights carry no summary minutes; derive them from the stages so efficiency can be charted.
+        minutes = lambda wake: round(sum((_ts(st["endTime"]) - _ts(st["startTime"])).total_seconds() for st in stages if (st.get("type") == "AWAKE") == wake) / 60)
+        asleep, awake = minutes(False), minutes(True)
+    session = {"source": SOURCE, "log_id": log_id, "date_of_sleep": _ts(end).date(), "start_time": _ts(start), "end_time": _ts(end), "duration_seconds": int((_ts(end)-_ts(start)).total_seconds()), "efficiency": None, "minutes_asleep": asleep, "minutes_awake": awake, "is_main_sleep": True, "source_file": source_file, "metadata": summary, "import_run_id": run_id}
     if db.upsert_sleep_session(conn, session): counts["sleep_sessions_inserted"] += 1
     # Stage names match the Fitbit export levels (wake/light/deep/rem) so both sources chart the same way.
-    for stage in payload.get("stages") or []:
-        if not stage.get("startTime") or not stage.get("endTime"): continue
+    for stage in stages:
         level = {"AWAKE": "wake"}.get(stage.get("type"), str(stage.get("type") or "unknown").lower())
         row = {"source": SOURCE, "log_id": log_id, "ts": _ts(stage["startTime"]), "level": level, "seconds": int((_ts(stage["endTime"])-_ts(stage["startTime"])).total_seconds()), "source_file": source_file, "import_run_id": run_id}
         if db.upsert_sleep_stage(conn, row): counts["sleep_stages_inserted"] += 1
