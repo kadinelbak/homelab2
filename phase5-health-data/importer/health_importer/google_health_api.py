@@ -82,7 +82,7 @@ def _store_metric(conn, record, data_type, metric, source_file, run_id, counts):
     elif data_type == "heart-rate": value, when = payload.get("beatsPerMinute"), (payload.get("sampleTime") or {}).get("physicalTime")
     elif data_type.startswith("daily-"):
         d = payload.get("date") or {}
-        field = {"daily-resting-heart-rate": "beatsPerMinute", "daily-heart-rate-variability": "averageHeartRateVariabilityMilliseconds", "daily-oxygen-saturation": "percentage", "daily-respiratory-rate": "breaksPerMinute"}[data_type]
+        field = {"daily-resting-heart-rate": "beatsPerMinute", "daily-heart-rate-variability": "averageHeartRateVariabilityMilliseconds", "daily-oxygen-saturation": "averagePercentage", "daily-respiratory-rate": "breathsPerMinute"}[data_type]
         value, when = payload.get(field), (f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}T00:00:00Z" if d.get("year") else None)
     else: value, when = payload.get("energyKilocalories") or payload.get("distanceMeters"), (payload.get("interval") or {}).get("startTime")
     if value is None or not when: return
