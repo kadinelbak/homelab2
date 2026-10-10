@@ -46,7 +46,9 @@ def sync_date(conn, settings: Settings, day: date) -> dict[str, int]:
             digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
             if db.insert_raw_document(conn, "google_health_api", source_file, digest, payload, run_id): counts["raw_documents_inserted"] += 1
             if metric:
-                for record in records: _store_metric(conn, record, data_type, metric, source_file, run_id, counts)
+                # Every sync re-reads the full history, so metric rows use a day-independent
+                # source_file; a dated one would store each reading again on every sync.
+                for record in records: _store_metric(conn, record, data_type, metric, f"google-health/{data_type}.json", run_id, counts)
             elif data_type == "sleep":
                 for record in records: _store_sleep(conn, record, source_file, run_id, counts)
             conn.commit()
