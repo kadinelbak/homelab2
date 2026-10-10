@@ -20,7 +20,8 @@ def api(url: str, key: str, path: str, *, method: str = "GET", body: Any = None)
         raise RuntimeError(f"Metabase API {method} {path} failed ({error.code}): {error.read().decode('utf-8', 'replace')[:500]}") from error
     return json.loads(payload) if payload else None
 
-def find_named(items: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+def find_named(items: Any, name: str) -> dict[str, Any] | None:
+    if isinstance(items, dict): items = items.get("data", [])  # newer Metabase wraps lists as {"data": [...]}
     return next((item for item in items if item.get("name") == name), None)
 
 def upsert_card(url: str, key: str, database_id: int, spec: dict[str, Any]) -> dict[str, Any]:
@@ -31,7 +32,7 @@ def upsert_card(url: str, key: str, database_id: int, spec: dict[str, Any]) -> d
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="Validate and list resources without contacting Metabase")
-    parser.add_argument("--url", default=os.environ.get("METABASE_URL", "http://127.0.0.1:13000"))
+    parser.add_argument("--url", default=os.environ.get("METABASE_URL") or f"http://{os.environ.get('HEALTH_BIND_IP') or '127.0.0.1'}:{os.environ.get('HEALTH_METABASE_HOST_PORT') or 13000}")
     parser.add_argument("--database-name", default=os.environ.get("METABASE_DATABASE_NAME", "Homelab Health"))
     args = parser.parse_args(); manifest = json.loads(MANIFEST.read_text(encoding="utf-8")); cards = manifest.get("cards", [])
     if not manifest.get("dashboard", {}).get("name") or not cards: raise ValueError("Dashboard manifest must contain a name and cards")
@@ -48,12 +49,13 @@ def main() -> int:
     existing_dashboard = find_named(api(args.url, key, "/dashboard"), manifest["dashboard"]["name"])
     dashboard = api(args.url, key, f"/dashboard/{existing_dashboard['id']}" if existing_dashboard else "/dashboard", method="PUT" if existing_dashboard else "POST", body=manifest["dashboard"])
     existing = api(args.url, key, f"/dashboard/{dashboard['id']}")
-    existing_card_ids = {dashcard.get("card_id") for dashcard in existing.get("dashcards", [])}
+    dashcards = existing.get("dashcards", []); existing_card_ids = {dashcard.get("card_id") for dashcard in dashcards}
     for spec in cards:
         card = upsert_card(args.url, key, database["id"], spec)
         if card["id"] not in existing_card_ids:
             col, row, size_x, size_y = spec["layout"]
-            api(args.url, key, f"/dashboard/{dashboard['id']}/cards", method="POST", body={"cardId":card["id"],"col":col,"row":row,"sizeX":size_x,"sizeY":size_y,"parameter_mappings":[]})
+            dashcards.append({"id":-len(dashcards)-1,"card_id":card["id"],"col":col,"row":row,"size_x":size_x,"size_y":size_y,"parameter_mappings":[],"visualization_settings":{}})
+    api(args.url, key, f"/dashboard/{dashboard['id']}", method="PUT", body={"dashcards":dashcards})
     print(f"Provisioned dashboard: {args.url.rstrip('/')}/dashboard/{dashboard['id']}")
     return 0
 
