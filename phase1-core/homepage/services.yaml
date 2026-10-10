@@ -1,13 +1,3 @@
-- Health:
-    - N-of-1 Health Logger:
-        icon: mdi-heart-pulse
-        href: https://kadin-main-sys.tail00cf0e.ts.net:13001
-        description: Private check-ins, interventions, and nutrition labels
-    - Health Metabase:
-        icon: metabase
-        href: http://100.79.132.39:13000
-        description: Private biometric and experiment dashboards
-
 - Jarvis:
     - Core Console:
         icon: si-openai
@@ -63,7 +53,7 @@
 - Core:
     - Homepage:
         icon: homepage
-        href: http://kadin-main-sys.tail00cf0e.ts.net:3000
+        href: https://kadin-main-sys.tail00cf0e.ts.net:3000
         description: Service launcher
     - Nginx Proxy Manager:
         icon: nginx-proxy-manager
@@ -75,11 +65,11 @@
         description: Container management
     - Homelab Control:
         icon: mdi-tune
-        href: http://kadin-main-sys.tail00cf0e.ts.net:5055
+        href: https://kadin-main-sys.tail00cf0e.ts.net:5055
         description: Start and stop service groups
     - Wake-on-LAN API:
         icon: mdi-power
-        href: http://kadin-main-sys.tail00cf0e.ts.net:9999/health
+        href: https://kadin-main-sys.tail00cf0e.ts.net:9999/health
         description: Wake endpoint health
     - Authentik:
         icon: authentik
@@ -93,6 +83,10 @@
         icon: ntfy
         href: http://kadin-main-sys.tail00cf0e.ts.net:8085
         description: Push notifications
+    - Pi-hole:
+        icon: pi-hole
+        href: http://100.79.132.39:8053/admin/
+        description: Network-wide DNS and ad blocking
 
 - Monitoring:
     - Uptime Kuma:
@@ -101,15 +95,15 @@
         description: Uptime checks
     - Beszel:
         icon: beszel
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8090
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8090
         description: Lightweight system monitoring
     - Scrutiny:
         icon: scrutiny
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8089
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8089
         description: Disk health
     - Grafana:
         icon: grafana
-        href: http://kadin-main-sys.tail00cf0e.ts.net:30030
+        href: https://kadin-main-sys.tail00cf0e.ts.net:30030
         description: Dashboards
 
 - Weather:
@@ -163,49 +157,45 @@
               label: Stack
     - Prowlarr:
         icon: prowlarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:9696
+        href: https://kadin-main-sys.tail00cf0e.ts.net:9696
         description: Indexer aggregator
     - Bazarr:
         icon: bazarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:6767
+        href: https://kadin-main-sys.tail00cf0e.ts.net:6767
         description: Subtitle manager
     - Sonarr:
         icon: sonarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8989
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8989
         description: TV series automation
     - Radarr:
         icon: radarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:7878
+        href: https://kadin-main-sys.tail00cf0e.ts.net:7878
         description: Movie automation
     - Lidarr:
         icon: lidarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8686
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8686
         description: Music automation
     - Readarr:
         icon: readarr
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8787
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8787
         description: Book automation
     - qBittorrent:
         icon: qbittorrent
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8097
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8097
         description: Torrent client over VPN
 
 - AI Tools:
     - Media AI:
         icon: si-openai
-        href: http://kadin-main-sys.tail00cf0e.ts.net:3100
+        href: https://kadin-main-sys.tail00cf0e.ts.net:3100
         description: Media creation workflow pipeline
-    - AI Orchestrator:
-        icon: si-openai
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8095/health
-        description: Request routing and worker handoff
     - SCAD AI Generator:
         icon: mdi-cube-scan
-        href: http://kadin-main-sys.tail00cf0e.ts.net:18104
+        href: https://kadin-main-sys.tail00cf0e.ts.net:18104
         description: Batch OpenSCAD generation and preview
     - n8n:
         icon: n8n
-        href: http://kadin-main-sys.tail00cf0e.ts.net:5678
+        href: https://kadin-main-sys.tail00cf0e.ts.net:5678
         description: Workflow automation
 
 - Tools:
@@ -233,7 +223,7 @@
 - Gaming:
     - Web Games:
         icon: nintendo-switch
-        href: http://kadin-main-sys.tail00cf0e.ts.net:8092
+        href: https://kadin-main-sys.tail00cf0e.ts.net:8092
         description: Browser games
     - Game Server API:
         icon: mdi-gamepad-variant
@@ -285,3 +275,17 @@
         icon: nocodb
         href: http://kadin-main-sys.tail00cf0e.ts.net:8098
         description: No-code database UI
+
+- Health:
+    - N-of-1 Health Logger:
+        icon: mdi-heart-pulse
+        href: https://kadin-main-sys.tail00cf0e.ts.net:13001
+        description: Private check-ins, interventions, and nutrition labels
+    - Health Metabase:
+        icon: metabase
+        href: http://100.79.132.39:13000
+        description: Private biometric and experiment dashboards
+    - Health Jupyter:
+        icon: jupyter
+        href: http://100.79.132.39:18888
+        description: Notebooks for health data analysis
