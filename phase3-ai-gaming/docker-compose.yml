@@ -154,6 +154,34 @@ services:
       - "homepage.description=Batch OpenSCAD generation and preview"
 
   # ---------------------------------------------------------------------------
+  # BOOKMARK MAKER - Silhouette image to printable bookmark STL (tailnet only)
+  # ---------------------------------------------------------------------------
+  bookmark-maker:
+    build:
+      context: ./bookmark-maker
+    container_name: bookmark_maker
+    restart: unless-stopped
+    profiles: ["bookmark", "automation"]
+    user: "${PUID}:${PGID}"
+    environment:
+      TZ: ${TZ}
+      BOOKMARK_PORT: 8105
+      BOOKMARK_DATA_DIR: /data
+    ports:
+      - "${TAILSCALE_HOST_IP:-127.0.0.1}:${BOOKMARK_HOST_PORT:-18105}:8105"
+    volumes:
+      - ${DATA_PATH}/phase3-ai-gaming/data/bookmark-maker:/data
+    networks:
+      - homelab_internal
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "homepage.group=AI Automations"
+      - "homepage.name=Bookmark Maker"
+      - "homepage.icon=mdi-bookmark-outline"
+      - "homepage.href=http://${DOMAIN}:${BOOKMARK_HOST_PORT:-18105}"
+      - "homepage.description=Silhouette image to bookmark STL"
+
+  # ---------------------------------------------------------------------------
   # MINECRAFT - Game Server (itzg/minecraft-server)
   # ---------------------------------------------------------------------------
   minecraft:
