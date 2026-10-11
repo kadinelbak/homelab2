@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bookmark Maker</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--fg:#1d1d1f;--muted:#6b6b70;--line:#dcdad5;--accent:#2f6f5e;--warn:#9a5b00;--warnbg:#fff4de}
+@media (prefers-color-scheme:dark){:root{--bg:#161618;--card:#202023;--fg:#ececee;--muted:#9a9aa0;--line:#38383d;--accent:#6cc3a8;--warn:#f0c070;--warnbg:#3a2e16}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:24px 16px;display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 320px;align-items:start}
+@media (max-width:800px){main{grid-template-columns:1fr}}
+h1{grid-column:1/-1;margin:0;font-size:22px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+label{display:block;margin:10px 0 4px;color:var(--muted);font-size:13px}
+input[type=number],input[type=text],select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}.grid>.wide{grid-column:1/-1}.hidden{display:none!important}
+.check{display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--fg)}
+input[type=range]{width:100%}
+details{border-top:1px solid var(--line);padding:6px 0}summary{cursor:pointer;font-weight:600;padding:6px 0}
+button,a.btn{display:inline-block;margin:14px 8px 0 0;padding:9px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}
+a.btn.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+button:disabled{opacity:.5}button.small{margin:0 0 0 8px;padding:3px 10px;font-size:13px}
+#go{width:100%;margin:14px 0 0}#msg{color:var(--muted);margin-top:10px;min-height:1.4em}
+.tabs{display:flex;gap:6px;margin-bottom:10px}.tabs button{margin:0;padding:5px 12px;background:transparent;color:var(--fg);border:1px solid var(--line);font-weight:500}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#viewer{width:100%;height:440px;border-radius:6px;background:var(--bg);position:relative}#viewer canvas{display:block;width:100%;height:100%}
+#outline{display:flex;justify-content:center;align-items:center;min-height:440px}
+#outline img{max-height:600px;max-width:100%;background:#fff;border-radius:6px;padding:8px}
+.empty{color:var(--muted);padding:12px}
+.warn{background:var(--warnbg);color:var(--warn);border-radius:6px;padding:8px 10px;margin-top:10px}
+.colors{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:12px}.colors label{margin:0;display:flex;gap:6px;align-items:center;color:var(--fg)}
+.colors input{width:34px;height:26px;padding:0;border:1px solid var(--line);background:none}
+.card{margin-top:14px;font-size:13px;color:var(--muted)}.card b{color:var(--fg)}.card ul{margin:4px 0 0;padding-left:18px}
+</style></head><body><main>
+<h1>Bookmark Maker</h1>
+<section>
+  <div class="tabs"><button id="tab3d" class="on" type="button">3D preview</button><button id="tab2d" type="button">Outline</button></div>
+  <div id="viewer"><div class="empty">Upload a silhouette (SVG, PNG or JPEG) or a photo to start.</div></div>
+  <div id="outline" class="hidden"></div>
+  <div id="msg"></div><div id="warnings"></div><div id="dl"></div><div id="colors" class="colors"></div><div id="card" class="card"></div>
+</section>
+<section>
+  <label for="file" style="margin-top:0">Image</label><input id="file" type="file" accept=".svg,image/svg+xml,image/png,image/jpeg">
+  <label>Mode</label>
+  <select id="mode"><option value="silhouette">Silhouette (raised outline art)</option><option value="photo">Photo (layered levels)</option></select>
+  <details open id="sec-shape"><summary>Shape</summary><div class="grid" id="f-shape"></div></details>
+  <details open id="sec-sil"><summary>Silhouette</summary><div class="grid" id="f-sil"></div></details>
+  <details open id="sec-photo"><summary>Photo</summary><div class="grid" id="f-photo"></div></details>
+  <details id="sec-text"><summary>Text</summary><div class="grid" id="f-text"></div></details>
+  <details id="sec-extras"><summary>Extras</summary><div class="grid" id="f-extras"></div></details>
+  <button id="go" disabled type="button">Make bookmark</button>
+</section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const v=id=>{const e=$(id);return e.type==="checkbox"?(e.checked?1:0):e.value};
+const sil=()=>v("mode")==="silhouette", corner=()=>v("style")==="corner", clip=()=>v("style")==="clip";
+const FONTS=[["dejavu-sans","DejaVu Sans Bold"],["dejavu-serif","DejaVu Serif Bold"],["liberation-sans","Liberation Sans Bold"],["liberation-serif","Liberation Serif Bold"],["liberation-mono","Liberation Mono Bold"]];
+// [id, label, type, default, extra, visible(), section]
+const FIELDS=[
+["style","Body","select","clip",[["clip","Paperclip"],["solid","Solid"],["corner","Corner"]],()=>sil(),"shape"],
+["bottom","Bottom","select","round",[["round","Round"],["point","Point"],["swallowtail","Swallowtail"],["square","Square"],["taper","Taper"]],()=>sil()&&!corner()&&!v("peek"),"shape"],
+["width","Body width mm","number",24,1,()=>!corner(),"shape"],
+["length","Body length mm","number",110,5,()=>!corner(),"shape"],
+["corner_leg","Corner leg mm","number",55,1,()=>corner(),"shape"],
+["thickness","Thickness mm","number",1.5,0.1,()=>!corner(),"shape"],
+["corner_r","Corner radius mm","number",2,0.5,()=>true,"shape"],
+["rail","Clip rail mm","number",3,0.5,()=>sil()&&clip(),"shape"],
+["gap","Clip gap mm","number",3,0.5,()=>sil()&&clip(),"shape"],
+["art_width","Art width mm","number",50,1,()=>true,"sil"],
+["art_height","Max art height mm","number",60,1,()=>true,"sil"],
+["overlap","Art overlap mm","number",6,1,()=>!corner(),"sil"],
+["border","Outline mm","number",1.5,0.5,()=>true,"sil"],
+["art_raise","Art raise mm (0 = flat)","number",0.6,0.1,()=>true,"sil"],
+["threshold","Threshold","range",128,[1,254],()=>true,"sil"],
+["invert","Invert (light art on dark background)","check",0,0,()=>true,"sil"],
+["peek","Split peek: head on top, feet at the bottom","check",0,0,()=>!corner(),"sil"],
+["peek_split","Split at (fraction from top)","number",0.7,0.05,()=>!corner()&&v("peek"),"sil"],
+["photo_fit","Fit","select","cover",[["cover","Cover (crop)"],["contain","Contain"]],()=>true,"photo"],
+["levels","Levels (2-4)","number",3,1,()=>true,"photo"],
+["auto_level","Auto contrast","check",1,0,()=>true,"photo"],
+["text1","Text line 1","text","",30,()=>sil()&&!corner(),"text"],
+["text2","Text line 2","text","",30,()=>sil()&&!corner(),"text"],
+["text_mode","Text","select","raised",[["raised","Raised"],["engraved","Engraved"]],()=>sil()&&!corner(),"text"],
+["font","Font","select","dejavu-sans",FONTS,()=>sil()&&!corner(),"text"],
+["text_size","Letter height mm (0 = auto)","number",0,0.5,()=>sil()&&!corner(),"text"],
+["text_height","Raised height mm","number",0.6,0.1,()=>sil()&&!corner()&&v("text_mode")==="raised","text"],
+["hole","Tassel hole","check",0,0,()=>!corner(),"extras"],
+["hole_d","Hole diameter mm","number",4,0.5,()=>!corner()&&v("hole"),"extras"],
+["pattern","Pattern cutouts","select","none",[["none","None"],["honeycomb","Honeycomb"],["diamonds","Diamonds"],["stars","Stars"],["dots","Dots"]],()=>sil()&&v("style")!=="corner","extras"],
+["cell","Cell size mm","number",6,0.5,()=>sil()&&v("pattern")!=="none"&&!corner(),"extras"],
+];
+for(const [id,label,type,def,extra,,sec] of FIELDS){
+  const box=document.createElement("div");box.id="w-"+id;if(type==="range"||type==="check"||type==="text")box.className="wide";
+  let inner;
+  if(type==="select")inner=`<label for="${id}">${label}</label><select id="${id}">${extra.map(([k,t])=>`<option value="${k}"${k===def?" selected":""}>${t}</option>`).join("")}</select>`;
+  else if(type==="check")inner=`<label class="check"><input id="${id}" type="checkbox"${def?" checked":""}> ${label}</label>`;
+  else if(type==="range")inner=`<label for="${id}">${label} <span id="tv">${def}</span></label><input id="${id}" type="range" min="${extra[0]}" max="${extra[1]}" value="${def}">`;
+  else if(type==="text")inner=`<label for="${id}">${label}</label><input id="${id}" type="text" maxlength="${extra}" value="">`;
+  else inner=`<label for="${id}">${label}</label><input id="${id}" type="number" value="${def}" step="${extra}">`;
+  box.innerHTML=inner;$("f-"+sec).appendChild(box);
+}
+function refresh(){
+  for(const [id,,,,,vis] of FIELDS)$("w-"+id).classList.toggle("hidden",!vis());
+  $("sec-sil").classList.toggle("hidden",!sil());$("sec-photo").classList.toggle("hidden",sil());
+  $("sec-text").classList.toggle("hidden",!(sil()&&!corner()));
+  $("tv").textContent=$("threshold").value;
+}
+document.querySelectorAll("#f-shape select,#f-sil input,#f-sil select,#f-text select,#f-extras input,#f-extras select,#mode").forEach(e=>e.addEventListener("input",refresh));
+$("mode").addEventListener("change",refresh);$("style").addEventListener("change",refresh);
+refresh();
+$("file").onchange=()=>{$("go").disabled=!$("file").files.length;};
+
+// ---- 3D viewer ----
+let renderer,scene,camera,controls,meshes=[],userColors={},current=null;
+function initViewer(){
+  if(typeof THREE==="undefined"||!THREE.STLLoader||!THREE.OrbitControls)return false;
+  if(renderer)return true;
+  const box=$("viewer");box.innerHTML="";
+  renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));box.appendChild(renderer.domElement);
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(35,1,0.5,2000);camera.up.set(0,0,1);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x666666,0.9));
+  const d=new THREE.DirectionalLight(0xffffff,0.7);d.position.set(60,-80,120);scene.add(d);
+  controls=new THREE.OrbitControls(camera,renderer.domElement);controls.enableDamping=true;
+  addEventListener("resize",resize);
+  (function loop(){requestAnimationFrame(loop);if($("viewer").offsetParent){controls.update();renderer.render(scene,camera);}})();
+  return true;
+}
+function resize(){if(!renderer)return;const b=$("viewer");renderer.setSize(b.clientWidth,b.clientHeight);camera.aspect=b.clientWidth/b.clientHeight;camera.updateProjectionMatrix();}
+function showParts(parts){
+  if(!initViewer()){$("viewer").innerHTML='<div class="empty">3D viewer unavailable (could not load three.js). Use the Outline tab or download the files.</div>';return;}
+  meshes.forEach(m=>{scene.remove(m);m.geometry.dispose();m.material.dispose()});meshes=[];
+  resize();
+  const loader=new THREE.STLLoader();const group=new THREE.Box3();let pending=parts.length;
+  parts.forEach((p,i)=>loader.load(p.url,geo=>{
+    geo.computeVertexNormals();
+    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:p.color,roughness:0.6,metalness:0.0}));
+    mesh.userData.name=p.name;scene.add(mesh);meshes.push(mesh);
+    if(--pending===0){
+      meshes.forEach(m=>{m.geometry.computeBoundingBox();group.union(m.geometry.boundingBox)});
+      const c=group.getCenter(new THREE.Vector3()),s=group.getSize(new THREE.Vector3()),r=Math.max(s.x,s.y,s.z);
+      controls.target.copy(c);camera.position.set(c.x,c.y-r*1.3,c.z+r*1.6);camera.near=r/50;camera.far=r*30;camera.updateProjectionMatrix();controls.update();
+    }
+  }));
+}
+function setTab(t){
+  $("tab3d").classList.toggle("on",t==="3d");$("tab2d").classList.toggle("on",t==="2d");
+  $("viewer").classList.toggle("hidden",t!=="3d");$("outline").classList.toggle("hidden",t!=="2d");
+  if(t==="3d")resize();
+}
+$("tab3d").onclick=()=>setTab("3d");$("tab2d").onclick=()=>setTab("2d");
+
+function threemfUrl(){
+  const cols=current.parts.map(p=>(userColors[p.name]||p.color).replace("#","")).join(",");
+  return current.threemf+"?colors="+cols;
+}
+function renderResult(r){
+  current=r;
+  r.parts.forEach(p=>{if(userColors[p.name])p.color=userColors[p.name]});
+  $("outline").innerHTML=`<img alt="Bookmark outline" src="${r.preview}">`;
+  $("msg").textContent=`Done in ${r.seconds}s. Bookmark ${r.layout.total_w} x ${r.layout.total_h} mm, ${r.parts.length} color part${r.parts.length>1?"s":""}.`
+    +(r.layout.text_size?` Text ${r.layout.text_size} mm.`:"");
+  const base=($("file").files[0].name.replace(/\.[^.]+$/,"")||"bookmark")+"-bookmark";
+  $("dl").innerHTML=`<a class="btn" id="dl3mf" href="${threemfUrl()}" download="${base}.3mf">Download 3MF (multicolor)</a><a class="btn alt" href="${r.stl}" download="${base}.stl">Download STL</a>`;
+  const cbox=$("colors");cbox.innerHTML="";
+  r.parts.forEach(p=>{
+    const l=document.createElement("label"),inp=document.createElement("input");inp.type="color";inp.value=p.color;
+    inp.oninput=()=>{userColors[p.name]=inp.value;p.color=inp.value;
+      meshes.filter(m=>m.userData.name===p.name).forEach(m=>m.material.color.set(inp.value));$("dl3mf").href=threemfUrl();};
+    l.append(inp,` ${p.name} (filament ${p.extruder})`);cbox.appendChild(l);
+  });
+  const w=$("warnings");w.innerHTML="";
+  r.warnings.forEach(x=>{
+    const d=document.createElement("div");d.className="warn";d.append(x.message);
+    if(x.suggested_border!=null){
+      const b=document.createElement("button");b.className="small";b.type="button";b.textContent=`Apply suggested outline (${x.suggested_border} mm)`;
+      b.onclick=()=>{$("border").value=x.suggested_border;$("go").click();};d.appendChild(b);
+    }
+    w.appendChild(d);
+  });
+  const c=r.print_card,card=$("card");
+  const swaps=c.swaps.length?"<ul>"+c.swaps.map(s=>`<li>Layer ${s.layer} (z ${s.z} mm): change filament to ${esc(s.parts.join(" / "))}</li>`).join("")+"</ul>":"";
+  card.innerHTML=`<b>Print card</b>: ${c.layer_height} mm layers, first layer ${c.first_layer} mm, ${c.walls} walls, ${c.infill}% infill, ${c.supports} supports, ${c.orientation}.`
+    +(swaps?`<div>Single-nozzle filament swaps (pause at the start of the layer):${swaps}</div>`:"")
+    +"<ul>"+c.notes.map(n=>`<li>${esc(n)}</li>`).join("")+"</ul>";
+  setTab("3d");showParts(r.parts);
+}
+$("go").onclick=async()=>{
+  const q=new URLSearchParams();
+  for(const [id] of FIELDS)q.set(id,v(id));
+  q.set("mode",v("mode"));if(!sil()){q.set("style","solid");}
+  $("go").disabled=true;$("msg").textContent="Tracing and building...";$("dl").innerHTML="";$("warnings").innerHTML="";
+  try{
+    const res=await fetch("/api/make?"+q,{method:"POST",body:$("file").files[0]});
+    const r=await res.json();if(!res.ok)throw new Error(r.error||res.statusText);
+    renderResult(r);
+  }catch(e){$("msg").textContent=e.message;}
+  $("go").disabled=false;
+};
+</script></body></html>
