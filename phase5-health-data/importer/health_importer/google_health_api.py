@@ -46,8 +46,8 @@ def sync_date(conn, settings: Settings, day: date) -> dict[str, int]:
             digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
             if db.insert_raw_document(conn, "google_health_api", source_file, digest, payload, run_id): counts["raw_documents_inserted"] += 1
             if metric:
-                # Every sync re-reads the full history, so metric rows use a day-independent
-                # source_file; a dated one would store each reading again on every sync.
+                # Sync windows overlap, so metric rows use a day-independent source_file;
+                # a dated one would store each reading again on every sync.
                 for record in records: _store_metric(conn, record, data_type, metric, f"google-health/{data_type}.json", run_id, counts)
             elif data_type == "sleep":
                 for record in records: _store_sleep(conn, record, source_file, run_id, counts)
@@ -64,16 +64,23 @@ def _access_token(s: Settings) -> str:
 
 
 def _list(data_type: str, filter_name: str, kind: str, day: date, token: str) -> list[dict[str, Any]]:
-    # Fetch all available pages. The API reconciles current data server-side;
-    # database upserts make periodic re-reads idempotent and avoid timezone
-    # filter edge cases around sleep sessions and daylight saving transitions.
-    url = f"{API_BASE}/users/me/dataTypes/{data_type}/dataPoints?{urlencode({'pageSize': 1000})}"
+    # Fetch only a window around the day instead of the full history. The window spans
+    # day-1 .. day+2 (UTC) so local-time and sleep edges are covered; overlapping
+    # windows are harmless because the database upserts are idempotent.
+    start, end = day - timedelta(days=1), day + timedelta(days=2)
+    if kind == "daily": member, lo, hi = f"{filter_name}.date", start.isoformat(), end.isoformat()
+    elif data_type == "exercise": member, lo, hi = "exercise.interval.civil_start_time", f"{start}T00:00:00", f"{end}T00:00:00"
+    else:
+        member = {"sample": f"{filter_name}.sample_time.physical_time", "sleep": "sleep.interval.end_time"}.get(kind, f"{filter_name}.interval.start_time")
+        lo, hi = f"{start}T00:00:00Z", f"{end}T00:00:00Z"
+    params = {"pageSize": 1000, "filter": f'{member} >= "{lo}" AND {member} < "{hi}"'}
+    url = f"{API_BASE}/users/me/dataTypes/{data_type}/dataPoints?{urlencode(params)}"
     result: list[dict[str, Any]] = []
     while url:
         with urlopen(Request(url, headers={"Authorization": f"Bearer {token}"}), timeout=30) as r: payload = json.load(r)
         result.extend(payload.get("dataPoints") or [])
         page = payload.get("nextPageToken")
-        url = f"{API_BASE}/users/me/dataTypes/{data_type}/dataPoints?{urlencode({'pageSize': 1000, 'pageToken': page})}" if page else ""
+        url = f"{API_BASE}/users/me/dataTypes/{data_type}/dataPoints?{urlencode({**params, 'pageToken': page})}" if page else ""
     return result
 
 
