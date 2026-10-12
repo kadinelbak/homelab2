@@ -179,7 +179,7 @@ services:
       - "homepage.name=Bookmark Maker"
       - "homepage.icon=mdi-bookmark-outline"
       - "homepage.href=http://${DOMAIN}:${BOOKMARK_HOST_PORT:-18105}"
-      - "homepage.description=Silhouette image to bookmark STL"
+      - "homepage.description=Pet photo to printable bookmark"
 
   # ---------------------------------------------------------------------------
   # MINECRAFT - Game Server (itzg/minecraft-server)

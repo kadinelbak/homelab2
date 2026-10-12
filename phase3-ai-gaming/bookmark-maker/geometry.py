@@ -6,7 +6,7 @@ Coordinates: x centered on the body, y=0 at the bottom tip of the body, y grows 
 """
 import math
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from imaging import bbox, polygon_scad, raster_polys
 
@@ -401,10 +401,200 @@ module base_cut() {{ difference() {{ base(); hole(); patterns(); }} }}
         pieces = [(full, -art_w / 2, yb0 + art_h)]
     return {
         "common": common, "files": {"art.scad": art_scad}, "parts": parts, "warnings": warnings, "card": card(parts, 0.2),
-        "outline": "base_cut();", "loose": (out_poly, pieces, border),
+        "outline": "base_cut();", "art_outline": "union() { art_all(); text2d(); }", "loose": (out_poly, pieces, border),
         "layout": {"total_w": round(max(art_w + 2 * border, w), 1),
                    "total_h": round(top_y - bottom_y + border, 1), "art_w": round(art_w, 2),
-                   "art_h": round(art_h, 2), "text_size": text["size"] if text else None},
+                   "art_h": round(art_h, 2), "text_size": text["size"] if text else None,
+                   "in_book": round(thick + (p["text_height"] if text and p["text_mode"] == "raised" else 0), 2),
+                   "page_line": None if peek else round(yb0, 2)},
+    }
+
+
+def _ink_px(mask, box):
+    """Number of art pixels of an L mask inside box (clipped)."""
+    x0, y0, x1, y1 = (max(0, round(box[0])), max(0, round(box[1])),
+                      min(mask.width, round(box[2])), min(mask.height, round(box[3])))
+    if x1 <= x0 or y1 <= y0:
+        return 0
+    return mask.crop((x0, y0, x1, y1)).histogram()[255]
+
+
+def _keep_largest(mask, grow_px):
+    """Drop art pieces that won't join the main piece once outlined by grow_px; returns (mask, dropped)."""
+    f = max(1, max(mask.size) // 300)
+    small = mask.resize((max(1, mask.width // f), max(1, mask.height // f)), Image.BILINEAR).point(
+        lambda v: 255 if v >= 64 else 0)
+    k = 2 * max(1, round(grow_px / f)) + 1
+    grown = small.filter(ImageFilter.MaxFilter(k))
+    w, h = grown.size
+    data = bytearray(grown.point(lambda v: 1 if v else 0).tobytes())
+    comps = []
+    for start in range(len(data)):
+        if data[start] != 1:
+            continue
+        data[start] = 2
+        pix, i = [start], 0
+        while i < len(pix):
+            q = pix[i]
+            i += 1
+            x, y = q % w, q // w
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < w and 0 <= ny < h and data[ny * w + nx] == 1:
+                    data[ny * w + nx] = 2
+                    pix.append(ny * w + nx)
+        comps.append(pix)
+    if len(comps) <= 1:
+        return mask, 0
+    keep = Image.new("L", (w, h), 0)
+    kp = keep.load()
+    for q in max(comps, key=len):
+        kp[q % w, q // w] = 255
+    keep = keep.resize(mask.size, Image.NEAREST).filter(ImageFilter.MaxFilter(2 * f + 1))
+    return ImageChops.multiply(mask, keep), len(comps) - 1
+
+
+def paws_prepare(p, mask):
+    """Place the tongue on the art mask (cropped, 255 = art) and clear the art around it below the page line.
+
+    Returns (clean mask, tongue dict in mm, warnings). The tongue goes where it removes the least art (between
+    the paws when there is a gap), close to the requested position, and must join solid art above the line.
+    """
+    W, H = mask.size
+    s = min(p["art_width"] / W, p["art_height"] / H)  # mm per px, same as _art_placement on the traced art
+    art_w, art_h = W * s, H * s
+    drop = min(max(art_h * (1 - p["page_line"]), 3.0), art_h * 0.6)
+    gap, border = p["gap"], p["border"]
+    line_row = H - drop / s
+    tw_req = min(p["width"], art_w - 2 * gap - 4)
+    if tw_req < 6:
+        raise ValueError("The art is too narrow for a tongue. Make the art wider or the tongue narrower.")
+    tc_req = (p["slot_center"] - 0.5) * art_w
+
+    def col(x_mm):
+        return (x_mm + art_w / 2) / s
+
+    def reach(tc, tw):
+        xs = [round(col(tc + dx)) for dx in (-tw / 4, 0, tw / 4)]
+        for row in range(int(line_row) - 1, -1, -1):
+            if all(0 <= x < W and mask.getpixel((x, row)) for x in xs):
+                return (H - row) * s
+        return None
+
+    # paws = runs of art columns along the bottom few mm of the art; a tongue that eats most of one is bad
+    band = mask.crop((0, round(max(line_row, H - 4 / s)), W, H))
+    cols = [any(band.getpixel((x, y)) for y in range(0, band.height, max(1, band.height // 10))) for x in range(W)]
+    paws, start = [], None
+    for x, ink in enumerate(cols + [False]):
+        if ink and start is None:
+            start = x
+        elif not ink and start is not None:
+            if (x - start) * s >= 2:
+                paws.append((start, x))
+            start = None
+
+    def lost(zone):
+        bad = 0
+        for a, b in paws:
+            overlap = max(0, min(b, zone[2]) - max(a, zone[0]))
+            bad += overlap / (b - a) > 0.6
+        return bad
+
+    best = None
+    for tw in sorted({tw_req, 14.0, 12.0, 10.0, 8.0}, reverse=True):
+        if tw > tw_req:
+            continue
+        lim = art_w / 2 - gap - 2 - tw / 2
+        for k in range(-20, 21):
+            tc = max(-lim, min(lim, tc_req + k * art_w * 0.025))
+            zone = (col(tc - tw / 2 - gap - border), line_row - (gap + border) / s, col(tc + tw / 2 + gap + border), H)
+            cut = _ink_px(mask, zone) * s * s  # mm^2 of art the slot would remove
+            score = cut + 3 * abs(tc - tc_req) + 25 * (tw_req - tw) + 2000 * lost(zone)
+            if best is None or score < best[0]:
+                r = reach(tc, tw)
+                if r is not None:
+                    best = (score, tc, tw, r, zone)
+    if best is None:
+        raise ValueError("Couldn't find solid art above the page line to join the tongue to. Lower the page line.")
+    _, tc, tw, r, zone = best
+    clean = mask.copy()
+    ImageDraw.Draw(clean).rectangle([round(v) for v in zone], fill=0)
+    clean, dropped = _keep_largest(clean, border / s)
+    warnings = []
+    if abs(tc - tc_req) > 1 or tw < tw_req - 0.1:
+        warnings.append(f"Placed the tongue ({tw:.0f} mm wide) between the paws.")
+    if dropped:
+        warnings.append(f"Removed {dropped} small bit(s) next to the tongue that would have printed loose.")
+    return clean, {"tc": tc, "tw": tw, "reach": r, "drop": drop, "frame": (W, H), "s": s}, warnings
+
+
+def plan_paws(p, polys, lines, tongue):
+    """Pet sits on the top edge of the book; its lower part (paws) hangs in front of the page.
+
+    A thin tongue goes behind the page. It is cut free from the paws by a slot (like the paperclip), so in
+    use the page slides between the tongue (behind) and the paws (in front). Everything is one flat print.
+    """
+    tw, length, thick = p["width"], p["length"], p["thickness"]
+    gap, border, raise_h, cr = p["gap"], p["border"], p["art_raise"], p["corner_r"]
+    warnings = []
+    if p["hole"]:
+        warnings.append("Tassel hole is not available for paws over the page.")
+    if p["pattern"] != "none":
+        warnings.append("Pattern cutouts are not available for paws over the page.")
+    (aw, ah), s = tongue["frame"], tongue["s"]
+    x0 = y0 = 0.0  # polys are in the mask frame, so the page line stays put even if paws were trimmed
+    art_w, art_h = aw * s, ah * s
+    drop, tc, tw, reach = tongue["drop"], tongue["tc"], tongue["tw"], tongue["reach"]
+    pl = length  # page line: top edge of the book
+    yb0 = pl - drop
+    full = _art_masks(polys, x0, y0, aw, ah, s)
+    t_top = yb0 + reach + 3.0
+    tongue = [(tc + x, y) for x, y in body_polygon(p["bottom"] if p["bottom"] != "taper" else "round",
+                                                    tw, t_top, length)]
+
+    text = None
+    if lines:
+        text = fit_text(lines, p["font"], p["text_size"], [(x - tc, y) for x, y in tongue], TEXT_MARGIN,
+                        pl - gap - TEXT_MARGIN, 0.0)
+        text["scad"] = f"translate([{tc:.3f},0]) {{ {text['scad']} }}"
+        if text["size"] < text["wanted"] - 0.01 and p["text_size"] > 0:
+            warnings.append(f"Text was reduced to {text['size']} mm letters to fit.")
+
+    art_scad = "module art_raw() { " + polygon_scad(
+        polys, lambda x, y: ((x - x0) * s - art_w / 2, yb0 + (y - y0) * s)) + " }\n"
+    common = f"""// generated by bookmark-maker (paws over the page)
+$fn = 64;
+BIG = 1000; B = {border}; CR = {cr}; GAP = {gap}; PL = {pl:.3f};
+TONGUE = {pts_scad(tongue)};
+module rnd() {{ if (CR > 0) offset(r=CR) offset(delta=-CR) children(); else children(); }}
+module art_all() {{ art_raw(); }}
+module tongue() {{ rnd() polygon(TONGUE); }}
+module tongue_low() {{ intersection() {{ tongue(); translate([-BIG, -BIG]) square([2 * BIG, BIG + PL]); }} }}
+module slot() {{ offset(delta=GAP) tongue_low(); }}
+module sticker() {{ if (B > 0) offset(r=B) art_all(); else art_all(); }}
+module text2d() {{ {text["scad"] if text else ""} }}
+module base_cut() {{ union() {{ tongue(); difference() {{ sticker(); slot(); }} }} }}
+"""
+    parts = [{"name": "Body", "z0": 0.0, "z1": thick, "color": "#f4f1ea",
+              "pieces": [("body", f"linear_extrude({thick}) base_cut();", ART)]}]
+    if raise_h > 0:
+        parts.append({"name": "Silhouette", "z0": thick, "z1": thick + raise_h, "color": "#2b3a55",
+                      "pieces": [("silhouette", f"translate([0,0,{thick}]) linear_extrude({raise_h}) "
+                                                "difference() { art_all(); slot(); }", ART)]})
+    if text:
+        th = p["text_height"]
+        parts.append({"name": "Text", "z0": thick, "z1": thick + th, "color": "#c8553d",
+                      "pieces": [("text", f"translate([0,0,{thick}]) linear_extrude({th}) text2d();", [])]})
+    in_book = thick + max(raise_h, p["text_height"] if text else 0)
+    cd = card(parts, 0.2 if thick >= 1.0 else 0.12)
+    cd["notes"].append("Slide the tongue behind a page so the paws hang in front of it; the pet sits on top of the book.")
+    return {
+        "common": common, "files": {"art.scad": art_scad}, "parts": parts, "warnings": warnings, "card": cd,
+        "outline": "base_cut();", "art_outline": "union() { difference() { art_all(); slot(); } text2d(); }",
+        "loose": (tongue, [(full, -art_w / 2, yb0 + art_h)], border),
+        "layout": {"total_w": round(max(art_w + 2 * border, tw), 1), "total_h": round(yb0 + art_h + border, 1),
+                   "art_w": round(art_w, 2), "art_h": round(art_h, 2), "text_size": text["size"] if text else None,
+                   "page_line": round(pl, 2), "in_book": round(in_book, 2),
+                   "tongue": [round(tc - tw / 2, 2), round(tc + tw / 2, 2)]},
     }
 
 
@@ -453,7 +643,7 @@ module sticker() {{ intersection() {{ if (B > 0) offset(r=B) art_all(); else art
                        "slide the page corner in from the open long edge.")
     return {
         "common": common, "files": {"art.scad": art_scad}, "parts": parts, "warnings": warnings, "card": cd,
-        "outline": "union() { tri(); sticker(); }", "loose": (tri, [(full, ox, oy + art_h)], border),
+        "outline": "union() { tri(); sticker(); }", "art_outline": "intersection() { art_all(); half(); }", "loose": (tri, [(full, ox, oy + art_h)], border),
         "layout": {"total_w": round(leg + 4 + border, 1), "total_h": round(leg + 4 + border, 1),
                    "art_w": round(art_w, 2), "art_h": round(art_h, 2), "text_size": None},
     }
@@ -500,5 +690,6 @@ module base_cut() {{ difference() {{ outline(); hole(); }} }}
     return {
         "common": common, "files": files, "parts": parts, "warnings": warnings, "card": cd,
         "outline": "base_cut();", "loose": None,
-        "layout": {"total_w": w, "total_h": length, "art_w": w, "art_h": length, "text_size": None},
+        "layout": {"total_w": w, "total_h": length, "art_w": w, "art_h": length, "text_size": None,
+                   "in_book": round(thick + n * LEVEL_H, 2)},
     }
