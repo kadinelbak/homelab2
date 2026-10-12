@@ -93,7 +93,8 @@ def _store_metric(conn, record, data_type, metric, source_file, run_id, counts):
         d = payload.get("date") or {}
         field = {"daily-resting-heart-rate": "beatsPerMinute", "daily-heart-rate-variability": "averageHeartRateVariabilityMilliseconds", "daily-oxygen-saturation": "averagePercentage", "daily-respiratory-rate": "breathsPerMinute"}[data_type]
         value, when = payload.get(field), (f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}T00:00:00Z" if d.get("year") else None)
-    else: value, when = payload.get("energyKilocalories") or payload.get("distanceMeters"), (payload.get("interval") or {}).get("startTime")
+    elif data_type == "distance": value, when = (float(payload["millimeters"]) / 1000 if payload.get("millimeters") is not None else None), (payload.get("interval") or {}).get("startTime")
+    else: value, when = payload.get("kcal"), (payload.get("interval") or {}).get("startTime")
     if value is None or not when: return
     sample = {"ts": _ts(when), "metric_type": metric, "value": float(value), "unit": {"steps":"count","heart_rate":"bpm","calories":"kcal","distance":"m","resting_heart_rate":"bpm","hrv":"ms","spo2":"percent","breathing_rate":"breaths/min"}.get(metric), "source": SOURCE, "source_file": source_file, "confidence": None, "metadata": {"data_source": record.get("dataSource")}, "import_run_id": run_id}
     if db.upsert_metric_sample(conn, sample): counts["metric_samples_inserted"] += 1
