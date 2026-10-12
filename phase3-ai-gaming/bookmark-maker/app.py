@@ -1,7 +1,8 @@
-"""Bookmark maker: silhouette or photo (SVG/PNG/JPEG) -> multicolor 3MF + STL bookmark.
+"""Bookmark maker: pet photo, silhouette or picture (SVG/PNG/JPEG) -> multicolor 3MF + STL bookmark.
 
-Pipeline: rsvg-convert (SVG only) -> Pillow bitmap -> potrace -> OpenSCAD (one render per color part,
-run in parallel) -> Python assembles STL/3MF. See geometry.py for the shapes and imaging.py for the bitmaps.
+Pipeline: cutout.py (photo -> clean mask, step 1 of the page) -> potrace -> OpenSCAD (one render per color
+part, run in parallel) -> Python assembles STL/3MF. See geometry.py for the shapes, imaging.py for the bitmaps
+and styles.py for the looks offered on the page.
 """
 import json
 import os
@@ -15,22 +16,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from PIL import Image, ImageChops, ImageFilter
+
+import cutout
 import geometry
 import imaging
+import styles
 import threemf
 
 PORT = int(os.environ.get("BOOKMARK_PORT", "8105"))
 DATA_DIR = Path(os.environ.get("BOOKMARK_DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
+CUTS_DIR = DATA_DIR / "cutouts"
 KEEP_DAYS = float(os.environ.get("BOOKMARK_KEEP_DAYS", "7"))
 OPENSCAD_TIMEOUT = int(os.environ.get("BOOKMARK_OPENSCAD_TIMEOUT", "120"))
 MAX_UPLOAD = 15 * 1024 * 1024
 JOB_RE = re.compile(r"^[0-9a-f]{12}$")
-FILE_RE = re.compile(r"^[a-z0-9_]+\.(stl|3mf|svg)$")
-CTYPES = {".stl": "model/stl", ".3mf": "model/3mf", ".svg": "image/svg+xml"}
+FILE_RE = re.compile(r"^[a-z0-9_]+\.(stl|3mf|svg|png)$")
+CTYPES = {".stl": "model/stl", ".3mf": "model/3mf", ".svg": "image/svg+xml", ".png": "image/png"}
 PAGE = Path(__file__).with_name("page.html").read_bytes()
 CHOICES = {  # first option is the default
-    "style": ("clip", "solid", "corner"),
+    "style": ("clip", "solid", "corner", "paws"),
     "bottom": ("round", "point", "swallowtail", "square", "taper"),
     "mode": ("silhouette", "photo"),
     "text_mode": ("raised", "engraved"),
@@ -43,7 +49,7 @@ CHOICES = {  # first option is the default
 PARAMS = {
     "width": (24.0, 12.0, 60.0),  # bookmark body width
     "length": (110.0, 40.0, 250.0),  # bookmark body length, below the art
-    "thickness": (1.5, 0.8, 4.0),
+    "thickness": (1.5, 0.6, 4.0),
     "art_width": (50.0, 15.0, 120.0),  # max silhouette width (may overhang the body)
     "art_height": (60.0, 10.0, 150.0),  # max silhouette height
     "overlap": (6.0, 0.0, 40.0),  # how far the silhouette sinks into the top of the body
@@ -64,7 +70,12 @@ PARAMS = {
     "corner_leg": (55.0, 30.0, 100.0),
     "levels": (3.0, 2.0, 4.0),
     "auto_level": (1.0, 0.0, 1.0),
+    "page_line": (0.78, 0.4, 0.95),  # paws: where the book's top edge crosses the art (fraction from the top)
+    "slot_center": (0.5, 0.1, 0.9),  # paws: tongue position across the art
+    "crop": (1.0, 0.3, 1.0),  # keep only the top part of the art (1 = all), e.g. 0.5 = head for a corner biter
+    "thicken": (1.0, 0.0, 1.0),  # widen features thinner than MIN_FEATURE so they don't vanish in the slicer
 }
+MIN_FEATURE = 0.8  # mm, two 0.4 mm nozzle widths
 
 
 def parse_params(query):
@@ -95,11 +106,62 @@ def openscad(job_dir, scad_name, out_name):
         raise RuntimeError("OpenSCAD failed: " + proc.stderr.strip()[-800:])
 
 
+SVG_VIEW = re.compile(r'viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"')
+SVG_PATH = re.compile(r'<path d="([^"]*)"')
+
+
+def compose_preview(job_dir, body_svg, art_svg):
+    """One SVG with the body in a light color and the art + text in a dark one (OpenSCAD can't color 2D)."""
+    views, paths = [], []
+    for name, fill in ((body_svg, "#e7e1d3"), (art_svg, "#2b3a55")):
+        f = job_dir / name
+        if not f.is_file():
+            continue
+        text = f.read_text()
+        m = SVG_VIEW.search(text)
+        if m:
+            x, y, w, h = map(float, m.groups())
+            views.append((x, y, x + w, y + h))
+        paths += [f'<path d="{d}" fill="{fill}" fill-rule="evenodd" stroke="#333" stroke-width="0.3"/>'
+                  for d in SVG_PATH.findall(text)]
+    if not views:
+        return
+    x0, y0 = min(v[0] for v in views) - 1, min(v[1] for v in views) - 1
+    x1, y1 = max(v[2] for v in views) + 1, max(v[3] for v in views) + 1
+    (job_dir / "preview.svg").write_text(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x0} {y0} {x1 - x0} {y1 - y0}" '
+        f'width="{x1 - x0}mm" height="{y1 - y0}mm">{"".join(paths)}</svg>')
+
+
 def slug(name):
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-def build_plan(params, img, job_dir):
+def prepare_mask(params, mask):
+    """Crop to the art, apply the top crop, thicken thin features. Returns (mask, noticeably_thickened)."""
+    box = mask.getbbox()
+    if not box:
+        raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
+    mask = mask.crop(box)
+    if params["crop"] < 0.999:
+        mask = mask.crop((0, 0, mask.width, max(4, round(mask.height * params["crop"]))))
+        mask = mask.crop(mask.getbbox())
+    thickened = False
+    if params["thicken"]:
+        mm = min(params["art_width"] / mask.width, params["art_height"] / mask.height)
+        r = round(MIN_FEATURE / 2 / mm)
+        if r >= 1:
+            k = 2 * r + 1
+            opened = mask.filter(ImageFilter.MinFilter(k)).filter(ImageFilter.MaxFilter(k))
+            thin = ImageChops.subtract(mask, opened)
+            thin_px = sum(1 for v in thin.getdata() if v)
+            if thin_px:
+                thickened = thin_px > 0.01 * sum(1 for v in mask.getdata() if v)
+                mask = ImageChops.lighter(mask, thin.filter(ImageFilter.MaxFilter(k)))
+    return mask, thickened
+
+
+def build_plan(params, img, job_dir, mask=None):
     lines = [t for t in (params["text1"], params["text2"]) if t]
     if params["mode"] == "photo":
         gray, _ = imaging.photo_gray(img, params["width"], params["length"], params["photo_fit"], params["auto_level"])
@@ -111,13 +173,25 @@ def build_plan(params, img, job_dir):
         if not levels:
             raise ValueError("The photo has no contrast to build levels from. Try a different photo or auto-level.")
         return geometry.plan_photo(params, levels, gray.size, lines)
-    mask = imaging.silhouette_mask(img, params["threshold"], params["invert"])
+    if mask is None:
+        mask = imaging.silhouette_mask(img, params["threshold"], params["invert"])
+    mask, thickened = prepare_mask(params, mask)
+    tongue = None
+    if params["style"] == "paws":
+        mask, tongue, notes = geometry.paws_prepare(params, mask)
     polys, _ = imaging.trace(mask, job_dir, "art")
     if not polys:
         raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
     if params["style"] == "corner":
-        return geometry.plan_corner(params, polys, lines)
-    return geometry.plan_standard(params, polys, lines)
+        plan = geometry.plan_corner(params, polys, lines)
+    elif params["style"] == "paws":
+        plan = geometry.plan_paws(params, polys, lines, tongue)
+        plan["warnings"] = notes + plan["warnings"]
+    else:
+        plan = geometry.plan_standard(params, polys, lines)
+    if thickened:
+        plan["warnings"].append(f"Thin details (under {MIN_FEATURE} mm) were thickened so they print.")
+    return plan
 
 
 def assemble(job_id, job_dir, parts_meta, colors, title="Bookmark"):
@@ -132,19 +206,102 @@ def assemble(job_id, job_dir, parts_meta, colors, title="Bookmark"):
     return parts
 
 
-def make_bookmark(data, params):
+def load_cutout(cut_id):
+    path = CUTS_DIR / cut_id / "mask.png"
+    if not JOB_RE.match(cut_id or "") or not path.is_file():
+        raise ValueError("That photo has expired. Upload it again.")
+    return Image.open(path).convert("L")
+
+
+def render_outlines(job_dir, plan):
+    """2D outline SVG of the body and (when the plan has one) of the art; then compose preview.svg."""
+    art = "".join(f"include <{n}>\n" for n in plan["files"] if n == "art.scad")
+    jobs = [("outline", plan["outline"])] + ([("art2d", plan["art_outline"])] if plan.get("art_outline") else [])
+    for stem, code in jobs:
+        (job_dir / f"{stem}.scad").write_text(f"include <common.scad>\n{art}{code}\n")
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        for fut in [ex.submit(openscad, job_dir, f"{stem}.scad", f"{stem}.svg") for stem, _ in jobs]:
+            fut.result()
+    compose_preview(job_dir, "outline.svg", "art2d.svg")
+
+
+def preview_url(job_id, job_dir):
+    name = "preview.svg" if (job_dir / "preview.svg").is_file() else "outline.svg"
+    return f"/jobs/{job_id}/{name}"
+
+
+def make_cutout(data=None, cut_id=None, opts=None):
+    """Step 1: photo -> mask. With data, stores a new photo; with cut_id, re-cuts the stored one."""
+    opts = opts or {}
+    if data is not None:
+        cut_id = uuid.uuid4().hex[:12]
+        cut_dir = CUTS_DIR / cut_id
+        cut_dir.mkdir(parents=True)
+        img = imaging.load_image(data, cut_dir)
+        img.thumbnail((cutout.WORK_PX, cutout.WORK_PX))
+        img.save(cut_dir / "photo.png")
+    else:
+        cut_dir = CUTS_DIR / cut_id
+        if not JOB_RE.match(cut_id or "") or not (cut_dir / "photo.png").is_file():
+            raise ValueError("That photo has expired. Upload it again.")
+        img = Image.open(cut_dir / "photo.png")
+    method = opts.get("method") if opts.get("method") in ("auto", "art") else "auto"
+    raw_path = cut_dir / "raw.png"
+    raw = None
+    if method == "auto" and raw_path.is_file():
+        raw = Image.open(raw_path).convert("L")
+        raw.info["method"] = (cut_dir / "raw.txt").read_text() if (cut_dir / "raw.txt").is_file() else "model"
+    strokes = [s for s in opts.get("strokes", []) if isinstance(s, list) and len(s) == 4
+               and all(isinstance(v, (int, float)) for v in s)]
+    mask, info = cutout.make_mask(img, method, float(opts.get("threshold", 128)), bool(opts.get("invert")),
+                                  min(max(int(opts.get("smooth", 2)), 0), 6), bool(opts.get("fill_holes", True)),
+                                  strokes, raw)
+    if "raw" in info:
+        info["raw"].save(raw_path)
+        (cut_dir / "raw.txt").write_text(info["method"])
+    mask.save(cut_dir / "mask.png")
+    # preview: the pet on a transparent background
+    pet = img.convert("RGBA")
+    pet.putalpha(mask.resize(pet.size))
+    pet.crop(mask.getbbox()).save(cut_dir / "pet.png")
+    # view: the whole photo with the background faded, for painting fixes in step 1
+    view = Image.blend(img.convert("RGB"), Image.new("RGB", img.size, (255, 255, 255)), 0.75)
+    view.paste(img.convert("RGB"), (0, 0), mask.resize(img.size))
+    view.save(cut_dir / "view.png")
+    return {"id": cut_id, "pet": f"/cutouts/{cut_id}/pet.png?v={uuid.uuid4().hex[:6]}",
+            "mask": f"/cutouts/{cut_id}/mask.png", "view": f"/cutouts/{cut_id}/view.png?v={uuid.uuid4().hex[:6]}",
+            "size": list(mask.size), "box": list(mask.getbbox()),
+            "method": info["method"], "removed_specks": info["removed_specks"]}
+
+
+def make_bookmark(data, params, cut_id=None, preview_only=False):
     started = time.time()
     job_id = uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True)
-    plan = build_plan(params, imaging.load_image(data, job_dir), job_dir)
+    if cut_id and params["mode"] == "silhouette":
+        plan = build_plan(params, None, job_dir, load_cutout(cut_id))
+    elif cut_id:
+        plan = build_plan(params, Image.open(CUTS_DIR / cut_id / "photo.png"), job_dir)
+    else:
+        plan = build_plan(params, imaging.load_image(data, job_dir), job_dir)
+    if preview_only:
+        (job_dir / "common.scad").write_text(plan["common"])
+        for name, text in plan["files"].items():
+            (job_dir / name).write_text(text)
+        render_outlines(job_dir, plan)
+        return {"id": job_id, "preview": preview_url(job_id, job_dir), "layout": plan["layout"],
+                "warnings": [{"message": m} for m in plan["warnings"]], "seconds": round(time.time() - started, 1)}
 
     # one OpenSCAD render per piece, in parallel
     (job_dir / "common.scad").write_text(plan["common"])
     for name, text in plan["files"].items():
         (job_dir / name).write_text(text)
     art = [n for n in plan["files"] if n == "art.scad"]
-    jobs = [("outline", f"include <common.scad>\n{''.join(f'include <{n}>' + chr(10) for n in art)}{plan['outline']}\n", "svg")]
+    head = f"include <common.scad>\n{''.join(f'include <{n}>' + chr(10) for n in art)}"
+    jobs = [("outline", f"{head}{plan['outline']}\n", "svg")]
+    if plan.get("art_outline"):
+        jobs.append(("art2d", f"{head}{plan['art_outline']}\n", "svg"))
     for part in plan["parts"]:
         for stem, code, includes in part["pieces"]:
             jobs.append((stem, "include <common.scad>\n" + "".join(f"include <{n}>\n" for n in includes) + code + "\n", "stl"))
@@ -153,6 +310,7 @@ def make_bookmark(data, params):
     with ThreadPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as pool:
         for fut in [pool.submit(openscad, job_dir, f"{stem}.scad", f"{stem}.{ext}") for stem, _, ext in jobs]:
             fut.result()
+    compose_preview(job_dir, "outline.svg", "art2d.svg")
 
     warnings = [{"message": m} for m in plan["warnings"]]
     parts_meta, all_verts = [], []
@@ -187,7 +345,7 @@ def make_bookmark(data, params):
 
     result = {
         "id": job_id,
-        "preview": f"/jobs/{job_id}/outline.svg",
+        "preview": preview_url(job_id, job_dir),
         "stl": f"/jobs/{job_id}/bookmark.stl",
         "threemf": f"/jobs/{job_id}/bookmark.3mf",
         "parts": [{**m, "url": f"/jobs/{job_id}/{m['file']}"} for m in parts_meta],
@@ -213,12 +371,13 @@ def recolor(job_id, colors):
 
 
 def cleanup_old_jobs():
-    if not JOBS_DIR.exists():
-        return
     cutoff = time.time() - KEEP_DAYS * 86400
-    for job in JOBS_DIR.iterdir():
-        if job.is_dir() and job.stat().st_mtime < cutoff:
-            shutil.rmtree(job, ignore_errors=True)
+    for root in (JOBS_DIR, CUTS_DIR):
+        if not root.exists():
+            continue
+        for job in root.iterdir():
+            if job.is_dir() and job.stat().st_mtime < cutoff:
+                shutil.rmtree(job, ignore_errors=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -239,8 +398,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, PAGE, "text/html; charset=utf-8")
         if path == "/health":
             ok = all(shutil.which(tool) for tool in ("openscad", "potrace", "rsvg-convert"))
-            return self.send_json(200 if ok else 503, {"ok": ok})
+            return self.send_json(200 if ok else 503, {"ok": ok, "cutout_model": cutout.model_available()})
+        if path == "/api/styles":
+            return self.send_json(200, styles.STYLES)
         parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "cutouts" and JOB_RE.match(parts[1]) and parts[2] in ("pet.png", "mask.png", "view.png"):
+            target = CUTS_DIR / parts[1] / parts[2]
+            if target.is_file():
+                return self.send(200, target.read_bytes(), "image/png")
         if len(parts) == 3 and parts[0] == "jobs" and JOB_RE.match(parts[1]) and FILE_RE.match(parts[2]):
             target = JOBS_DIR / parts[1] / parts[2]
             if parts[2] == "bookmark.3mf" and "colors" in parse_qs(url.query) and (JOBS_DIR / parts[1] / "job.json").is_file():
@@ -252,15 +417,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        if url.path != "/api/make":
-            return self.send_json(404, {"error": "not found"})
+        parts = url.path.strip("/").split("/")
+        query = parse_qs(url.query)
+        cut_id = query.get("cutout", [""])[0] or None
         size = int(self.headers.get("Content-Length") or 0)
-        if not 0 < size <= MAX_UPLOAD:
+        if size > MAX_UPLOAD or (size == 0 and not (cut_id or len(parts) == 3)):
             return self.send_json(400, {"error": "Upload an SVG, PNG or JPEG up to 15 MB."})
-        data = self.rfile.read(size)
+        data = self.rfile.read(size) if size else None
         cleanup_old_jobs()
         try:
-            result = make_bookmark(data, parse_params(parse_qs(url.query)))
+            if url.path == "/api/cutout":
+                result = make_cutout(data=data)
+            elif len(parts) == 3 and parts[:2] == ["api", "cutout"]:
+                opts = json.loads(data or b"{}")
+                result = make_cutout(cut_id=parts[2], opts=opts if isinstance(opts, dict) else {})
+            elif url.path in ("/api/make", "/api/preview"):
+                result = make_bookmark(None if cut_id else data, parse_params(query), cut_id,
+                                       preview_only=url.path == "/api/preview")
+            else:
+                return self.send_json(404, {"error": "not found"})
         except (ValueError, OSError) as exc:
             return self.send_json(400, {"error": str(exc)})
         except (RuntimeError, subprocess.SubprocessError) as exc:

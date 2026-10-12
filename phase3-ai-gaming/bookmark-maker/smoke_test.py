@@ -40,6 +40,23 @@ def photo_png():
     return out.getvalue()
 
 
+def cat_photo():
+    """A sitting cat on a plain background: head, ears, body, two front legs with a gap, tail."""
+    img = Image.new("RGB", (600, 500), (186, 214, 235))
+    d = ImageDraw.Draw(img)
+    fur = (120, 78, 40)
+    d.ellipse((190, 170, 410, 430), fill=fur)  # body
+    d.ellipse((220, 60, 380, 200), fill=fur)  # head
+    d.polygon([(228, 110), (240, 30), (290, 80)], fill=fur)  # ears
+    d.polygon([(372, 110), (360, 30), (310, 80)], fill=fur)
+    d.rectangle((215, 380, 265, 470), fill=fur)  # front legs, gap in the middle
+    d.rectangle((335, 380, 385, 470), fill=fur)
+    d.ellipse((395, 330, 520, 380), fill=fur)  # tail
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=92)
+    return out.getvalue()
+
+
 def call(path, data=None):
     req = urllib.request.Request(BASE + path, data=data, method="POST" if data is not None else "GET")
     try:
@@ -105,6 +122,51 @@ CASES = [
 ]
 
 
+def v3_flow():
+    """Photo -> cutout -> every style's preview, and a full build for the ones that print."""
+    failures = 0
+    status, _, body = call("/api/cutout", cat_photo())
+    cut = json.loads(body)
+    if status != 200:
+        print("FAIL cutout:", cut)
+        return 1
+    for key in ("pet", "view", "mask"):
+        st, ctype, _ = call(cut[key])
+        if st != 200 or ctype != "image/png":
+            failures += 1
+            print(f"FAIL cutout {key} image: {st} {ctype}")
+    print(f"PASS cutout via {cut['method']}, box {cut['box']}")
+    st, _, body = call(f"/api/cutout/{cut['id']}", json.dumps({"strokes": [[0.02, 0.02, 0.03, 0]], "smooth": 3}).encode())
+    print(("PASS" if st == 200 else "FAIL") + " re-cut with a brush stroke")
+    failures += st != 200
+    st, _, body = call("/api/cutout/000000000000", b"{}")
+    print(("PASS" if st == 400 else "FAIL") + " expired cutout -> 400")
+    failures += st != 400
+    _, _, body = call("/api/styles")
+    for style in json.loads(body):
+        q = dict(style["params"], cutout=cut["id"])
+        if style["key"] in ("paws", "memorial"):
+            q.update(text1="Biscuit")
+        try:
+            st, _, body = call("/api/preview?" + urllib.parse.urlencode(q), b"")
+            info = json.loads(body)
+            assert st == 200, f"preview {st}: {info.get('error')}"
+            st, ctype, svg = call(info["preview"])
+            assert st == 200 and b"<svg" in svg, "preview svg"
+            if style["key"] != "photo":
+                st, info, secs = make(q, b"")
+                assert st == 200, f"make {st}: {info.get('error')}"
+                check_3mf(info, len(info["parts"]))
+                in_book = info["layout"].get("in_book")
+                assert in_book is None or in_book <= 1.5, f"in-book thickness {in_book} mm"
+                assert not any(w.get("kind") == "loose" for w in info["warnings"]), info["warnings"]
+            print(f"PASS style {style['key']}: {info['layout'].get('total_w')} x {info['layout'].get('total_h')} mm")
+        except Exception as exc:
+            failures += 1
+            print(f"FAIL style {style['key']}: {exc}")
+    return failures
+
+
 def main():
     status, _, body = call("/health")
     assert status == 200, f"/health {status}"
@@ -161,6 +223,7 @@ def main():
         zf = zipfile.ZipFile(io.BytesIO(body))
         assert b"#FF0000" in zf.read("3D/3dmodel.model"), "recolor did not apply"
         print("PASS recolor")
+    failures += v3_flow()
     print("FAILURES:", failures)
     sys.exit(1 if failures else 0)
 
