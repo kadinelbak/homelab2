@@ -5,7 +5,7 @@ A mesh is a flat list of (x, y, z) tuples; every three consecutive vertices form
 import re
 import struct
 import zipfile
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 _VERTEX = re.compile(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)")
 BED_CENTER = 128.0
@@ -56,7 +56,7 @@ def _mesh_xml(verts):
     return f"<mesh><vertices>{vx}</vertices><triangles>{tx}</triangles></mesh>"
 
 
-def write_3mf(path, parts, title="Bookmark"):
+def write_3mf(path, parts, title="Bookmark", description=""):
     """parts: list of dicts with name, color ('#rrggbb'), extruder (1-based) and verts."""
     allv = [v for p in parts for v in p["verts"]]
     if not allv:
@@ -79,6 +79,7 @@ def write_3mf(path, parts, title="Bookmark"):
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
         f'<metadata name="Title">{title}</metadata><metadata name="Application">bookmark-maker</metadata>'
+        f'<metadata name="Description">{escape(description)}</metadata>'
         f'<resources><basematerials id="1">{mats}</basematerials>{"".join(objects)}'
         f'<object id="{root_id}" name={quoteattr(title)} type="model"><components>{"".join(comps)}</components></object>'
         f'</resources><build><item objectid="{root_id}" printable="1" '

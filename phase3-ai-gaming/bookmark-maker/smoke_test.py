@@ -160,10 +160,23 @@ def v3_flow():
                 in_book = info["layout"].get("in_book")
                 assert in_book is None or in_book <= 1.5, f"in-book thickness {in_book} mm"
                 assert not any(w.get("kind") == "loose" for w in info["warnings"]), info["warnings"]
+                card = info["print_card"]
+                assert card["grams"] > 0 and card["minutes"] > 0 and card["summary"], "print card estimate"
+                if style["key"] == "magnet":
+                    assert card.get("pause") and info["layout"]["magnets"] >= 1, "magnet pause layer"
             print(f"PASS style {style['key']}: {info['layout'].get('total_w')} x {info['layout'].get('total_h')} mm")
         except Exception as exc:
             failures += 1
             print(f"FAIL style {style['key']}: {exc}")
+    # drag to place: the offset moves the art and comes back as the effective value
+    q = dict(style="clip", cutout=cut["id"], art_x=8, art_y=200)
+    st, _, body = call("/api/preview?" + urllib.parse.urlencode(q), b"")
+    lay = json.loads(body).get("layout", {})
+    if st == 200 and lay.get("art_x") == 8 and 0 < lay.get("art_y", 0) <= 6:
+        print(f"PASS drag to place: {lay['art_x']}, {lay['art_y']}")
+    else:
+        failures += 1
+        print(f"FAIL drag to place: {st} {lay}")
     return failures
 
 

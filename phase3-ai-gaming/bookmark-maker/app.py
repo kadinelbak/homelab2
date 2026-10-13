@@ -36,7 +36,8 @@ FILE_RE = re.compile(r"^[a-z0-9_]+\.(stl|3mf|svg|png)$")
 CTYPES = {".stl": "model/stl", ".3mf": "model/3mf", ".svg": "image/svg+xml", ".png": "image/png"}
 PAGE = Path(__file__).with_name("page.html").read_bytes()
 CHOICES = {  # first option is the default
-    "style": ("clip", "solid", "corner", "paws"),
+    "style": ("clip", "solid", "corner", "paws", "tail", "magnet"),
+    "tail_end": ("bottom", "left", "right", "top"),
     "bottom": ("round", "point", "swallowtail", "square", "taper"),
     "mode": ("silhouette", "photo"),
     "text_mode": ("raised", "engraved"),
@@ -73,7 +74,12 @@ PARAMS = {
     "page_line": (0.78, 0.4, 0.95),  # paws: where the book's top edge crosses the art (fraction from the top)
     "slot_center": (0.5, 0.1, 0.9),  # paws: tongue position across the art
     "crop": (1.0, 0.3, 1.0),  # keep only the top part of the art (1 = all), e.g. 0.5 = head for a corner biter
-    "thicken": (1.0, 0.0, 1.0),  # widen features thinner than MIN_FEATURE so they don't vanish in the slicer
+    "thicken": (1.0, 0.0, 1.0),
+    "art_x": (0.0, -60.0, 60.0),  # drag to place: art offset from the centre
+    "art_y": (0.0, -40.0, 40.0),  # drag to place: art offset upward
+    "tail_show": (0.5, 0.2, 0.9),  # tail: how much of the pet sticks out of the bottom of the book
+    "magnet_d": (6.0, 3.0, 12.0),  # magnet: disc magnet diameter
+    "magnet_t": (1.0, 0.5, 3.0),  # magnet: disc magnet thickness  # widen features thinner than MIN_FEATURE so they don't vanish in the slicer
 }
 MIN_FEATURE = 0.8  # mm, two 0.4 mm nozzle widths
 
@@ -122,8 +128,9 @@ def compose_preview(job_dir, body_svg, art_svg):
         if m:
             x, y, w, h = map(float, m.groups())
             views.append((x, y, x + w, y + h))
-        paths += [f'<path d="{d}" fill="{fill}" fill-rule="evenodd" stroke="#333" stroke-width="0.3"/>'
-                  for d in SVG_PATH.findall(text)]
+        group = "".join(f'<path d="{d}" fill="{fill}" fill-rule="evenodd" stroke="#333" stroke-width="0.3"/>'
+                        for d in SVG_PATH.findall(text))
+        paths.append(f'<g id="art">{group}</g>' if name == art_svg else group)
     if not views:
         return
     x0, y0 = min(v[0] for v in views) - 1, min(v[1] for v in views) - 1
@@ -143,6 +150,13 @@ def prepare_mask(params, mask):
     if not box:
         raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
     mask = mask.crop(box)
+    if params["style"] == "tail":  # turn the chosen end of the pet downward and keep only that end
+        turn = {"bottom": None, "left": Image.ROTATE_90, "right": Image.ROTATE_270, "top": Image.ROTATE_180}
+        if turn[params["tail_end"]] is not None:
+            mask = mask.transpose(turn[params["tail_end"]])
+        top = round(mask.height * (1 - params["tail_show"]))
+        mask = mask.crop((0, min(top, mask.height - 4), mask.width, mask.height))
+        mask = mask.crop(mask.getbbox())
     if params["crop"] < 0.999:
         mask = mask.crop((0, 0, mask.width, max(4, round(mask.height * params["crop"]))))
         mask = mask.crop(mask.getbbox())
@@ -194,7 +208,31 @@ def build_plan(params, img, job_dir, mask=None):
     return plan
 
 
-def assemble(job_id, job_dir, parts_meta, colors, title="Bookmark"):
+def estimate(verts, card):
+    """Rough PLA grams and print minutes for the print card (Bambu-class printer, 100% infill)."""
+    vol = 0.0
+    for i in range(0, len(verts) - 2, 3):
+        (ax, ay, az), (bx, by, bz), (cx, cy, cz) = verts[i:i + 3]
+        vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6
+    height = max(v[2] for v in verts) - min(v[2] for v in verts)
+    layers = max(1, round(height / card["layer_height"]))
+    grams = abs(vol) / 1000 * 1.24
+    minutes = (abs(vol) / 7 + layers * 3) / 60 + 1 + 1.5 * len(card["swaps"])
+    return round(grams, 1), max(1, round(minutes))
+
+
+def card_summary(c):
+    """The print card in plain words, also written into the 3MF."""
+    lines = [f"About {c['grams']} g of PLA and {c['minutes']} minutes. Flat side down, no supports, "
+             f"{c['layer_height']} mm layers, 100% infill."]
+    steps = [(sw["z"], f"At {sw['z']} mm (layer {sw['layer']}): switch to color {i + 2} for {' / '.join(sw['parts'])}.")
+             for i, sw in enumerate(c["swaps"])]
+    if c.get("pause"):
+        steps.append((c["pause"]["z"], f"At {c['pause']['z']} mm (layer {c['pause']['layer']}): pause and {c['pause']['what']}."))
+    return " ".join(lines + [t for _, t in sorted(steps)])
+
+
+def assemble(job_id, job_dir, parts_meta, colors, title="Bookmark", description=""):
     """Write the combined STL and the 3MF from the per-part STLs on disk."""
     parts = []
     for i, meta in enumerate(parts_meta):
@@ -202,7 +240,7 @@ def assemble(job_id, job_dir, parts_meta, colors, title="Bookmark"):
         meta["color"] = "#" + color.lower()
         parts.append({"name": meta["name"], "color": meta["color"], "extruder": meta["extruder"],
                       "verts": threemf.read_stl(job_dir / meta["file"])})
-    threemf.write_3mf(job_dir / "bookmark.3mf", parts, title)
+    threemf.write_3mf(job_dir / "bookmark.3mf", parts, title, description)
     return parts
 
 
@@ -332,7 +370,9 @@ def make_bookmark(data, params, cut_id=None, preview_only=False):
         for stem, _, _ in part["pieces"]:
             (job_dir / f"{stem}.stl").unlink(missing_ok=True)
     threemf.write_stl(job_dir / "bookmark.stl", all_verts)
-    assemble(job_id, job_dir, parts_meta, params["colors"])
+    plan["card"]["grams"], plan["card"]["minutes"] = estimate(all_verts, plan["card"])
+    plan["card"]["summary"] = card_summary(plan["card"])
+    assemble(job_id, job_dir, parts_meta, params["colors"], description=plan["card"]["summary"])
 
     if plan["loose"]:
         body_pts, pieces, border = plan["loose"]
@@ -364,7 +404,7 @@ def recolor(job_id, colors):
     job_dir = JOBS_DIR / job_id
     info = json.loads((job_dir / "job.json").read_text())
     parts_meta = [{k: m[k] for k in ("name", "file", "color", "extruder")} for m in info["parts"]]
-    assemble(job_id, job_dir, parts_meta, colors)
+    assemble(job_id, job_dir, parts_meta, colors, description=info["print_card"].get("summary", ""))
     for meta, old in zip(parts_meta, info["parts"]):
         old["color"] = meta["color"]
     (job_dir / "job.json").write_text(json.dumps(info, indent=2))
