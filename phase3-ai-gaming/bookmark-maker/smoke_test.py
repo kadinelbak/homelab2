@@ -168,6 +168,19 @@ def v3_flow():
         except Exception as exc:
             failures += 1
             print(f"FAIL style {style['key']}: {exc}")
+    # face details (none on the flat test cat, but the path must run) and flat face-down color
+    for extra, want in (({"details": 3}, None), ({"face": "flush"}, ["Face", "Body"])):
+        q = dict(style="solid", cutout=cut["id"], art_raise=0.6, **extra)
+        try:
+            st, info, _ = make(q, b"")
+            assert st == 200, f"make {st}: {info.get('error')}"
+            names = [p["name"] for p in info["parts"]]
+            assert want is None or names == want, names
+            assert info["print_card"]["changes"] == 1, info["print_card"]
+            print(f"PASS {extra}: {names}, {info['print_card']['changes']} filament change")
+        except Exception as exc:
+            failures += 1
+            print(f"FAIL {extra}: {exc}")
     # drag to place: the offset moves the art and comes back as the effective value
     q = dict(style="clip", cutout=cut["id"], art_x=8, art_y=200)
     st, _, body = call("/api/preview?" + urllib.parse.urlencode(q), b"")

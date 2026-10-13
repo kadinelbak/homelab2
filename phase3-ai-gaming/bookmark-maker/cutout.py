@@ -162,3 +162,53 @@ def make_mask(img, method="auto", threshold=128, invert=False, smooth=2, fill_ho
     if not mask.getbbox():
         raise ValueError("Couldn't find the pet in this photo. Try a photo with a plainer background.")
     return mask, info
+
+
+def _drop_small(mask, min_px):
+    """Remove connected pieces smaller than min_px pixels."""
+    w, h = mask.size
+    data = bytearray(mask.point(lambda v: 1 if v else 0).tobytes())
+    out = bytearray(w * h)
+    for start in range(w * h):
+        if data[start] != 1:
+            continue
+        data[start] = 2
+        comp, q = [start], deque([start])
+        while q:
+            p = q.popleft()
+            x = p % w
+            for n in (p + 1 if x + 1 < w else -1, p - 1 if x else -1, p + w if p + w < w * h else -1, p - w):
+                if n >= 0 and data[n] == 1:
+                    data[n] = 2
+                    comp.append(n)
+                    q.append(n)
+        if len(comp) >= min_px:
+            for p in comp:
+                out[p] = 255
+    return Image.frombytes("L", (w, h), bytes(out))
+
+
+def detail_mask(photo, mask, amount, ppm):
+    """Face details (eyes, nose, mouth, fur markings) inside the pet, as an L mask the size of mask.
+
+    Finds features darker than their surroundings (lighter, for a dark pet), widens lines thinner than
+    0.8 mm and drops specks, all at ppm pixels per printed mm. amount: contrast needed, lower = more detail.
+    """
+    g = ImageOps.autocontrast(photo.convert("L").resize(mask.size), cutoff=1)
+    g = g.filter(ImageFilter.GaussianBlur(max(0.5, 0.2 * ppm)))
+    mean = g.filter(ImageFilter.GaussianBlur(max(2.0, 3.0 * ppm)))
+    hist = g.histogram(mask)
+    half, acc, median = sum(hist) / 2, 0, 128
+    for v, n in enumerate(hist):
+        acc += n
+        if acc >= half:
+            median = v
+            break
+    diff = ImageChops.subtract(g, mean) if median < 80 else ImageChops.subtract(mean, g)
+    d = diff.point(lambda v: 255 if v >= amount else 0)
+    k = 2 * max(1, round(0.4 * ppm)) + 1
+    opened = d.filter(ImageFilter.MinFilter(k)).filter(ImageFilter.MaxFilter(k))
+    d = ImageChops.lighter(d, ImageChops.subtract(d, opened).filter(ImageFilter.MaxFilter(k)))
+    d = d.filter(ImageFilter.GaussianBlur(0.3 * ppm)).point(lambda v: 255 if v >= 128 else 0)
+    inner = mask.filter(ImageFilter.MinFilter(2 * max(1, round(1.5 * ppm)) + 1))  # keep the outline ring whole
+    return _drop_small(ImageChops.multiply(d, inner), round(1.5 * ppm * ppm))
