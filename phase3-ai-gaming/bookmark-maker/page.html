@@ -38,6 +38,7 @@ button:disabled{opacity:.5;cursor:default}button.small{margin:0 0 0 8px;padding:
 #viewer{width:100%;height:440px;border-radius:6px;background:var(--bg);position:relative}#viewer canvas{display:block;width:100%;height:100%}
 #flat{display:flex;justify-content:center;align-items:center;min-height:440px;background:#fff;border-radius:6px}
 #flat img{max-height:520px;max-width:100%}
+#flat svg{height:min(520px,70vh);width:auto;max-width:100%}
 .tabs{display:flex;gap:6px;margin-bottom:10px}.tabs button{margin:0;padding:5px 12px;background:transparent;color:var(--fg);border:1px solid var(--line);font-weight:500}
 .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .empty{color:var(--muted);padding:12px}.muted{color:var(--muted);font-size:13px}
@@ -110,7 +111,7 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",
 const FONTS=[["dejavu-sans","DejaVu Sans Bold"],["dejavu-serif","DejaVu Serif Bold"],["liberation-sans","Liberation Sans Bold"],["liberation-serif","Liberation Serif Bold"],["liberation-mono","Liberation Mono Bold"]];
 // Advanced fields: [id, label, type, default, extra]. Defaults match app.py.
 const ADV=[
-["style","Body","select","clip",[["clip","Paperclip"],["solid","Solid"],["corner","Corner"],["paws","Paws over the page"]]],
+["style","Body","select","clip",[["clip","Paperclip"],["solid","Solid"],["corner","Corner"],["paws","Paws over the page"],["tail","Tail out"],["magnet","Magnetic"]]],
 ["bottom","Bottom","select","round",[["round","Round"],["point","Point"],["swallowtail","Swallowtail"],["square","Square"],["taper","Taper"]]],
 ["width","Body/tongue width mm","number",24,1],["length","Body length mm","number",110,5],
 ["thickness","Thickness mm","number",1.5,0.1],["corner_leg","Corner leg mm","number",55,1],
@@ -124,7 +125,9 @@ const ADV=[
 ["font","Font","select","dejavu-sans",FONTS],["text_size","Letter height mm (0 = auto)","number",0,0.5],
 ["text_height","Raised text mm","number",0.6,0.1],["hole","Tassel hole","check",0],["hole_d","Hole diameter mm","number",4,0.5],
 ["pattern","Pattern cutouts","select","none",[["none","None"],["honeycomb","Honeycomb"],["diamonds","Diamonds"],["stars","Stars"],["dots","Dots"]]],
-["cell","Cell size mm","number",6,0.5],["levels","Photo levels (2-4)","number",3,1],["thicken","Thicken thin details","check",1],
+["cell","Cell size mm","number",6,0.5],["art_x","Move art right mm","number",0,1],["art_y","Move art up mm","number",0,1],
+["tail_end","End that sticks out","select","bottom",[["bottom","Bottom"],["left","Left"],["right","Right"],["top","Top"]]],
+["tail_show","Tail: fraction sticking out","number",0.5,0.05],["magnet_d","Magnet diameter mm","number",6,1],["magnet_t","Magnet thickness mm","number",1,0.5],["levels","Photo levels (2-4)","number",3,1],["thicken","Thicken thin details","check",1],
 ];
 const DEFAULTS=Object.fromEntries(ADV.map(f=>[f[0],f[3]]));
 let STYLES=[],cut=null,style=null,state={},size=1,strokes=[],brushKeep=0,current=null,userColors={},seq=0;
@@ -236,6 +239,11 @@ function buildSimple(){
     parts.push(slider("c-line","How far the paws hang over the page",0.6,0.92,0.01,1.52-state.page_line,v=>state.page_line=+(1.52-v).toFixed(2)));
     parts.push(slider("c-slot","Tongue position (it finds the gap between the paws)",0.2,0.8,0.05,state.slot_center,v=>state.slot_center=v));
   }
+  if(c.includes("tail")){
+    parts.push(seg("c-end","Which end sticks out",[["bottom","Feet"],["left","Left end"],["right","Right end"],["top","Head"]],state.tail_end,v=>state.tail_end=v));
+    parts.push(slider("c-show","How much sticks out",0.25,0.8,0.05,state.tail_show,v=>state.tail_show=v));
+  }
+  if(c.includes("magnet"))parts.push(seg("c-mag","Magnets (two per piece where they fit)",[[6,"6 x 1 mm"],[8,"8 x 1 mm"],[10,"10 x 1 mm"]],state.magnet_d,v=>{state.magnet_d=+v;state.magnet_t=1;}));
   if(c.includes("crop"))parts.push(slider("c-crop","How much of your pet (face only ... whole)",0.3,1,0.05,state.crop,v=>state.crop=v));
   if(c.includes("outline")){const b0=base.border||1.5;
     parts.push(seg("c-out","Outline",[[0,"None"],[b0,"Thin"],[b0+1,"Bold"]],state.border,v=>state.border=+v));}
@@ -248,7 +256,8 @@ function buildSimple(){
       <input id="c-t2" type="text" maxlength="30" value="${esc(t2)}" placeholder="Second line" style="margin-top:6px">`,
       bind:()=>["c-t1","c-t2"].forEach((id,i)=>$(id).oninput=()=>{state["text"+(i+1)]=$(id).value;changed(600);})});
   }
-  parts.push(seg("c-thick","Thickness",[[0.9,"Thin (book-safe)"],[1.2,"Sturdy"]],state.thickness>=1.1?1.2:0.9,v=>state.thickness=+v));
+  const t0=base.thickness||0.9;
+  parts.push(seg("c-thick","Thickness",[[t0,"Thin (book-safe)"],[1.2,"Sturdy"]],state.thickness>=1.1?1.2:t0,v=>state.thickness=+v));
   $("simple").innerHTML=parts.map(p=>p.html).join("");parts.forEach(p=>p.bind());
 }
 function syncAdv(){
@@ -284,9 +293,35 @@ async function preview(){
   try{
     const r=await fetch("/api/preview?"+query(state),{method:"POST"});const d=await r.json();if(my!==seq)return;
     if(!r.ok)throw new Error(d.error);
-    $("flat").innerHTML=`<img alt="Bookmark outline" src="${d.preview}">`;setTab("2d");
-    $("msg").textContent=`About ${d.layout.total_w} x ${d.layout.total_h} mm.`;badge(d.layout);warn(d.warnings);
+    await showFlat(d.preview,d.layout);if(my!==seq)return;setTab("2d");
+    if(d.layout.art_x!=null){state.art_x=d.layout.art_x;state.art_y=d.layout.art_y;syncAdv();}
+    $("msg").textContent=`About ${d.layout.total_w} x ${d.layout.total_h} mm.`+(canDrag()?" Drag your pet to move it.":"");badge(d.layout);warn(d.warnings);
   }catch(e){if(my===seq){$("msg").textContent=e.message;}}
+}
+
+// ---------- drag to place ----------
+let flatLayout=null;
+const canDrag=()=>flatLayout&&state.mode!=="photo"&&state.style!=="corner";
+async function showFlat(url,layout){
+  flatLayout=layout;
+  try{const t=await (await fetch(url)).text();$("flat").innerHTML=t;const svg=$("flat").querySelector("svg");
+    svg.removeAttribute("width");svg.removeAttribute("height");svg.setAttribute("role","img");svg.setAttribute("aria-label","Bookmark outline");
+    if(canDrag())bindDrag(svg);}
+  catch(e){$("flat").innerHTML=`<img alt="Bookmark outline" src="${url}">`;}
+}
+function bindDrag(svg){
+  const art=svg.querySelector("#art");if(!art)return;
+  svg.style.touchAction="none";art.style.cursor="grab";
+  let start=null;
+  const at=e=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());};
+  art.addEventListener("pointerdown",e=>{start=at(e);svg.setPointerCapture(e.pointerId);art.style.cursor="grabbing";});
+  svg.addEventListener("pointermove",e=>{if(!start)return;const p=at(e);art.setAttribute("transform",`translate(${p.x-start.x} ${p.y-start.y})`);});
+  svg.addEventListener("pointerup",e=>{if(!start)return;const p=at(e),dx=p.x-start.x,dy=start.y-p.y;start=null;art.style.cursor="grab";
+    if(Math.abs(dx)+Math.abs(dy)<0.5){art.removeAttribute("transform");return;}
+    const l=flatLayout,cl=(v,a,b)=>+Math.min(b,Math.max(a,v)).toFixed(2);
+    if(state.style==="paws"){state.slot_center=cl(state.slot_center-dx/l.art_w,0.1,0.9);state.page_line=cl(state.page_line+dy/l.art_h,0.4,0.95);buildSimple();}
+    else{state.art_x=+((+state.art_x||0)+dx).toFixed(1);state.art_y=+((+state.art_y||0)+dy).toFixed(1);}
+    changed(0);});
 }
 
 // ---------- 3D viewer ----------
@@ -337,7 +372,7 @@ $("tab3d").onclick=()=>setTab("3d");$("tab2d").onclick=()=>setTab("2d");
 function threemfUrl(){return current.threemf+"?colors="+current.parts.map(p=>(userColors[p.name]||p.color).replace("#","")).join(",");}
 function renderResult(r){
   current=r;r.parts.forEach(p=>{if(userColors[p.name])p.color=userColors[p.name]});
-  $("flat").innerHTML=`<img alt="Bookmark outline" src="${r.preview}">`;
+  showFlat(r.preview,r.layout);
   const grams=r.parts.length;
   $("msg").textContent=`Done in ${r.seconds}s. Bookmark ${r.layout.total_w} x ${r.layout.total_h} mm, ${grams} color part${grams>1?"s":""}.`+(r.layout.text_size?` Text ${r.layout.text_size} mm.`:"");
   badge(r.layout);warn(r.warnings);
@@ -348,9 +383,10 @@ function renderResult(r){
     inp.oninput=()=>{userColors[p.name]=inp.value;p.color=inp.value;meshes.filter(m=>m.userData.name===p.name).forEach(m=>m.material.color.set(inp.value));$("dl3mf").href=threemfUrl();};
     l.append(inp,` ${p.name} (filament ${p.extruder})`);cbox.appendChild(l);});
   const c=r.print_card;
-  const swaps=c.swaps.length?"<ul>"+c.swaps.map(s=>`<li>Swap to ${esc(s.parts.join(" / "))} at layer ${s.layer} (${s.z} mm)</li>`).join("")+"</ul>":"";
-  $("card").innerHTML=`<b>How to print</b>: ${c.layer_height} mm layers, ${c.infill}% infill, no supports, flat side down.`
-    +(swaps?`<div>One nozzle, no AMS? Pause and swap filament:${swaps}</div>`:"")+"<ul>"+c.notes.map(n=>`<li>${esc(n)}</li>`).join("")+"</ul>";
+  const swaps=c.swaps.length?"<ul>"+c.swaps.map((s,i)=>`<li>At ${s.z} mm (layer ${s.layer}): switch to color ${i+2} for ${esc(s.parts.join(" / "))}</li>`).join("")+"</ul>":"";
+  const pause=c.pause?`<div><b>Magnets:</b> pause at ${c.pause.z} mm (layer ${c.pause.layer}) and ${esc(c.pause.what)}.</div>`:"";
+  $("card").innerHTML=`<b>How to print</b>: about <b>${c.grams} g</b> of PLA and <b>${c.minutes} minutes</b>. ${c.layer_height} mm layers, ${c.infill}% infill, no supports, flat side down.`
+    +(swaps?`<div>With an AMS this is automatic. One nozzle, no AMS? Pause and swap filament:${swaps}</div>`:"")+pause+"<ul>"+c.notes.map(n=>`<li>${esc(n)}</li>`).join("")+"</ul>";
   $("tab3d").disabled=false;setTab("3d");showParts(r.parts,r.layout);
 }
 $("go").onclick=async()=>{
