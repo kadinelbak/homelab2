@@ -38,6 +38,7 @@ PAGE = Path(__file__).with_name("page.html").read_bytes()
 CHOICES = {  # first option is the default
     "style": ("clip", "solid", "corner", "paws", "tail", "magnet"),
     "tail_end": ("bottom", "left", "right", "top"),
+    "face": ("raised", "flush"),
     "bottom": ("round", "point", "swallowtail", "square", "taper"),
     "mode": ("silhouette", "photo"),
     "text_mode": ("raised", "engraved"),
@@ -77,7 +78,9 @@ PARAMS = {
     "thicken": (1.0, 0.0, 1.0),
     "art_x": (0.0, -60.0, 60.0),  # drag to place: art offset from the centre
     "art_y": (0.0, -40.0, 40.0),  # drag to place: art offset upward
-    "tail_show": (0.5, 0.2, 0.9),  # tail: how much of the pet sticks out of the bottom of the book
+    "tail_show": (0.5, 0.2, 0.9),
+    "details": (0.0, 0.0, 3.0),  # face details from the photo: 0 off, 1 less, 2 some, 3 more
+    "face_layers": (1.0, 1.0, 3.0),  # flat face-down color: layers of face color (1 = one filament change)  # tail: how much of the pet sticks out of the bottom of the book
     "magnet_d": (6.0, 3.0, 12.0),  # magnet: disc magnet diameter
     "magnet_t": (1.0, 0.5, 3.0),  # magnet: disc magnet thickness  # widen features thinner than MIN_FEATURE so they don't vanish in the slicer
 }
@@ -144,22 +147,29 @@ def slug(name):
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-def prepare_mask(params, mask):
-    """Crop to the art, apply the top crop, thicken thin features. Returns (mask, noticeably_thickened)."""
+def prepare_mask(params, mask, photo=None):
+    """Crop to the art, apply the top crop, thicken thin features. Returns (mask, noticeably_thickened, photo),
+    with the photo (if given, same size as the mask) cropped and turned the same way."""
     box = mask.getbbox()
     if not box:
         raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
-    mask = mask.crop(box)
+    imgs = [mask, photo]
+
+    def crop(b):
+        imgs[:] = [im.crop(b) if im is not None else None for im in imgs]
+
+    crop(box)
     if params["style"] == "tail":  # turn the chosen end of the pet downward and keep only that end
         turn = {"bottom": None, "left": Image.ROTATE_90, "right": Image.ROTATE_270, "top": Image.ROTATE_180}
         if turn[params["tail_end"]] is not None:
-            mask = mask.transpose(turn[params["tail_end"]])
-        top = round(mask.height * (1 - params["tail_show"]))
-        mask = mask.crop((0, min(top, mask.height - 4), mask.width, mask.height))
-        mask = mask.crop(mask.getbbox())
+            imgs[:] = [im.transpose(turn[params["tail_end"]]) if im is not None else None for im in imgs]
+        top = round(imgs[0].height * (1 - params["tail_show"]))
+        crop((0, min(top, imgs[0].height - 4), imgs[0].width, imgs[0].height))
+        crop(imgs[0].getbbox())
     if params["crop"] < 0.999:
-        mask = mask.crop((0, 0, mask.width, max(4, round(mask.height * params["crop"]))))
-        mask = mask.crop(mask.getbbox())
+        crop((0, 0, imgs[0].width, max(4, round(imgs[0].height * params["crop"]))))
+        crop(imgs[0].getbbox())
+    mask, photo = imgs
     thickened = False
     if params["thicken"]:
         mm = min(params["art_width"] / mask.width, params["art_height"] / mask.height)
@@ -172,10 +182,15 @@ def prepare_mask(params, mask):
             if thin_px:
                 thickened = thin_px > 0.01 * sum(1 for v in mask.getdata() if v)
                 mask = ImageChops.lighter(mask, thin.filter(ImageFilter.MaxFilter(k)))
-    return mask, thickened
+    return mask, thickened, photo
 
 
-def build_plan(params, img, job_dir, mask=None):
+DETAIL_AMOUNT = {1: 50, 2: 35, 3: 24}  # face details: contrast needed for Less / Some / More
+DETAIL_H = 0.4  # one-color looks: details stand this far above the pet
+FLUSH_STYLES = ("solid", "clip", "tail", "paws")
+
+
+def build_plan(params, img, job_dir, mask=None, photo=None):
     lines = [t for t in (params["text1"], params["text2"]) if t]
     if params["mode"] == "photo":
         gray, _ = imaging.photo_gray(img, params["width"], params["length"], params["photo_fit"], params["auto_level"])
@@ -186,13 +201,24 @@ def build_plan(params, img, job_dir, mask=None):
                 levels.append(polys)
         if not levels:
             raise ValueError("The photo has no contrast to build levels from. Try a different photo or auto-level.")
-        return geometry.plan_photo(params, levels, gray.size, lines)
+        plan = geometry.plan_photo(params, levels, gray.size, lines)
+        plan["card"]["changes"] = filament_changes(plan)
+        return plan
     if mask is None:
         mask = imaging.silhouette_mask(img, params["threshold"], params["invert"])
-    mask, thickened = prepare_mask(params, mask)
+    level = int(round(params["details"]))
+    if photo is not None and level:
+        photo = photo.convert("RGB").resize(mask.size)
+    mask, thickened, photo = prepare_mask(params, mask, photo if level else None)
     tongue = None
     if params["style"] == "paws":
         mask, tongue, notes = geometry.paws_prepare(params, mask)
+    det_polys = []
+    if photo is not None and level:
+        ppm = 1 / min(params["art_width"] / mask.width, params["art_height"] / mask.height)  # px per printed mm
+        det = cutout.detail_mask(photo, mask, DETAIL_AMOUNT.get(level, 35), ppm)
+        if det.getbbox():
+            det_polys, _ = imaging.trace(det, job_dir, "det", turdsize=2)
     polys, _ = imaging.trace(mask, job_dir, "art")
     if not polys:
         raise ValueError("No silhouette found. Try moving the threshold slider or toggling invert.")
@@ -205,7 +231,62 @@ def build_plan(params, img, job_dir, mask=None):
         plan = geometry.plan_standard(params, polys, lines)
     if thickened:
         plan["warnings"].append(f"Thin details (under {MIN_FEATURE} mm) were thickened so they print.")
+    add_details(params, plan, det_polys)
+    if params["face"] == "flush":
+        make_flush(params, plan)
+    plan["card"]["changes"] = filament_changes(plan)
     return plan
+
+
+def add_details(params, plan, det_polys):
+    """Cut the face details out of the raised pet (the body color shows through, no extra filament change),
+    or for one-color looks raise them a little above the pet."""
+    plan["files"]["art.scad"] += "module det_raw() { " + (
+        imaging.polygon_scad(det_polys, plan["to_mm"]) if det_polys else "") + " }\n"
+    if not det_polys or params["art_raise"] > 0 or params["face"] == "flush":
+        return
+    body = next(p for p in plan["parts"] if p["name"] == "Body")
+    outline = plan["outline"].rstrip().rstrip(";")
+    body["pieces"].append(("details", f"translate([0,0,{body['z1']:.3f}]) linear_extrude({DETAIL_H}) "
+                                      f"intersection() {{ det_all(); {outline}; }}", geometry.ART))
+    body["z1"] += DETAIL_H
+    if params["style"] == "paws":  # the paws are inside the book
+        plan["layout"]["in_book"] = round(max(plan["layout"]["in_book"], params["thickness"] + DETAIL_H), 2)
+
+
+def make_flush(params, plan):
+    """Flat face-down color: the pet and text are printed in the first layer(s), flush with the body, against
+    the build plate. The model is mirrored so the face reads correctly once it is turned over."""
+    if params["style"] not in FLUSH_STYLES or not plan.get("face2d"):
+        plan["warnings"].append("Flat face-down color isn't available for this look, so the pet is raised instead.")
+        return
+    thick = params["thickness"]
+    t0 = round(0.2 * int(round(params["face_layers"])), 2)
+    face = f"union() {{ {plan['face2d']}; text2d(); }}"
+    flip = "mirror([1, 0, 0])"
+    plan["parts"] = [
+        {"name": "Face", "z0": 0.0, "z1": t0, "color": "#2b3a55",
+         "pieces": [("face", f"{flip} linear_extrude({t0}) intersection() {{ {face}; base_cut(); }}", geometry.ART)]},
+        {"name": "Body", "z0": 0.0, "z1": thick, "color": "#f4f1ea",
+         "pieces": [("body_a", f"{flip} linear_extrude({t0}) difference() {{ base_cut(); {face}; }}", geometry.ART),
+                    ("body_b", f"{flip} translate([0,0,{t0}]) linear_extrude({thick - t0:.3f}) base_cut();", geometry.ART)]},
+    ]
+    c = geometry.card(plan["parts"], 0.2)
+    c["flush_layers"] = int(round(params["face_layers"]))
+    c["notes"] = ["Print as it comes: the face is printed against the plate, so the model looks mirrored in the slicer.",
+                  "A textured PEI plate gives a sparkly matte face; a smooth plate gives a glossy one.",
+                  "The pet and the text share the face color."]
+    plan["card"] = c
+    plan["layout"]["in_book"] = round(thick, 2)
+    plan["layout"]["flush"] = True
+
+
+def filament_changes(plan):
+    """How many times you swap filament by hand on a printer without an AMS."""
+    c = plan["card"]
+    if c.get("flush_layers"):
+        return 2 * c["flush_layers"] - 1  # face color, then body; one more change per extra face layer
+    return len(c["swaps"])
 
 
 def estimate(verts, card):
@@ -227,6 +308,9 @@ def card_summary(c):
              f"{c['layer_height']} mm layers, 100% infill."]
     steps = [(sw["z"], f"At {sw['z']} mm (layer {sw['layer']}): switch to color {i + 2} for {' / '.join(sw['parts'])}.")
              for i, sw in enumerate(c["swaps"])]
+    if c.get("flush_layers"):
+        steps.append((0, f"The face prints against the plate: face color first, then switch to the body color "
+                         f"after {'layer 1' if c['flush_layers'] == 1 else 'each of the first %d layers' % c['flush_layers']}."))
     if c.get("pause"):
         steps.append((c["pause"]["z"], f"At {c['pause']['z']} mm (layer {c['pause']['layer']}): pause and {c['pause']['what']}."))
     return " ".join(lines + [t for _, t in sorted(steps)])
@@ -318,7 +402,7 @@ def make_bookmark(data, params, cut_id=None, preview_only=False):
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True)
     if cut_id and params["mode"] == "silhouette":
-        plan = build_plan(params, None, job_dir, load_cutout(cut_id))
+        plan = build_plan(params, None, job_dir, load_cutout(cut_id), Image.open(CUTS_DIR / cut_id / "photo.png"))
     elif cut_id:
         plan = build_plan(params, Image.open(CUTS_DIR / cut_id / "photo.png"), job_dir)
     else:

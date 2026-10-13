@@ -10,6 +10,10 @@ Paws over the page: the pet sits on the top edge of the book. A thin tongue goes
 
 Tail out: the chosen end of your pet (feet, left, right or head) sticks out of the bottom of the book. Magnetic: a front and a mirrored back piece; the heads sit above the page and hold 6 x 1 mm disc magnets (pause layer on the print card), and the thin tongues sit on either side of a page.
 
+Face details: the eyes, nose, mouth and fur markings are found in the photo (features darker than their surroundings, or lighter for a dark pet), widened to at least 0.8 mm and cut out of the raised pet, so the body color shows through with no extra filament change. One-color looks raise them 0.4 mm instead.
+
+Colors, all made for printers without an AMS: Raised pet (1 filament change), Flat face-down (the pet and text print flush in the first layer against the plate; 1 change with Bambu Studio's External Spool Multi-Color), or One color (no changes). The print card says how many changes each one needs.
+
 Book-safe defaults: everything that goes inside the book is at most 1.5 mm thick (a bank card is 0.76 mm). Every look prints in one piece, flat, with no supports.
 
 Files: `app.py` (HTTP + build pipeline), `cutout.py` (photo to mask), `geometry.py` (shapes and OpenSCAD source), `imaging.py` (tracing), `styles.py` (the looks), `threemf.py` (3MF writer), `page.html` (the page).

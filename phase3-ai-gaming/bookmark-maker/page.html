@@ -127,9 +127,11 @@ const ADV=[
 ["pattern","Pattern cutouts","select","none",[["none","None"],["honeycomb","Honeycomb"],["diamonds","Diamonds"],["stars","Stars"],["dots","Dots"]]],
 ["cell","Cell size mm","number",6,0.5],["art_x","Move art right mm","number",0,1],["art_y","Move art up mm","number",0,1],
 ["tail_end","End that sticks out","select","bottom",[["bottom","Bottom"],["left","Left"],["right","Right"],["top","Top"]]],
-["tail_show","Tail: fraction sticking out","number",0.5,0.05],["magnet_d","Magnet diameter mm","number",6,1],["magnet_t","Magnet thickness mm","number",1,0.5],["levels","Photo levels (2-4)","number",3,1],["thicken","Thicken thin details","check",1],
+["tail_show","Tail: fraction sticking out","number",0.5,0.05],["details","Face details (0-3)","number",0,1],
+["face","Color style","select","raised",[["raised","Raised pet"],["flush","Flat face-down"]]],["face_layers","Face-down color layers","number",1,1],["magnet_d","Magnet diameter mm","number",6,1],["magnet_t","Magnet thickness mm","number",1,0.5],["levels","Photo levels (2-4)","number",3,1],["thicken","Thicken thin details","check",1],
 ];
 const DEFAULTS=Object.fromEntries(ADV.map(f=>[f[0],f[3]]));
+const FLUSH=["solid","clip","tail","paws"];
 let STYLES=[],cut=null,style=null,state={},size=1,strokes=[],brushKeep=0,current=null,userColors={},seq=0;
 
 // ---------- steps ----------
@@ -247,7 +249,13 @@ function buildSimple(){
   if(c.includes("crop"))parts.push(slider("c-crop","How much of your pet (face only ... whole)",0.3,1,0.05,state.crop,v=>state.crop=v));
   if(c.includes("outline")){const b0=base.border||1.5;
     parts.push(seg("c-out","Outline",[[0,"None"],[b0,"Thin"],[b0+1,"Bold"]],state.border,v=>state.border=+v));}
-  if(c.includes("raise"))parts.push(seg("c-raise","Colors",[[0.6,"Two colors (raised pet)"],[0,"One color"]],state.art_raise,v=>state.art_raise=+v));
+  if(c.includes("details"))parts.push(seg("c-det","Face details from the photo",[[0,"Off"],[1,"Less"],[2,"Some"],[3,"More"]],state.details,v=>state.details=+v));
+  if(c.includes("raise")){
+    const opts=[["raised","Raised pet"]];if(FLUSH.includes(state.style))opts.push(["flush","Flat face-down"]);opts.push(["one","One color"]);
+    const cur=state.face==="flush"?"flush":(+state.art_raise>0?"raised":"one");
+    parts.push(seg("c-raise","Colors (1 filament change without an AMS, none for one color)",opts,cur,v=>{
+      state.face=v==="flush"?"flush":"raised";state.art_raise=v==="one"?0:(+base.art_raise||0.6);}));
+  }
   if(c.includes("shape"))parts.push(seg("c-shape","Bottom",[["round","Round"],["point","Point"],["swallowtail","Ribbon"],["square","Square"]],state.bottom,v=>state.bottom=v));
   if(c.includes("levels"))parts.push(seg("c-lv","Shades",[[2,"2"],[3,"3"],[4,"4"]],state.levels,v=>state.levels=+v));
   if(c.includes("text")){
@@ -385,7 +393,9 @@ function renderResult(r){
   const c=r.print_card;
   const swaps=c.swaps.length?"<ul>"+c.swaps.map((s,i)=>`<li>At ${s.z} mm (layer ${s.layer}): switch to color ${i+2} for ${esc(s.parts.join(" / "))}</li>`).join("")+"</ul>":"";
   const pause=c.pause?`<div><b>Magnets:</b> pause at ${c.pause.z} mm (layer ${c.pause.layer}) and ${esc(c.pause.what)}.</div>`:"";
-  $("card").innerHTML=`<b>How to print</b>: about <b>${c.grams} g</b> of PLA and <b>${c.minutes} minutes</b>. ${c.layer_height} mm layers, ${c.infill}% infill, no supports, flat side down.`
+  const ch=c.changes||0,noAms=`<div><b>Without an AMS:</b> ${ch?`${ch} filament change${ch>1?"s":""}`:"no filament changes"}.</div>`;
+  const flush=c.flush_layers?`<div>The face color is printed first, on the plate. Without an AMS, turn on External Spool Multi-Color in Bambu Studio (2.5 or newer) and swap to the body color after ${c.flush_layers>1?`each of the first ${c.flush_layers} layers`:"the first layer"}.</div>`:"";
+  $("card").innerHTML=`<b>How to print</b>: about <b>${c.grams} g</b> of PLA and <b>${c.minutes} minutes</b>. ${c.layer_height} mm layers, ${c.infill}% infill, no supports.`+noAms+flush
     +(swaps?`<div>With an AMS this is automatic. One nozzle, no AMS? Pause and swap filament:${swaps}</div>`:"")+pause+"<ul>"+c.notes.map(n=>`<li>${esc(n)}</li>`).join("")+"</ul>";
   $("tab3d").disabled=false;setTab("3d");showParts(r.parts,r.layout);
 }
