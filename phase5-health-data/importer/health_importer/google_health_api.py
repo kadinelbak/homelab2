@@ -14,6 +14,7 @@ from .config import Settings
 API_BASE = "https://health.googleapis.com/v4"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SOURCE = "google_health_fitbit_inspire_3"
+WATCH_PREFERRED = {"steps", "distance", "calories"}
 
 
 def sync_date(conn, settings: Settings, day: date) -> dict[str, int]:
@@ -48,6 +49,9 @@ def sync_date(conn, settings: Settings, day: date) -> dict[str, int]:
             if metric:
                 # Sync windows overlap, so metric rows use a day-independent source_file;
                 # a dated one would store each reading again on every sync.
+                if metric in WATCH_PREFERRED and any(_platform(r) == "FITBIT" for r in records):
+                    # The phone (Health Connect) reports the same activity as the watch; storing both doubles it.
+                    records = [r for r in records if _platform(r) == "FITBIT"]
                 for record in records: _store_metric(conn, record, data_type, metric, f"google-health/{data_type}.json", run_id, counts)
             elif data_type == "sleep":
                 for record in records: _store_sleep(conn, record, source_file, run_id, counts)
@@ -111,13 +115,22 @@ def _store_sleep(conn, record, source_file, run_id, counts):
         # Some nights carry no summary minutes; derive them from the stages so efficiency can be charted.
         minutes = lambda wake: round(sum((_ts(st["endTime"]) - _ts(st["startTime"])).total_seconds() for st in stages if (st.get("type") == "AWAKE") == wake) / 60)
         asleep, awake = minutes(False), minutes(True)
-    session = {"source": SOURCE, "log_id": log_id, "date_of_sleep": _ts(end).date(), "start_time": _ts(start), "end_time": _ts(end), "duration_seconds": int((_ts(end)-_ts(start)).total_seconds()), "efficiency": None, "minutes_asleep": asleep, "minutes_awake": awake, "is_main_sleep": True, "source_file": source_file, "metadata": summary, "import_run_id": run_id}
+    session = {"source": SOURCE, "log_id": log_id, "date_of_sleep": _ts(end).date(), "start_time": _ts(start), "end_time": _ts(end), "duration_seconds": int((_ts(end)-_ts(start)).total_seconds()), "efficiency": _efficiency(asleep, start, end), "minutes_asleep": asleep, "minutes_awake": awake, "is_main_sleep": True, "source_file": source_file, "metadata": summary, "import_run_id": run_id}
     if db.upsert_sleep_session(conn, session): counts["sleep_sessions_inserted"] += 1
     # Stage names match the Fitbit export levels (wake/light/deep/rem) so both sources chart the same way.
     for stage in stages:
         level = {"AWAKE": "wake"}.get(stage.get("type"), str(stage.get("type") or "unknown").lower())
         row = {"source": SOURCE, "log_id": log_id, "ts": _ts(stage["startTime"]), "level": level, "seconds": int((_ts(stage["endTime"])-_ts(stage["startTime"])).total_seconds()), "source_file": source_file, "import_run_id": run_id}
         if db.upsert_sleep_stage(conn, row): counts["sleep_stages_inserted"] += 1
+
+
+def _platform(record: dict[str, Any]) -> str | None: return (record.get("dataSource") or {}).get("platform")
+
+
+def _efficiency(asleep: int | None, start: str, end: str) -> int | None:
+    # Fitbit's definition: minutes asleep as a share of time in bed.
+    in_bed = (_ts(end) - _ts(start)).total_seconds() / 60
+    return round(100 * asleep / in_bed) if asleep is not None and in_bed > 0 else None
 
 
 def _int(value: Any) -> int | None: return int(value) if value not in (None, "") else None

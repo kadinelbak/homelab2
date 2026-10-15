@@ -30,5 +30,5 @@ bucket with `date_trunc('day', ts)` (session TZ is the server's; check `SHOW tim
 
 Good first pass: weekly averages and 4-week vs prior-4-week deltas per metric; day-of-week
 patterns; correlations between sleep (minutes_asleep, efficiency, bedtime) and next-day
-resting HR / HRV / steps (`corr()` in SQL); outlier days (> 2 SD). Say how many days back
+resting HR / HRV / steps (`corr()` in SQL); outlier days (> 2 SD). Very high step days (20k+) and 11h+ sleeps are real for this user, not errors. Say how many days back
 each claim rests on and flag gaps in the data.
