@@ -353,6 +353,11 @@ Backups (minimum):
 2. `${DATA_PATH}` bind-mounted app data.
 3. `.env` secret file in secure vault.
 
+Reboots:
+- `config/autostart.conf` lists the stacks and profiles that should be running. At boot, `homelab-autostart.service` runs `scripts/homelab-autostart.sh`, which does `docker compose up -d` for each line, in order.
+- Install or update the unit once per server with `scripts/install-autostart.sh` (it also enables lingering so user timers like `nextcloud-nightly-sync` run without a login).
+- Turning a service on or off for good means editing `config/autostart.conf`; check with `systemctl status homelab-autostart` after a reboot.
+
 ## 10.1 Capacity Governor
 
 `services.yaml` is the service catalog for RAM, CPU, VRAM, profile, dependency,
