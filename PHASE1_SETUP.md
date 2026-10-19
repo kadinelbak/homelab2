@@ -118,13 +118,12 @@ Temporary first-account flow:
 ```bash
 cd ~/homelab2/phase1-core
 docker compose --env-file ../.env ps
-docker compose --env-file ../.env logs --tail=80 homepage beszel-agent watchtower npm vaultwarden
+docker compose --env-file ../.env logs --tail=80 homepage beszel-agent npm vaultwarden
 ```
 
 Expected:
 - `homepage`: no `EACCES /var/run/docker.sock`
 - `beszel-agent`: websocket connected (no repeated 401)
-- `watchtower`: no fatal notification/API version errors
 - `npm`: no repeated certificate issuance failures for active cert config
 - `vaultwarden`: healthy and reachable via `https://${DOMAIN}:4443`
 

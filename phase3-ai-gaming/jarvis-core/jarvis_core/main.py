@@ -222,12 +222,6 @@ class MaintenanceUpdate(BaseModel):
     resolved: bool = False
 
 
-class CodexTaskCreate(BaseModel):
-    request: str
-    mode: str = Field(default="plan-only", pattern="^(inspect-only|plan-only|patch-only|test-only|execute)$")
-    idempotency_key: str | None = None
-
-
 class NotificationCreate(BaseModel):
     channel: str = Field(default="homepage", pattern="^(homepage|telegram|voice|audit)$")
     title: str
@@ -1033,43 +1027,6 @@ def create_request(payload: RequestCreate, db: Session = Depends(get_db), actor:
         audit(db, "intent.created", actor, correlation_id, intent.id, {"intent_type": intent.intent_type})
         audit(db, "action.proposed", actor, correlation_id, action.id, {"tool": action.tool_name, "risk_level": action.risk_level})
         audit(db, "approval.requested", actor, correlation_id, action.id, {"reason": "external_write"})
-    elif is_coding_request(payload.request):
-        mode = infer_codex_mode(payload.request)
-        risk_level = RiskLevel.READ_ONLY if mode in {"inspect-only", "plan-only"} else RiskLevel.EXTERNAL_WRITE
-        intent = StructuredIntentRecord(
-            id=new_id("intent"),
-            request_id=request_id,
-            intent_type="codex.run_task",
-            confidence=0.8,
-            payload={"request": payload.request, "workspace": "jarvis-mounted-workspace", "mode": mode},
-        )
-        db.add(intent)
-        action = ProposedActionRecord(
-            id=new_id("act"),
-            request_id=request_id,
-            tool_name="codex.run_task",
-            tool_version="1.0",
-            risk_level=risk_level.value,
-            status=ActionStatus.AWAITING_APPROVAL.value,
-            arguments=intent.payload,
-            preview={
-                "summary": f"Run a Codex coding task in {mode} mode.",
-                "changes": codex_mode_changes(mode),
-                "assumptions": ["No git push, destructive shell command, or secret exposure is allowed."],
-                "reversible": True,
-                "provider": "codex-worker",
-                "mode": mode,
-            },
-            requires_approval=True,
-        )
-        db.add(action)
-        db.flush()
-        db.add(ApprovalRequestRecord(id=new_id("appr"), proposed_action_id=action.id, status="pending", reason="Coding tasks can modify workspace files and require explicit approval."))
-        record.status = "awaiting_approval"
-        audit(db, "intent.created", actor, correlation_id, intent.id, {"intent_type": intent.intent_type})
-        audit(db, "action.proposed", actor, correlation_id, action.id, {"tool": action.tool_name, "risk_level": action.risk_level})
-        audit(db, "approval.requested", actor, correlation_id, action.id, {"reason": "codex_write"})
-        notify_many(db, actor, ("homepage", "telegram", "voice"), "Approval needed", f"Codex {mode}: {payload.request[:140]}", "warning", {"action_id": action.id, "tool": action.tool_name})
     else:
         intent = StructuredIntentRecord(
             id=new_id("intent"),
@@ -1658,7 +1615,6 @@ def homelab_diagnostics(db: Session = Depends(get_db), actor: str = Depends(auth
     http_checks = [
         ("jarvis-core", "http://127.0.0.1:8097/health"),
         ("google-tools-worker", settings.google_tools_url.rstrip("/") + "/health"),
-        ("codex-worker", settings.codex_worker_url.rstrip("/") + "/health"),
         ("open-webui", "http://open-webui:8080/health"),
         ("whisper-worker", "http://whisper-worker:8099/health"),
         ("tts-worker", "http://tts-worker:8101/health"),
@@ -1676,22 +1632,6 @@ def homelab_diagnostics(db: Session = Depends(get_db), actor: str = Depends(auth
     checks.extend(media_automation_checks())
     checks.extend(storage_health_checks())
     return {"ok": all(item.get("ok") or item.get("optional") for item in checks), "checks": checks, "mode": "read_only"}
-
-
-@app.post("/api/v1/codex/tasks")
-def create_codex_task(payload: CodexTaskCreate, db: Session = Depends(get_db), actor: str = Depends(authorize)):
-    text = payload.request
-    if payload.mode not in text.lower():
-        text = f"Codex {payload.mode}: {text}"
-    return create_request(RequestCreate(request=text, source="codex-task-api", idempotency_key=payload.idempotency_key), db, actor)
-
-
-@app.get("/api/v1/codex/tasks")
-def list_codex_tasks(status: str | None = None, db: Session = Depends(get_db), actor: str = Depends(authorize)):
-    actions = db.query(ProposedActionRecord).filter_by(tool_name="codex.run_task").order_by(ProposedActionRecord.created_at.desc()).all()
-    if status:
-        actions = [item for item in actions if item.status == status]
-    return {"codex_tasks": [codex_task_response(db, item) for item in actions]}
 
 
 @app.get("/api/v1/notifications")
@@ -1897,7 +1837,6 @@ def build_evidence_packet(project_id: str | None = None, title: str | None = Non
     evidence = evidence_query.order_by(EvidenceRecord.captured_at.desc()).limit(20).all()
     maintenance = db.query(MaintenanceRecord).order_by(MaintenanceRecord.updated_at.desc()).limit(10).all()
     calendar_events = db.query(CalendarEventRecord).order_by(CalendarEventRecord.starts_at.desc()).limit(20).all()
-    commits = collect_git_commits()
     documents = collect_google_document_references()
     packet = {
         "title": title or (f"Evidence packet: {project.name}" if project else "Jarvis evidence packet"),
@@ -1906,10 +1845,9 @@ def build_evidence_packet(project_id: str | None = None, title: str | None = Non
         "evidence": [evidence_response(item) for item in evidence],
         "maintenance": [maintenance_response(item) for item in maintenance],
         "calendar_events": [calendar_event_response(item) for item in calendar_events],
-        "commits": commits,
         "documents": documents,
         "generated_at": now_utc().isoformat(),
-        "summary": render_evidence_packet_summary(project, tasks, evidence, maintenance, calendar_events, commits, documents),
+        "summary": render_evidence_packet_summary(project, tasks, evidence, maintenance, calendar_events, documents),
     }
     record = EvidenceRecord(
         id=new_id("evid"),
@@ -3073,66 +3011,6 @@ def execute_action(db: Session, action: ProposedActionRecord, actor: str):
             notify_many(db, actor, ("homepage", "telegram", "voice"), "Automation update failed", str(exc)[:500], "warning", {"action_id": action.id})
             audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "jarvis-core", "error": str(exc)[:240]})
             return
-    if action.tool_name == "codex.run_task":
-        try:
-            payload = execute_codex_action(action)
-            attempt.status = "completed" if payload.get("status") == "completed" else "failed"
-            job_summary = payload.get("job_summary") or {}
-            attempt.safe_summary = job_summary.get("summary") or payload.get("summary") or payload.get("text", "")[:240]
-            attempt.completed_at = now_utc()
-            result = ExecutionResultRecord(
-                id=new_id("result"),
-                execution_attempt_id=attempt.id,
-                outcome=attempt.status,
-                payload={
-                    "codex": payload,
-                    "summary": job_summary.get("summary"),
-                    "changed_files": job_summary.get("changed_files") or [],
-                    "test_results": job_summary.get("test_results") or [],
-                    "mode": payload.get("mode") or action.arguments.get("mode"),
-                    "job_id": payload.get("job_id"),
-                },
-            )
-            db.add(result)
-            db.flush()
-            verification = VerificationResultRecord(
-                id=new_id("verify"),
-                execution_result_id=result.id,
-                status="verified" if attempt.status == "completed" else "failed",
-                payload={
-                    "checked": "codex_worker_result_recorded",
-                    "job_id": payload.get("job_id"),
-                    "changed_file_count": len(job_summary.get("changed_files") or []),
-                    "test_result_count": len(job_summary.get("test_results") or []),
-                },
-            )
-            db.add(verification)
-            db.add(OutboxEventRecord(id=new_id("outbox"), event_type="execution.completed", payload={"action_id": action.id, "result_id": result.id, "provider": "codex"}))
-            action.status = ActionStatus.COMPLETED.value if attempt.status == "completed" else ActionStatus.FAILED.value
-            request = db.get(RequestRecord, action.request_id)
-            request.status = action.status
-            notify_many(
-                db,
-                actor,
-                ("homepage", "telegram", "voice"),
-                "Codex job completed" if attempt.status == "completed" else "Codex job failed",
-                attempt.safe_summary or "",
-                "info" if attempt.status == "completed" else "warning",
-                {"action_id": action.id, "job_id": payload.get("job_id"), "mode": payload.get("mode") or action.arguments.get("mode")},
-            )
-            audit_for_action(db, "execution.completed" if action.status == ActionStatus.COMPLETED.value else "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "codex", "job_id": payload.get("job_id")})
-            return
-        except Exception as exc:
-            attempt.status = "failed"
-            attempt.error_category = "codex_execution_failed"
-            attempt.safe_summary = f"Codex execution failed: {str(exc)[:240]}"
-            attempt.completed_at = now_utc()
-            action.status = ActionStatus.FAILED.value
-            request = db.get(RequestRecord, action.request_id)
-            request.status = "failed"
-            notify_many(db, actor, ("homepage", "telegram", "voice"), "Codex execution failed", str(exc)[:500], "warning", {"action_id": action.id})
-            audit_for_action(db, "execution.failed", action, actor, {"execution_id": attempt.id, "provider": "codex", "error": str(exc)[:240]})
-            return
     if action.tool_name == "drive.copy_to_staging":
         try:
             payload = execute_drive_staging_copy_action(action)
@@ -3516,33 +3394,6 @@ def execute_google_calendar_action(action: ProposedActionRecord):
     return result
 
 
-def execute_codex_action(action: ProposedActionRecord):
-    payload = {
-        "request": action.arguments.get("request") or "",
-        "mode": action.arguments.get("mode") or infer_codex_mode(action.arguments.get("request") or ""),
-        "action": {
-            "action_id": action.id,
-            "inputs": {"request": action.arguments.get("request") or "", "mode": action.arguments.get("mode") or infer_codex_mode(action.arguments.get("request") or "")},
-        },
-        "limits": {"maximum_runtime_seconds": 1800, "maximum_cost_usd": 0},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    token = settings.codex_worker_token or settings.token
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(settings.codex_worker_url.rstrip("/") + "/run", data=body, method="POST", headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=1830) as response:
-            data = json.loads(response.read().decode("utf-8") or "{}")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"codex_worker_http_{exc.code}: {detail[:500]}") from exc
-    if data.get("ok") is False:
-        raise RuntimeError(data.get("error") or "codex_worker_failed")
-    return data
-
-
 def execute_drive_staging_copy_action(action: ProposedActionRecord):
     manifests = []
     failures = []
@@ -3728,31 +3579,6 @@ def action_tool_name(db: Session, action_id: str):
     return action.tool_name if action else ""
 
 
-def codex_task_response(db: Session, action: ProposedActionRecord):
-    request = db.get(RequestRecord, action.request_id)
-    approval = db.query(ApprovalRequestRecord).filter_by(proposed_action_id=action.id).first()
-    attempts = db.query(ExecutionAttemptRecord).filter_by(proposed_action_id=action.id).order_by(ExecutionAttemptRecord.started_at.desc()).all()
-    latest = execution_response(db, attempts[0]) if attempts else None
-    artifacts = []
-    latest_result = (latest or {}).get("result") or {}
-    if latest_result:
-        artifacts = ((latest_result.get("codex") or {}).get("artifacts") or [])
-    return {
-        "action_id": action.id,
-        "request_id": action.request_id,
-        "request": request.raw_text if request else "",
-        "mode": action.arguments.get("mode") or infer_codex_mode(request.raw_text if request else ""),
-        "status": action.status,
-        "approval": approval_response(db, approval) if approval else None,
-        "latest_execution": latest,
-        "artifacts": artifacts,
-        "summary": latest_result.get("summary"),
-        "changed_files": latest_result.get("changed_files") or [],
-        "test_results": latest_result.get("test_results") or [],
-        "created_at": action.created_at,
-    }
-
-
 def database_health_check(db: Session):
     try:
         db.execute(text("SELECT 1"))
@@ -3782,52 +3608,6 @@ def storage_health_checks():
         except Exception as exc:
             checks.append({"name": f"storage:{name}", "ok": False, "path": path, "error": str(exc)[:240]})
     return checks
-
-
-def is_coding_request(text: str):
-    lowered = str(text or "").lower()
-    return any(
-        term in lowered
-        for term in (
-            "codex",
-            "coding task",
-            "code task",
-            "fix code",
-            "implement",
-            "debug",
-            "refactor",
-            "write tests",
-            "run tests",
-            "edit repo",
-            "change the code",
-        )
-    )
-
-
-def infer_codex_mode(text: str):
-    lowered = str(text or "").lower().replace("_", "-")
-    for mode in ("inspect-only", "plan-only", "patch-only", "test-only"):
-        if mode in lowered:
-            return mode
-    if "inspect" in lowered or "read-only" in lowered:
-        return "inspect-only"
-    if "plan" in lowered:
-        return "plan-only"
-    if "run tests" in lowered or "test-only" in lowered:
-        return "test-only"
-    if "patch" in lowered or "edit" in lowered or "fix" in lowered or "implement" in lowered or "refactor" in lowered:
-        return "patch-only"
-    return "plan-only"
-
-
-def codex_mode_changes(mode: str):
-    return {
-        "inspect-only": ["Codex may inspect files and summarize findings, but must not write files."],
-        "plan-only": ["Codex may inspect files and produce an implementation plan, but must not write files."],
-        "patch-only": ["Codex may make scoped file edits, but should not run broad test suites unless needed for the patch."],
-        "test-only": ["Codex may run targeted tests/checks and record results, but must not edit source files."],
-        "execute": ["Codex may perform the approved coding workflow with scoped edits and targeted verification."],
-    }.get(mode, ["Codex will use the safest available mode."])
 
 
 def notify(db: Session, user_id: str, channel: str, title: str, body: str, severity: str, payload: dict):
@@ -4342,24 +4122,6 @@ def downloads_quarantine_candidate(item: dict):
     if ext in {".tmp", ".temp", ".crdownload", ".part", ".download"}:
         return True
     return name.startswith("~$") or name in {"desktop.ini", "thumbs.db"}
-
-
-def collect_git_commits(limit: int = 20):
-    headers = {"Content-Type": "application/json"}
-    token = settings.codex_worker_token or settings.token
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        request = urllib.request.Request(
-            settings.codex_worker_url.rstrip("/") + f"/git/commits?limit={max(1, min(limit, 50))}",
-            method="GET",
-            headers=headers,
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8") or "{}")
-    except Exception as exc:
-        return [{"status": "unavailable", "error": str(exc)[:240]}]
-    return data.get("commits") or []
 
 
 def collect_google_document_references():
@@ -4896,7 +4658,7 @@ def build_drive_migration_plan(inventory: dict):
     }
 
 
-def render_evidence_packet_summary(project, tasks, evidence, maintenance, calendar_events, commits=None, documents=None):
+def render_evidence_packet_summary(project, tasks, evidence, maintenance, calendar_events, documents=None):
     lines = []
     if project:
         lines.append(f"Project: {project.name}")
@@ -4913,11 +4675,6 @@ def render_evidence_packet_summary(project, tasks, evidence, maintenance, calend
         lines.append(f"- {event.title} at {event.starts_at}")
     if maintenance:
         lines.append(f"Maintenance records included: {len(maintenance)}")
-    commits = commits or []
-    lines.append(f"Git commits included: {len([item for item in commits if item.get('sha')])}")
-    for commit in commits[:6]:
-        if commit.get("sha"):
-            lines.append(f"- {commit.get('short_sha')}: {commit.get('subject')}")
     doc_items = (documents or {}).get("items") if isinstance(documents, dict) else []
     lines.append(f"Google document references included: {len(doc_items or [])}")
     return "\n".join(lines)
@@ -4928,9 +4685,6 @@ def http_health_check(name: str, url: str, headers: dict | None = None):
         request = urllib.request.Request(url, method="GET")
         for key, value in (headers or {}).items():
             request.add_header(key, value)
-        token = settings.codex_worker_token or settings.token
-        if "codex-worker" in name and token:
-            request.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(request, timeout=10) as response:
             raw = response.read(4096).decode("utf-8", errors="replace")
             content_type = response.headers.get("Content-Type", "")

@@ -9,7 +9,6 @@ import uuid
 
 ORCHESTRATOR_URL = os.environ.get("JARVIS_ASSISTANT_URL", "http://127.0.0.1:18097/api/v1/assistant").rstrip("/")
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL", "http://127.0.0.1:18200").rstrip("/")
-CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://127.0.0.1:18300").rstrip("/")
 TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", os.environ.get("GOOGLE_TOOLS_TOKEN", ""))
 CONTACT_QUERY = os.environ.get("QA_CONTACT_QUERY", "a")
 
@@ -110,15 +109,6 @@ def briefing_check():
     )
 
 
-def codex_health_check():
-    try:
-        health = api(CODEX_WORKER_URL, "GET", "/health", None, timeout=30)
-    except urllib.error.URLError as exc:
-        print(json.dumps({"label": "codex_health", "ok": False, "skipped": True, "error": str(exc)}, separators=(",", ":")))
-        return
-    assert_ok("codex_health", health.get("ok") is True and "codex" in health, health)
-
-
 def google_health_check():
     health = api(GOOGLE_TOOLS_URL, "GET", "/health", None, timeout=30)
     required = {
@@ -142,7 +132,6 @@ def main():
     contacts_checks()
     task_roundtrip()
     briefing_check()
-    codex_health_check()
     print(json.dumps({"ok": True, "live_productivity_qa": "completed"}, separators=(",", ":")))
 
 

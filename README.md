@@ -65,7 +65,7 @@ The stack assumes `DATA_PATH=/mnt/nvme/homelab2` (set in `.env`).
 
 - `phase1-core/docker-compose.yml`
   - Portainer, Nginx Proxy Manager, Authentik, Homepage, Beszel, Uptime Kuma,
-    Watchtower, Scrutiny, Vaultwarden, ntfy
+    Scrutiny, Vaultwarden, ntfy
   - Central PostgreSQL + Redis
 - `phase1-core/init-db/01-create-databases.sql`
   - Creates shared DBs for downstream services
@@ -206,7 +206,7 @@ Open WebUI exposes four curated model profiles:
 - `Local Llama 3.1 8B - Chat Only` provides private Ollama chat with tools disabled.
 
 Use the `Jarvis` profile whenever a request should call Calendar, Gmail,
-Paperless, Tasks, Contacts, Codex, or homelab workers. Do not attach Jarvis tools
+Paperless, Tasks, Contacts, or homelab workers. Do not attach Jarvis tools
 to the raw `llama3.1:latest` model: this small local model can print plausible
 function JSON as prose instead of issuing a real native tool call.
 
@@ -346,7 +346,14 @@ free -h
 ## 10. Daily Operations
 
 Update images safely:
-- Watchtower updates only containers explicitly labeled with `com.centurylinklabs.watchtower.enable=true`.
+- `homelab-update.timer` runs `scripts/homelab-stacks.sh update` nightly at 04:00: it pulls new
+  images only for services labeled `com.centurylinklabs.watchtower.enable=true` and redeploys
+  them with compose. Pin a tag or set the label to `false` to hold a service back.
+
+Host setup (boot, updates, checks, Docker daemon config):
+- `scripts/install-autostart.sh` installs `config/docker/daemon.json` and the units in `systemd/system/`.
+- `config/autostart.conf` lists the stacks and profiles started at boot; `homelab-check.timer`
+  alerts on ntfy 10 minutes after boot and after updates if any of them is down.
 
 Backups (minimum):
 1. PostgreSQL dumps.

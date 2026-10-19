@@ -190,14 +190,6 @@ REGISTERED_TOOLS = (
         reversible=True,
     ),
     ToolDefinition(
-        name="codex.run_task",
-        version="1.0",
-        description="Run an approval-gated Codex coding task in the mounted Jarvis workspace.",
-        risk_level=RiskLevel.EXTERNAL_WRITE,
-        required_permissions=("codex:run",),
-        reversible=True,
-    ),
-    ToolDefinition(
         name="drive.copy_to_staging",
         version="0.1",
         description="Copy approved Google Drive files into a homelab staging folder without modifying Google originals.",

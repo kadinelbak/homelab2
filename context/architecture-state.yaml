@@ -23,8 +23,8 @@ components:
     status: implemented
     notes: Gmail, Calendar, Tasks, Contacts, Drive metadata/download support; writes remain approval-gated through Core.
   codex_worker:
-    status: implemented
-    notes: Supports coding task modes and artifact metadata; real code execution remains approval-gated.
+    status: retired
+    notes: Removed; coding requests go through the Claude assistant path.
   whisper_worker:
     status: implemented
     notes: Speech-to-text worker for Hey Jarvis.

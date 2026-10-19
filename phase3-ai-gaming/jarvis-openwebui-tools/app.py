@@ -195,19 +195,6 @@ def jarvis_core_drive_staging_status(payload):
     return call_core("POST", "/api/v1/drive/staging-status", payload or {}, timeout=120)
 
 
-def jarvis_core_codex_task(payload):
-    request_text = str(payload.get("request") or "").strip()
-    if not request_text:
-        return HTTPStatus.BAD_REQUEST, {"ok": False, "error": "request is required"}
-    return call_core("POST", "/api/v1/codex/tasks", {"request": request_text, "idempotency_key": payload.get("idempotency_key")}, timeout=120)
-
-
-def jarvis_core_codex_dashboard(payload):
-    status = str(payload.get("status") or "").strip()
-    suffix = f"?status={status}" if status else ""
-    return call_core("GET", "/api/v1/codex/tasks" + suffix, None, timeout=120)
-
-
 def jarvis_core_list(payload, resource):
     query = ""
     if resource in {"approvals", "executions", "audit"}:
@@ -379,22 +366,6 @@ def openapi_schema():
                     "responses": {"200": {"description": "Drive staging status."}},
                 }
             },
-            "/jarvis/core/codex-task": {
-                "post": {
-                    "operationId": "jarvis_core_codex_task",
-                    "summary": "Create an approval-gated Codex coding task in Jarvis Core.",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JarvisCodexTask"}}}},
-                    "responses": {"200": {"description": "Approval-gated Codex task proposal."}},
-                }
-            },
-            "/jarvis/core/codex-dashboard": {
-                "post": {
-                    "operationId": "jarvis_core_codex_dashboard",
-                    "summary": "List proposed, running, completed, and failed Codex tasks with worker artifacts.",
-                    "requestBody": {"required": False, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JarvisStatusFilter"}}}},
-                    "responses": {"200": {"description": "Codex task dashboard."}},
-                }
-            },
             "/jarvis/core/approvals": {"post": {"operationId": "jarvis_core_approvals", "summary": "List or search Jarvis Core approvals.", "requestBody": {"required": False, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JarvisSearchFilter"}}}}, "responses": {"200": {"description": "Approvals."}}}},
             "/jarvis/core/approve-by-title": {"post": {"operationId": "jarvis_core_approve_by_title", "summary": "Approve one pending Jarvis Core action by title or matching text.", "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JarvisApproveByTitle"}}}}, "responses": {"200": {"description": "Approval decision."}}}},
             "/jarvis/core/projects": {"post": {"operationId": "jarvis_core_projects", "summary": "List Jarvis Core projects.", "requestBody": {"required": False, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}}}, "responses": {"200": {"description": "Projects."}}}},
@@ -425,8 +396,6 @@ def openapi_schema():
                 "JarvisDailyBrief": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["morning", "evening"], "default": "morning"}, "save": {"type": "boolean", "default": True}}},
                 "JarvisDriveInventory": {"type": "object", "properties": {"query": {"type": "string", "default": "trashed = false"}, "max_results": {"type": "integer", "default": 1000, "minimum": 1, "maximum": 1000}, "include_folder_ids": {"type": "array", "items": {"type": "string"}}, "exclude_names": {"type": "array", "items": {"type": "string"}, "default": ["griproot"]}}},
                 "JarvisDriveStagingCopy": {"type": "object", "properties": {"query": {"type": "string", "default": "trashed = false"}, "max_results": {"type": "integer", "default": 3, "minimum": 1, "maximum": 100}, "file_ids": {"type": "array", "items": {"type": "string"}}, "include_folder_ids": {"type": "array", "items": {"type": "string"}}, "exclude_names": {"type": "array", "items": {"type": "string"}, "default": ["griproot"]}, "category": {"type": "string"}, "migration_action": {"type": "string", "enum": ["copy_to_homelab", "keep_in_google", "archive", "needs_review"], "default": "copy_to_homelab"}, "idempotency_key": {"type": "string"}}},
-                "JarvisCodexTask": {"type": "object", "properties": {"request": {"type": "string"}, "idempotency_key": {"type": "string"}}, "required": ["request"]},
-                "JarvisStatusFilter": {"type": "object", "properties": {"status": {"type": "string"}}},
                 "JarvisSearchFilter": {"type": "object", "properties": {"status": {"type": "string"}, "q": {"type": "string"}}},
                 "JarvisExecutionFilter": {"type": "object", "properties": {"status": {"type": "string"}, "tool_name": {"type": "string"}}},
                 "JarvisAuditFilter": {"type": "object", "properties": {"q": {"type": "string"}, "event_type": {"type": "string"}}},
@@ -478,8 +447,6 @@ class Handler(BaseHTTPRequestHandler):
             "/jarvis/core/drive-folders": jarvis_core_drive_folders,
             "/jarvis/core/drive-staging-copy-propose": jarvis_core_drive_staging_copy_propose,
             "/jarvis/core/drive-staging-status": jarvis_core_drive_staging_status,
-            "/jarvis/core/codex-task": jarvis_core_codex_task,
-            "/jarvis/core/codex-dashboard": jarvis_core_codex_dashboard,
             "/jarvis/core/approvals": lambda payload: jarvis_core_list(payload, "approvals"),
             "/jarvis/core/approve-by-title": jarvis_core_approve_by_title,
             "/jarvis/core/projects": lambda payload: jarvis_core_list(payload, "projects"),

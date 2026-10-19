@@ -1,0 +1,11 @@
+# Sends an ntfy alert if any container of a stack in config/autostart.conf
+# is not running or is unhealthy.
+[Unit]
+Description=Check homelab containers
+After=docker.service homelab-autostart.service
+
+[Service]
+Type=oneshot
+User=kadin
+WorkingDirectory=/home/kadin/homelab2
+ExecStart=/home/kadin/homelab2/scripts/homelab-stacks.sh check

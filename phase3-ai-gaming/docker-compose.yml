@@ -258,8 +258,6 @@ services:
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       JARVIS_CORE_URL: http://jarvis-core:8097
       JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
-      CODEX_WORKER_URL: http://codex-worker:18300
-      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       OLLAMA_HOST: http://ollama:11434
       EXECUTIONS_DATA_PRUNE: "true"
@@ -330,8 +328,6 @@ services:
       JARVIS_CORE_MEDIA_PIPELINE_URL: ${JARVIS_CORE_MEDIA_PIPELINE_URL:-http://media-creation-api:18110}
       JARVIS_CORE_GOOGLE_TOOLS_URL: ${JARVIS_CORE_GOOGLE_TOOLS_URL:-http://google-tools-worker:18200}
       JARVIS_CORE_GOOGLE_TOOLS_TOKEN: ${JARVIS_CORE_GOOGLE_TOOLS_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
-      JARVIS_CORE_CODEX_WORKER_URL: ${JARVIS_CORE_CODEX_WORKER_URL:-http://codex-worker:18300}
-      JARVIS_CORE_CODEX_WORKER_TOKEN: ${JARVIS_CORE_CODEX_WORKER_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
       # Request router ported from ai-orchestrator (/api/v1/assistant/*); same settings.
       AI_ORCHESTRATOR_USE_OLLAMA_ROUTER: ${AI_ORCHESTRATOR_USE_OLLAMA_ROUTER:-false}
       AI_ORCHESTRATOR_ROUTER_MODEL: ${AI_ORCHESTRATOR_ROUTER_MODEL:-llama3.1:latest}
@@ -404,49 +400,6 @@ services:
       - "com.centurylinklabs.watchtower.enable=false"
 
   # ---------------------------------------------------------------------------
-  # CODEX WORKER - Approval-gated coding worker for Jarvis
-  # ---------------------------------------------------------------------------
-  codex-worker:
-    build:
-      context: ./codex-worker
-    container_name: jarvis_codex_worker
-    restart: unless-stopped
-    profiles: ["orchestration", "automation", "ai", "codex"]
-    environment:
-      TZ: ${TZ}
-      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
-      CODEX_WORKER_PORT: 18300
-      CODEX_WORKER_DATA_DIR: /data
-      CODEX_WORKSPACE: /workspace
-      CODEX_WORKER_TIMEOUT_SECONDS: ${CODEX_WORKER_TIMEOUT_SECONDS:-1800}
-      CODEX_WORKER_MAX_OUTPUT_CHARS: ${CODEX_WORKER_MAX_OUTPUT_CHARS:-12000}
-      CODEX_COMMAND_PREFIX: ${CODEX_COMMAND_PREFIX:-codex exec --json --sandbox workspace-write --approve-for-me}
-    volumes:
-      - ./codex-worker:/workspace/codex-worker
-      - ./google-tools-worker:/workspace/google-tools-worker
-      - ./jarvis-core:/workspace/jarvis-core
-      - ./jarvis-chat:/workspace/jarvis-chat
-      - ./telegram-bridge:/workspace/telegram-bridge
-      - ./whisper-worker:/workspace/whisper-worker
-      - ./docker-compose.yml:/workspace/docker-compose.yml
-      - ../.git:/workspace/homelab2.git:ro
-      - ${DATA_PATH}/phase3-ai-gaming/data/codex-worker:/data
-      - ${DATA_PATH}/phase3-ai-gaming/data/codex-home:/home/appuser/.codex
-    ports:
-      - "${TAILSCALE_HOST_IP:-127.0.0.1}:18300:18300"
-    networks:
-      homelab_internal:
-        aliases:
-          - codex-worker
-    labels:
-      - "com.centurylinklabs.watchtower.enable=false"
-      - "homepage.group=AI Automations"
-      - "homepage.name=Codex Worker"
-      - "homepage.icon=si-openai"
-      - "homepage.href=http://${DOMAIN}:18300/health"
-      - "homepage.description=Approval-gated coding worker for Jarvis"
-
-  # ---------------------------------------------------------------------------
   # JARVIS CHAT - Simple homelab request GUI for the AI orchestrator
   # ---------------------------------------------------------------------------
   jarvis-chat:
@@ -460,8 +413,6 @@ services:
       AI_ORCHESTRATOR_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       JARVIS_CORE_URL: http://jarvis-core:8097
       JARVIS_CORE_TOKEN: ${JARVIS_CORE_TOKEN:-${AI_ORCHESTRATOR_TOKEN}}
-      CODEX_WORKER_URL: http://codex-worker:18300
-      CODEX_WORKER_TOKEN: ${AI_ORCHESTRATOR_TOKEN}
       WHISPER_WORKER_URL: http://whisper-worker:8099
       WHISPER_WORKER_TOKEN: ${WHISPER_WORKER_TOKEN:-}
       JARVIS_TTS_WORKER_URL: http://tts-worker:8101
@@ -477,7 +428,6 @@ services:
       - homelab_internal
     depends_on:
       - jarvis-core
-      - codex-worker
       - whisper-worker
       - tts-worker
     labels:

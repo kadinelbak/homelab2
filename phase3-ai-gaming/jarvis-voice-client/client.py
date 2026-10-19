@@ -1410,7 +1410,6 @@ def open_status_window(controller, config, log_dir):
                 "Gmail: needs-reply scan, cleanup proposals, labels/stars/archive after approval",
                 "Drive: inventory, folder browsing, copy proposals, Nextcloud/Paperless import paths",
                 "Homelab: diagnostics, Pi-hole/DNS health, service status, notifications",
-                "Codex: approval-gated coding tasks through the Codex worker, with modes inspect/plan/patch/test/execute",
             ]
             set_diag("\n".join(f"- {item}" for item in features))
 

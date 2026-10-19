@@ -16,8 +16,6 @@ PORT = int(os.environ.get("JARVIS_CHAT_PORT", "8096"))
 ORCHESTRATOR_TOKEN = os.environ.get("AI_ORCHESTRATOR_TOKEN", "")
 JARVIS_CORE_URL = os.environ.get("JARVIS_CORE_URL", "http://jarvis-core:8097").rstrip("/")
 JARVIS_CORE_TOKEN = os.environ.get("JARVIS_CORE_TOKEN") or ORCHESTRATOR_TOKEN
-CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
-CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN", ORCHESTRATOR_TOKEN)
 WHISPER_WORKER_URL = os.environ.get("WHISPER_WORKER_URL", "http://whisper-worker:8099").rstrip("/")
 WHISPER_WORKER_TOKEN = os.environ.get("WHISPER_WORKER_TOKEN", "")
 TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
@@ -89,16 +87,6 @@ def wants_core_voice(text):
         "reopen maintenance",
         "what are my tasks",
         "list tasks",
-        "codex",
-        "coding task",
-        "codex dashboard",
-        "codex tasks",
-        "code task",
-        "fix code",
-        "implement",
-        "debug",
-        "refactor",
-        "write tests",
         "pending approvals",
         "what approvals",
         "notifications",
@@ -184,14 +172,6 @@ def core_voice_text(data):
             return "You do not have open Jarvis Core tasks."
         names = "; ".join(item.get("title", "task") for item in tasks[:5])
         return f"Top Jarvis Core tasks: {names}."
-    if data.get("codex_tasks") is not None:
-        tasks = data.get("codex_tasks") or []
-        if not tasks:
-            return "There are no Codex tasks yet."
-        names = []
-        for item in tasks[:5]:
-            names.append(f"{item.get('status')}: {item.get('request')}")
-        return "Codex tasks: " + "; ".join(names) + "."
     if data.get("request") and data.get("actions"):
         action = data["actions"][0]
         return f"Approval is required for {action.get('tool_name', 'that action')}."
@@ -352,7 +332,7 @@ def page():
         <div class="status" id="health">Checking Jarvis Core...</div>
       </div>
       <nav class="nav" aria-label="Jarvis navigation">
-        <a href="/core" title="Open Core approvals, Codex jobs, diagnostics, tasks, evidence, maintenance, and daily briefs">Core Console</a>
+        <a href="/core" title="Open Core approvals, diagnostics, tasks, evidence, maintenance, and daily briefs">Core Console</a>
         <button id="refresh" title="Refresh health and current request">Refresh</button>
       </nav>
     </header>
@@ -737,7 +717,6 @@ def core_console_page():
   <section class="grid">
     <div class="panel"><h2>Approvals</h2><div id="approvals"></div></div>
     <div class="panel"><h2>Diagnostics</h2><div id="diagnostics"></div></div>
-    <div class="panel full"><h2>Codex Jobs</h2><div id="codex"></div></div>
     <div class="panel"><h2>Tasks</h2><div id="tasks"></div></div>
     <div class="panel"><h2>Evidence</h2><div id="evidence"></div></div>
     <div class="panel"><h2>Maintenance</h2><div id="maintenance"></div></div>
@@ -769,36 +748,22 @@ function renderApprovals(data) {
 function renderDiagnostics(data) {
   diagnostics.innerHTML = (data.checks || []).map(c => item(`<span class="${c.ok ? 'ok' : 'bad'}">${c.ok ? 'OK' : 'FAIL'}</span> <b>${esc(c.name)}</b><br><span class="muted">${esc(c.summary || c.error || c.status)}</span>`)).join('');
 }
-function renderCodex(data) {
-  const tasks = data.codex_tasks || [];
-  codex.innerHTML = tasks.length ? tasks.slice(0,12).map(t => {
-    const artifacts = (t.artifacts || []).map(a => `${a.kind || a.name}: ${a.path || ''}`).join('\\n');
-    return item(`<b>${esc(t.status)}</b> ${esc(t.request)}<br><span class="muted">Action ${esc(t.action_id)}</span><pre>${esc(artifacts || 'No worker artifacts yet.')}</pre>`);
-  }).join('') : '<span class="muted">No Codex tasks yet.</span>';
-}
-function renderCodexWorker(data) {
-  const jobs = data.jobs || [];
-  if (!jobs.length) return;
-  codex.innerHTML += item(`<b>Worker job files</b>` + jobs.slice(0,8).map(j => `<pre>${esc(j.job_id)} · ${esc(j.status)}\\n${esc(j.summary)}</pre>`).join(''));
-}
 function renderList(target, key, data, titleField) {
   const rows = data[key] || [];
   target.innerHTML = rows.length ? rows.slice(0,8).map(r => item(`<b>${esc(r[titleField] || r.title || r.summary || r.event_type || r.id)}</b><br><span class="muted">${esc(r.status || r.service_name || r.evidence_type || r.created_at || '')}</span>`)).join('') : '<span class="muted">No records.</span>';
 }
 async function loadAll() {
   status.textContent = 'Refreshing...';
-  const [ap, diag, cx, jobs, task, ev, maint, br, au] = await Promise.all([
+  const [ap, diag, task, ev, maint, br, au] = await Promise.all([
     get('/api/core/approvals?status=pending'),
     get('/api/core/diagnostics'),
-    get('/api/core/codex/tasks'),
-    get('/api/codex/jobs'),
     get('/api/core/tasks'),
     get('/api/core/evidence'),
     get('/api/core/maintenance'),
     get('/api/core/daily-brief?kind=morning'),
-    get('/api/core/audit?q=codex')
+    get('/api/core/audit')
   ]);
-  renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
+  renderApprovals(ap); renderDiagnostics(diag);
   renderList(tasks, 'tasks', task, 'title');
   renderList(evidence, 'evidence', ev, 'title');
   renderList(maintenance, 'maintenance', maint, 'summary');
@@ -966,7 +931,7 @@ def interactive_core_console_page():
   <div id="drawerBody"></div>
 </aside>
 <script>
-const state = { approvals: [], diagnostics: [], codexTasks: [], codexJobs: [], runs: [], workers: [], downloads: [], downloadsDestinationPlan: {}, tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], gmailCleanup: {}, drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
+const state = { approvals: [], diagnostics: [], runs: [], workers: [], downloads: [], downloadsDestinationPlan: {}, tasks: [], evidence: [], maintenance: [], brief: {}, notifications: [], automations: [], audit: [], gmailCleanup: {}, drive: {}, drivePlan: {}, drivePlanLoaded: false, driveFolders: [], driveFoldersLoaded: false, selectedDriveFolders: [], driveTrail: [], driveChildren: {}, driveStaging: {}, driveDestinations: {} };
 async function get(path) {
   const res = await fetch(path);
   const data = await res.json();
@@ -1024,7 +989,6 @@ function emptyState(text) {
 function displayTitle(value) {
   let text = String(value || '').trim();
   text = text.replace(/^add task\s+/i, '');
-  text = text.replace(/^codex coding task:\s*/i, '');
   text = text.replace(/^homelab maintenance note:\s*/i, '');
   text = text.replace(/^capture evidence:\s*/i, '');
   text = text.replace(/^Jarvis evidence packet$/i, 'Portfolio evidence packet');
@@ -1087,7 +1051,6 @@ function usefulRows(key, rows) {
 }
 function renderOverview(data) {
   const failed = (data.diag.checks || []).filter(c => !c.ok && !c.optional).length;
-  const running = (data.cx.codex_tasks || []).filter(t => ['proposed','running','queued'].includes(String(t.status || '').toLowerCase())).length;
   const due = (data.task.tasks || []).length;
   const maintenance = (data.maint.maintenance || []).filter(m => m.status !== 'resolved').length;
   const approvals = (data.ap.approvals || []).length;
@@ -1104,7 +1067,6 @@ function renderOverview(data) {
     metric('RN', runs, 'runs', runs ? 'attn' : '', 'openRunsHub()'),
     metric('WK', workers, 'workers', workers ? '' : 'bad', 'openWorkersHub()'),
     metric('DL', downloads, 'downloads', downloads ? 'attn' : '', 'openDownloadsHub()'),
-    metric('CX', running, 'codex', running ? 'attn' : '', 'openCodexHub()'),
     metric('CA', briefEventCount(data.br), 'calendar', '', 'openCalendarHub()'),
     metric('DR', selectedDrive, 'drive', selectedDrive ? 'attn' : '', 'openDrive()'),
     metric('GM', gmail, 'gmail', gmail ? 'attn' : '', 'openGmailCleanupHub()'),
@@ -1144,7 +1106,7 @@ async function approveApproval(event, approvalId) {
   if (event) event.stopPropagation();
   const approval = state.approvals.find(item => item.id === approvalId);
   const risk = approval?.action?.risk_level || '';
-  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase()) || approval?.action?.tool_name === 'codex.run_task'
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase())
     ? 'This can run code or perform a high-risk action.'
     : '';
   await guarded('Approve this action', () => send('POST', `/api/core/approvals/${approvalId}/decision`, {approved:true, decided_by:'jarvis-core-console'}), warning);
@@ -1159,7 +1121,7 @@ async function dismissNotification(event, notificationId) {
     status.textContent = 'Dismissing...';
     await send('POST', `/api/core/notifications/${encodeURIComponent(notificationId)}/dismiss`, {delivered_by:'jarvis-core-console'});
     state.notifications = state.notifications.map(item => item.id === notificationId ? {...item, status:'dismissed'} : item);
-    renderOverview({ap:{approvals:state.approvals}, diag:{checks:state.diagnostics}, cx:{codex_tasks:state.codexTasks}, runs:{runs:state.runs}, workers:{workers:state.workers}, downloads:{scans:state.downloads}, task:{tasks:state.tasks}, maint:{maintenance:state.maintenance}, notif:{notifications:state.notifications}, auto:{automations:state.automations}, gm:state.gmailCleanup, br:state.brief});
+    renderOverview({ap:{approvals:state.approvals}, diag:{checks:state.diagnostics}, runs:{runs:state.runs}, workers:{workers:state.workers}, downloads:{scans:state.downloads}, task:{tasks:state.tasks}, maint:{maintenance:state.maintenance}, notif:{notifications:state.notifications}, auto:{automations:state.automations}, gm:state.gmailCleanup, br:state.brief});
     if (document.body.classList.contains('drawer-open') && drawerTitle.textContent === 'Inbox') openNotificationsHub();
     status.textContent = 'Dismissed.';
   } catch (err) {
@@ -1191,7 +1153,7 @@ async function approveNotification(event, notificationId) {
     return;
   }
   const risk = approval?.action?.risk_level || '';
-  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase()) || approval?.action?.tool_name === 'codex.run_task'
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(String(risk).toUpperCase())
     ? 'This can run code or perform a high-risk action.'
     : '';
   await guarded('Approve this request', async () => {
@@ -1217,12 +1179,6 @@ function renderApprovals(data) {
 }
 function renderDiagnostics(data) {
   state.diagnostics = data.checks || [];
-}
-function renderCodex(data) {
-  state.codexTasks = data.codex_tasks || [];
-}
-function renderCodexWorker(data) {
-  state.codexJobs = data.jobs || [];
 }
 function renderList(target, key, data, titleField) {
   const rows = data[key] || [];
@@ -1278,7 +1234,7 @@ function renderDriveDestinations(data) {
 }
 function approvalActions(a) {
   const risk = String(a.action?.risk_level || '').toUpperCase();
-  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(risk) || a.action?.tool_name === 'codex.run_task' ? 'This can run code or perform a high-risk action.' : '';
+  const warning = ['DESTRUCTIVE', 'SENSITIVE'].includes(risk) ? 'This can run code or perform a high-risk action.' : '';
   return `<button class="quick-action approve" title="Approve" aria-label="Approve" onclick="guarded('Approve this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:true,decided_by:'jarvis-core-console'}), '${esc(warning)}')">&#10003;</button>
     <button class="quick-action reject" title="Reject" aria-label="Reject" onclick="guarded('Reject this action', () => send('POST','/api/core/approvals/${esc(a.id)}/decision',{approved:false,decided_by:'jarvis-core-console'}))">&#215;</button>`;
 }
@@ -1353,14 +1309,6 @@ function openDiagnosticsHub() {
       return compactButton('diagnostic', idx, c.name, c.summary || c.error || c.status || '', c.ok ? 'OK' : 'FAIL');
     }).join('') : emptyState('No diagnostics returned.'));
   openDrawer('Diagnostics', failed.length ? `${failed.length} need attention` : `${state.diagnostics.length} OK`, body);
-}
-function openCodexHub() {
-  const coreRows = state.codexTasks.slice(0,8).map((t, idx) => compactButton('codexTask', idx, displayTitle(t.request || 'Coding task'), 'Core task', t.status || 'task')).join('');
-  const workerRows = state.codexJobs.slice(0,6).map((j, idx) => {
-    const summary = (j.summary || '').includes('--ask-for-approval') ? 'Historical failed job from old Codex CLI flag. Current worker uses the corrected flag.' : (j.summary || '');
-    return compactButton('codexJob', idx, 'Worker artifact', summary, j.status || 'job');
-  }).join('');
-  openDrawer('Codex', `${state.codexTasks.length} core / ${state.codexJobs.length} worker`, coreRows + workerRows || emptyState('No Codex activity yet.'));
 }
 function openRunsHub() {
   const rows = state.runs || [];
@@ -1633,29 +1581,6 @@ function openDiagnostic(d) {
   openDrawer(d.name || 'Diagnostic', d.ok ? 'OK' : 'Needs attention', [
     row('Summary', d.summary), row('Status', d.status), row('Error', d.error),
     row('Raw check', d), row('Related maintenance', related.map(m => `${m.status}: ${m.summary}`).join('\n') || 'No related maintenance records.')
-  ].join(''));
-}
-async function openCodexJob(j) {
-  openDrawer(j.job_id, j.status || 'Codex worker job', '<span class="muted">Loading artifacts...</span>');
-  const jobId = encodeURIComponent(j.job_id);
-  const [detail, request, stdout, stderr] = await Promise.all([
-    get(`/api/codex/jobs/${jobId}`),
-    get(`/api/codex/jobs/${jobId}/artifact?name=request.json`).catch(err => ({error: err.message})),
-    get(`/api/codex/jobs/${jobId}/artifact?name=stdout.txt`).catch(err => ({error: err.message})),
-    get(`/api/codex/jobs/${jobId}/artifact?name=stderr.txt`).catch(err => ({error: err.message}))
-  ]);
-  const job = detail.job || detail;
-  openDrawer(j.job_id, job.status || 'Codex worker job', [
-    row('Summary', job.summary), row('Request path', request.path), row('Request preview', request.content || request.preview || request.error),
-    row('Changed files', job.changed_files), row('Test results', job.test_results),
-    row('Stdout path', stdout.path), row('Stdout preview', stdout.content || stdout.preview || stdout.error),
-    row('Stderr path', stderr.path), row('Stderr preview', stderr.content || stderr.preview || stderr.error), row('Job metadata', job)
-  ].join(''));
-}
-function openCodexTask(t) {
-  openDrawer(t.request || t.action_id || 'Codex task', `Core status ${t.status || ''}`, [
-    row('Action id', t.action_id || t.id), row('Status', t.status), row('Request', t.request),
-    row('Artifacts', t.artifacts), row('Execution', t.execution), row('Approval', t.approval), row('Raw task', t)
   ].join(''));
 }
 function openRun(r) {
@@ -1951,8 +1876,6 @@ function openAudit(a) {
 function openItem(kind, idx) {
   if (kind === 'approval') return openApproval(state.approvals[idx]);
   if (kind === 'diagnostic') return openDiagnostic(state.diagnostics[idx]);
-  if (kind === 'codexTask') return openCodexTask(state.codexTasks[idx]);
-  if (kind === 'codexJob') return openCodexJob(state.codexJobs[idx]);
   if (kind === 'run') return openRun(state.runs[idx]);
   if (kind === 'worker') return openWorker(state.workers[idx]);
   if (kind === 'downloadScan') return openDownloadScan(state.downloads[idx]);
@@ -2007,11 +1930,9 @@ function currentBriefKind() {
 async function loadAll() {
   status.textContent = 'Refreshing...';
   const briefKind = currentBriefKind();
-  const [ap, diag, cx, jobs, runs, workers, downloads, task, ev, maint, br, notif, auto, gm, ds, dd] = await Promise.all([
+  const [ap, diag, runs, workers, downloads, task, ev, maint, br, notif, auto, gm, ds, dd] = await Promise.all([
     get('/api/core/approvals?status=pending'),
     get('/api/core/diagnostics'),
-    get('/api/core/codex/tasks'),
-    get('/api/codex/jobs'),
     get('/api/core/runs'),
     get('/api/core/workers'),
     get('/api/core/desktop/downloads/scans'),
@@ -2038,8 +1959,8 @@ async function loadAll() {
   state.gmailCleanup = gm || {};
   state.driveStaging = ds || {};
   state.driveDestinations = dd || {};
-  renderOverview({ap, diag, cx, runs, workers, downloads, task, maint, notif, auto, gm, br});
-  renderApprovals(ap); renderDiagnostics(diag); renderCodex(cx); renderCodexWorker(jobs);
+  renderOverview({ap, diag, runs, workers, downloads, task, maint, notif, auto, gm, br});
+  renderApprovals(ap); renderDiagnostics(diag);
   state.tasks = task.tasks || [];
   setCount('tasksCount', `${state.tasks.length}`);
   renderBrief(br);
@@ -2145,23 +2066,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
 
-    def codex_proxy(self, method, path, payload=None, timeout=120):
-        body = json.dumps(payload or {}).encode("utf-8") if method in {"POST", "PATCH"} else None
-        headers = {"Content-Type": "application/json"}
-        if CODEX_WORKER_TOKEN:
-            headers["Authorization"] = f"Bearer {CODEX_WORKER_TOKEN}"
-        req = urllib.request.Request(CODEX_WORKER_URL + path, data=body, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                return response.status, json.loads(response.read().decode("utf-8") or "{}")
-        except urllib.error.HTTPError as exc:
-            try:
-                data = json.loads(exc.read().decode("utf-8") or "{}")
-            except Exception:
-                data = {"error": str(exc)}
-            return exc.code, data
-        except Exception as exc:
-            return HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
 
     def core_voice_request(self, text):
         lowered = text.lower()
@@ -2223,7 +2127,7 @@ class Handler(BaseHTTPRequestHandler):
             risky = []
             for approval in matches.get("approvals") or []:
                 action = approval.get("action") or {}
-                if action.get("tool_name") == "codex.run_task" or action.get("risk_level") in {"destructive", "sensitive"}:
+                if action.get("risk_level") in {"destructive", "sensitive"}:
                     risky.append(approval)
             if risky and not confirmed:
                 return HTTPStatus.OK, {
@@ -2247,10 +2151,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.core_voice_edit_maintenance(q, operation, confirmed)
         if "what are my tasks" in lowered or "list tasks" in lowered:
             return self.core_proxy("GET", "/api/v1/tasks")
-        if "codex dashboard" in lowered or "codex tasks" in lowered:
-            return self.core_proxy("GET", "/api/v1/codex/tasks")
-        if any(term in lowered for term in ("codex", "coding task", "code task", "fix code", "implement", "debug", "refactor", "write tests")):
-            return self.core_proxy("POST", "/api/v1/codex/tasks", {"request": text, "idempotency_key": f"voice-codex-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:24]}"})
         if "complete task" in lowered:
             return HTTPStatus.OK, {"ok": True, "text": "Tell me the exact task id in Jarvis Chat for now, and I can mark it complete."}
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
@@ -2335,7 +2235,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/core/approvals": "/api/v1/approvals",
             "/api/core/diagnostics": "/api/v1/homelab/diagnostics",
             "/api/core/media/automations": "/api/v1/media/automations/status",
-            "/api/core/codex/tasks": "/api/v1/codex/tasks",
             "/api/core/tasks": "/api/v1/tasks",
             "/api/core/evidence": "/api/v1/evidence",
             "/api/core/maintenance": "/api/v1/maintenance",
@@ -2366,22 +2265,6 @@ class Handler(BaseHTTPRequestHandler):
             core_path = path.replace("/api/core", "/api/v1", 1)
             suffix = f"?{query}" if query else ""
             status, data = self.core_proxy("GET", core_path + suffix)
-            self.write_json(status, data)
-            return
-        if path == "/api/codex/jobs":
-            if not self.authorized():
-                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
-                return
-            status, data = self.codex_proxy("GET", "/jobs")
-            self.write_json(status, data)
-            return
-        if path.startswith("/api/codex/jobs/"):
-            if not self.authorized():
-                self.write_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "unauthorized"})
-                return
-            codex_path = path.replace("/api/codex", "", 1)
-            suffix = f"?{query}" if query else ""
-            status, data = self.codex_proxy("GET", codex_path + suffix)
             self.write_json(status, data)
             return
         if path == "/api/profile":

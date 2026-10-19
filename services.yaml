@@ -25,6 +25,11 @@
       "compose": "phase4-ondemand/docker-compose.yml",
       "project": "homelab_ondemand",
       "order": 40
+    },
+    "phase5-health-data": {
+      "compose": "phase5-health-data/docker-compose.yml",
+      "project": "phase5-health-data",
+      "order": 50
     }
   },
   "schedules": {
@@ -61,7 +66,6 @@
     "wol-api": {"phase": "phase1-core", "container": "homelab_wol_api", "tier": "background", "profiles": ["always-on", "maintenance"], "ram_mb": 64, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
     "homelab-control": {"phase": "phase1-core", "container": "homelab_control", "tier": "important", "profiles": ["always-on", "management"], "ram_mb": 160, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": ["portainer"], "schedule": "always"},
     "cadvisor": {"phase": "phase1-core", "container": "homelab_cadvisor", "tier": "background", "profiles": ["always-on", "monitoring"], "ram_mb": 192, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
-    "watchtower": {"phase": "phase1-core", "container": "watchtower", "tier": "background", "profiles": ["always-on", "maintenance"], "ram_mb": 128, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": ["ntfy"], "schedule": "nightly"},
 
     "jellyfin": {"phase": "phase2-media", "container": "jellyfin", "tier": "important", "profiles": ["media"], "ram_mb": 1024, "cpu": 1.0, "vram_mb": 0, "gpu": false, "dependencies": ["npm"], "schedule": "manual"},
     "audiobookshelf": {"phase": "phase2-media", "container": "audiobookshelf", "tier": "important", "profiles": ["media"], "ram_mb": 512, "cpu": 0.4, "vram_mb": 0, "gpu": false, "dependencies": ["npm"], "schedule": "manual"},
@@ -77,12 +81,12 @@
     "sonarr": {"phase": "phase2-media", "container": "sonarr", "tier": "background", "profiles": ["media", "automation"], "ram_mb": 512, "cpu": 0.3, "vram_mb": 0, "gpu": false, "dependencies": ["prowlarr", "qbittorrent"], "schedule": "manual"},
     "radarr": {"phase": "phase2-media", "container": "radarr", "tier": "background", "profiles": ["media", "automation"], "ram_mb": 512, "cpu": 0.3, "vram_mb": 0, "gpu": false, "dependencies": ["prowlarr", "qbittorrent"], "schedule": "manual"},
 
-    "ollama": {"phase": "phase3-ai-gaming", "container": "ollama", "tier": "important", "profiles": ["ai", "heavy"], "ram_mb": 2048, "cpu": 2.0, "vram_mb": 4096, "gpu": true, "dependencies": [], "schedule": "manual"},
-    "open-webui": {"phase": "phase3-ai-gaming", "container": "open_webui", "tier": "important", "profiles": ["ai"], "ram_mb": 1024, "cpu": 0.8, "vram_mb": 0, "gpu": false, "dependencies": ["ollama"], "schedule": "manual"},
-    "scad-ai-generator": {"phase": "phase3-ai-gaming", "container": "scad_ai_generator", "tier": "background", "profiles": ["ai", "automation", "scad-ai"], "ram_mb": 768, "cpu": 1.0, "vram_mb": 0, "gpu": false, "dependencies": ["ollama"], "schedule": "manual"},
+    "ollama": {"phase": "phase3-ai-gaming", "container": "ollama", "tier": "important", "profiles": ["ollama", "local-llm"], "ram_mb": 2048, "cpu": 2.0, "vram_mb": 4096, "gpu": true, "dependencies": [], "schedule": "manual"},
+    "open-webui": {"phase": "phase3-ai-gaming", "container": "open_webui", "tier": "important", "profiles": ["ai"], "ram_mb": 1024, "cpu": 0.8, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "manual"},
+    "scad-ai-generator": {"phase": "phase3-ai-gaming", "container": "scad_ai_generator", "tier": "background", "profiles": ["ai", "automation", "scad-ai"], "ram_mb": 768, "cpu": 1.0, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "manual"},
     "minecraft": {"phase": "phase3-ai-gaming", "container": "minecraft", "tier": "important", "profiles": ["gaming", "heavy"], "ram_mb": 4096, "cpu": 2.0, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "weekend-day"},
     "n8n": {"phase": "phase3-ai-gaming", "container": "n8n", "tier": "important", "profiles": ["automation"], "ram_mb": 1024, "cpu": 0.8, "vram_mb": 0, "gpu": false, "dependencies": ["postgres"], "schedule": "always"},
-    "jarvis-core": {"phase": "phase3-ai-gaming", "container": "jarvis_core", "tier": "important", "profiles": ["automation", "ai"], "ram_mb": 384, "cpu": 0.4, "vram_mb": 0, "gpu": false, "dependencies": ["postgres", "redis", "codex-worker"], "schedule": "always"},
+    "jarvis-core": {"phase": "phase3-ai-gaming", "container": "jarvis_core", "tier": "important", "profiles": ["automation", "ai"], "ram_mb": 384, "cpu": 0.4, "vram_mb": 0, "gpu": false, "dependencies": ["postgres", "redis"], "schedule": "always"},
     "jarvis-openwebui-tools": {"phase": "phase3-ai-gaming", "container": "jarvis_openwebui_tools", "tier": "important", "profiles": ["automation", "ai"], "ram_mb": 128, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": ["jarvis-core"], "schedule": "always"},
     "jarvis-chat": {"phase": "phase3-ai-gaming", "container": "jarvis_chat", "tier": "important", "profiles": ["automation", "ai"], "ram_mb": 128, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": ["jarvis-core"], "schedule": "always"},
     "homeassistant": {"phase": "phase3-ai-gaming", "container": "homeassistant", "tier": "important", "profiles": ["home"], "ram_mb": 1024, "cpu": 0.8, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
@@ -103,6 +107,12 @@
     "kiwix": {"phase": "phase4-ondemand", "container": "kiwix", "tier": "background", "profiles": ["knowledge"], "ram_mb": 512, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "manual"},
     "docmost": {"phase": "phase4-ondemand", "container": "docmost", "tier": "background", "profiles": ["knowledge"], "ram_mb": 1024, "cpu": 0.8, "vram_mb": 0, "gpu": false, "dependencies": ["postgres", "redis"], "schedule": "manual"},
     "calcom": {"phase": "phase4-ondemand", "container": "calcom", "tier": "background", "profiles": ["productivity"], "ram_mb": 1536, "cpu": 1.0, "vram_mb": 0, "gpu": false, "dependencies": ["postgres"], "schedule": "work-hours"},
-    "nocodb": {"phase": "phase4-ondemand", "container": "nocodb", "tier": "background", "profiles": ["dev", "productivity"], "ram_mb": 768, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": ["postgres"], "schedule": "manual"}
+    "nocodb": {"phase": "phase4-ondemand", "container": "nocodb", "tier": "background", "profiles": ["dev", "productivity"], "ram_mb": 768, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": ["postgres"], "schedule": "manual"},
+    "health-db": {"phase": "phase5-health-data", "container": "health_timescaledb", "tier": "important", "profiles": ["sync", "app", "analysis"], "ram_mb": 512, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": [], "schedule": "always"},
+    "health-sync": {"phase": "phase5-health-data", "container": "health_sync", "tier": "background", "profiles": ["sync"], "ram_mb": 128, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": ["health-db"], "schedule": "always"},
+    "health-n1-app": {"phase": "phase5-health-data", "container": "health_n1_app", "tier": "background", "profiles": ["app", "n1"], "ram_mb": 256, "cpu": 0.2, "vram_mb": 0, "gpu": false, "dependencies": ["health-db"], "schedule": "always"},
+    "health-n1-reminders": {"phase": "phase5-health-data", "container": "health_n1_reminders", "tier": "background", "profiles": ["app", "n1"], "ram_mb": 128, "cpu": 0.1, "vram_mb": 0, "gpu": false, "dependencies": ["health-db"], "schedule": "always"},
+    "health-metabase": {"phase": "phase5-health-data", "container": "health_metabase", "tier": "background", "profiles": ["analysis", "metabase"], "ram_mb": 1024, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": ["health-db"], "schedule": "always"},
+    "health-jupyter": {"phase": "phase5-health-data", "container": "health_jupyter", "tier": "background", "profiles": ["analysis"], "ram_mb": 512, "cpu": 0.5, "vram_mb": 0, "gpu": false, "dependencies": ["health-db"], "schedule": "always"}
   }
 }
