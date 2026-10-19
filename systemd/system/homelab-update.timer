@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly homelab container updates
+
+[Timer]
+OnCalendar=*-*-* 04:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

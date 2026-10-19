@@ -11,7 +11,7 @@ Type=oneshot
 RemainAfterExit=yes
 User=kadin
 WorkingDirectory=/home/kadin/homelab2
-ExecStart=/home/kadin/homelab2/scripts/homelab-autostart.sh
+ExecStart=/home/kadin/homelab2/scripts/homelab-stacks.sh start
 TimeoutStartSec=20min
 
 [Install]

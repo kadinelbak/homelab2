@@ -1,0 +1,14 @@
+# Pulls newer images for auto-update services and redeploys them via compose.
+# Replaces Watchtower, which recreated containers outside compose.
+[Unit]
+Description=Update homelab containers
+Requires=docker.service
+After=docker.service network-online.target homelab-autostart.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kadin
+WorkingDirectory=/home/kadin/homelab2
+ExecStart=/home/kadin/homelab2/scripts/homelab-stacks.sh update
+TimeoutStartSec=1h
