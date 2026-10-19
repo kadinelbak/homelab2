@@ -1,7 +1,7 @@
 """Request router ported from ai-orchestrator.
 
 Plans natural-language requests into capability actions (Gmail, Calendar,
-Tasks, Contacts, Codex, general assistant) and executes them against the
+Tasks, Contacts, general assistant) and executes them against the
 workers. Persistence lives in jarvis-core; set STATE_LOADER to a callable
 returning {"requests": {...}, "actions": {...}} for the verified-artifact
 lookups that need recent results.
@@ -42,8 +42,6 @@ CONTACTS_CONTRACT_CACHE = {}
 CONTACTS_CONTRACT_CACHE_LOCK = threading.Lock()
 GOOGLE_TOOLS_URL = os.environ.get("GOOGLE_TOOLS_URL") or os.environ.get("JARVIS_CORE_GOOGLE_TOOLS_URL", "http://google-tools-worker:18200").rstrip("/")
 GOOGLE_TOOLS_TOKEN = os.environ.get("GOOGLE_TOOLS_TOKEN") or os.environ.get("JARVIS_CORE_GOOGLE_TOOLS_TOKEN") or TOKEN
-CODEX_WORKER_URL = os.environ.get("CODEX_WORKER_URL") or os.environ.get("JARVIS_CORE_CODEX_WORKER_URL", "http://codex-worker:18300").rstrip("/")
-CODEX_WORKER_TOKEN = os.environ.get("CODEX_WORKER_TOKEN") or os.environ.get("JARVIS_CORE_CODEX_WORKER_TOKEN") or TOKEN
 TTS_WORKER_URL = os.environ.get("JARVIS_TTS_WORKER_URL", "http://tts-worker:8101").rstrip("/")
 LLM_PROFILES = {
     "local": {
@@ -200,7 +198,7 @@ CAPABILITIES = [
         "cost_class": "metered",
         "requires_approval": False,
         "execution_requires_approval": True,
-        "tools": ["codex_cli", "opencode", "aider"],
+        "tools": ["opencode", "aider"],
         "description": "Modify, inspect, test, or review code repositories and developer projects.",
     },
     {
@@ -1322,7 +1320,6 @@ def choose_execution_profile(payload, capability):
         "refactor",
         "repo",
         "code",
-        "codex",
         "security",
         "database",
         "orchestration",
@@ -1490,27 +1487,6 @@ def call_google_tools(path, payload):
         return json.loads(response.read().decode("utf-8") or "{}")
 
 
-def call_codex_worker(action):
-    payload = {
-        "action": action,
-        "job_id": action.get("action_id"),
-        "limits": action.get("limits") or {},
-    }
-    body = json.dumps(payload).encode("utf-8")
-    timeout = int((action.get("limits") or {}).get("maximum_runtime_seconds") or 1800) + 30
-    req = urllib.request.Request(
-        CODEX_WORKER_URL + "/run",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {CODEX_WORKER_TOKEN}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8") or "{}")
-
-
 def gmail_send_or_publish_intent(text):
     text = (text or "").lower()
     send_terms = (
@@ -1570,37 +1546,6 @@ def create_gmail_draft_from_request(action, request, google_payload):
         "artifacts": [{"type": "gmail_draft", "item": data.get("draft")}],
         "cost": {"estimated_usd": 0},
         "next_actions": [],
-    }
-
-
-def codex_worker_result(action):
-    data = call_codex_worker(action)
-    status = data.get("status") or ("completed" if data.get("ok") else "failed")
-    artifacts = data.get("artifacts") or []
-    artifacts.append({
-        "type": "codex_job",
-        "item": {
-            "job_id": data.get("job_id"),
-            "status": status,
-            "return_code": data.get("return_code"),
-            "started_at": data.get("started_at"),
-            "finished_at": data.get("finished_at"),
-        },
-    })
-    return {
-        "request_id": action["request_id"],
-        "tool": action["tool"],
-        "status": status,
-        "summary": data.get("summary") or "Codex worker returned a result.",
-        "text": data.get("text") or data.get("summary") or "",
-        "artifacts": artifacts,
-        "cost": {"estimated_usd": 0},
-        "next_actions": [],
-        "worker_result": {
-            "job_id": data.get("job_id"),
-            "return_code": data.get("return_code"),
-            "codex": data.get("codex"),
-        },
     }
 
 
@@ -1927,12 +1872,6 @@ def execute_action(action):
             return google_tools_result(action)
         except Exception as exc:
             action.setdefault("inputs", {})["google_tools_error"] = str(exc)[:500]
-
-    if action.get("adapter_type") == "cli_worker" and action.get("worker") == "coding_worker":
-        try:
-            return codex_worker_result(action)
-        except Exception as exc:
-            action.setdefault("inputs", {})["codex_worker_error"] = str(exc)[:500]
 
     profile = action.get("execution_profile", {})
     try:

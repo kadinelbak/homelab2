@@ -29,10 +29,6 @@
         icon: telegram
         href: https://t.me/kadjarvis_bot
         description: Jarvis text and voice-note bot
-    - Codex Worker:
-        icon: si-openai
-        href: http://100.79.132.39:18300/health
-        description: Approval-gated coding worker
     - Google Tools:
         icon: google
         href: http://100.79.132.39:18200/health

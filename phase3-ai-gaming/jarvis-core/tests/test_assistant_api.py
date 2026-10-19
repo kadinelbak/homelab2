@@ -49,7 +49,7 @@ class AssistantApiTests(unittest.TestCase):
         self.assertEqual(request["status"], "completed")
 
     def test_gated_action_uses_core_approval_queue(self):
-        router.execute_action = lambda action: {"status": "completed", "summary": "stubbed codex run"}
+        router.execute_action = lambda action: {"status": "completed", "summary": "stubbed coding run"}
         try:
             action = self.plan("refactor the telegram bridge in my homelab repo")["actions"][0]
             self.assertEqual(action["capability"], "edit_repository")

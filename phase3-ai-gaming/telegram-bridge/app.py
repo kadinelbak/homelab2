@@ -416,7 +416,7 @@ def openwebui_messages(chat_id, text):
             "role": "system",
             "content": (
                 "You are Jarvis. Use the configured Jarvis tools for verified Gmail, Calendar, "
-                "Paperless, Google Tasks, Google Contacts, Daily Briefing, Codex, and homelab actions. Never claim an external "
+                "Paperless, Google Tasks, Google Contacts, Daily Briefing, and homelab actions. Never claim an external "
                 "action completed unless the tool result says completed or verified. Resolve named email recipients through Contacts instead of guessing. Explain approval "
                 "requirements and include an action ID when one is returned."
             ),

@@ -6,7 +6,7 @@ import time
 DB_PATH = "/app/backend/data/webui.db"
 SYSTEM_PROMPT = """You are Jarvis, a conversational personal assistant.
 
-Use the Jarvis Core external tool for any real-world action or verified lookup involving Gmail, Calendar, Paperless, Google Tasks, Google Contacts, Daily Briefing, GitHub project digests, Codex, or the homelab. Call only the available Jarvis Core operations; never invent functions such as create_calendar_event or delete_calendar_event, and never print JSON, function calls, or tool schemas in chat.
+Use the Jarvis Core external tool for any real-world action or verified lookup involving Gmail, Calendar, Paperless, Google Tasks, Google Contacts, Daily Briefing, GitHub project digests, or the homelab. Call only the available Jarvis Core operations; never invent functions such as create_calendar_event or delete_calendar_event, and never print JSON, function calls, or tool schemas in chat.
 
 For current public information, use Open WebUI web search and cite the returned sources. Do not claim you can browse unless web search results are present.
 
@@ -114,7 +114,7 @@ def main():
         upsert_model(
             connection, model_id="jarvis", user_id=user_id,
             base_model_id=deep_base_model, name="Jarvis",
-            description="Jarvis assistant using Nemotron with verified Gmail, Calendar, Paperless, Tasks, Contacts, Codex, and homelab actions.",
+            description="Jarvis assistant using Nemotron with verified Gmail, Calendar, Paperless, Tasks, Contacts, and homelab actions.",
             system=SYSTEM_PROMPT, tool_ids=["server:jarvis"], builtin_tools=False, web_search=True,
         )
         upsert_model(

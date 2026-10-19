@@ -206,7 +206,7 @@ Open WebUI exposes four curated model profiles:
 - `Local Llama 3.1 8B - Chat Only` provides private Ollama chat with tools disabled.
 
 Use the `Jarvis` profile whenever a request should call Calendar, Gmail,
-Paperless, Tasks, Contacts, Codex, or homelab workers. Do not attach Jarvis tools
+Paperless, Tasks, Contacts, or homelab workers. Do not attach Jarvis tools
 to the raw `llama3.1:latest` model: this small local model can print plausible
 function JSON as prose instead of issuing a real native tool call.
 

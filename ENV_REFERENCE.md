@@ -14,7 +14,7 @@ Recommended layers:
 | `config/env/.env.core` | Postgres, Redis, Authentik, Homepage, Pi-hole, monitoring. |
 | `config/env/.env.media` | Jellyfin, Paperless, Immich, Navidrome, document/photo settings. |
 | `config/env/.env.media-vpn` | Gluetun/qBittorrent non-secret VPN settings and secret-file path. |
-| `config/env/.env.jarvis` | Jarvis Core, Chat, Telegram, Google tools, Codex, Whisper/TTS, AI models. |
+| `config/env/.env.jarvis` | Jarvis Core, Chat, Telegram, Google tools, Whisper/TTS, AI models. |
 | `config/env/.env.cloud` | Nextcloud, Docmost, Guacamole, n8n, and on-demand apps. |
 
 Actual secret material should use service-specific secret files where supported,
@@ -87,8 +87,6 @@ python3 scripts/homelabctl.py plan always-on
 | `PROMETHEUS_RETENTION` | Yes | Prometheus local retention window, for example `30d`. |
 | `NTFY_BASE_URL` | Yes | Base URL announced by ntfy. |
 | `NTFY_TOPIC` | Yes | Default topic for homelab notifications. |
-| `WATCHTOWER_CRON` | Yes | Six-field Watchtower update schedule. |
-| `WATCHTOWER_NOTIFICATION_URL` | Yes | Watchtower notification URL, usually an internal ntfy URL. |
 
 ## Optional Core Integrations
 

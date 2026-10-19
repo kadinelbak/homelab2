@@ -3,7 +3,7 @@
 ## Completed
 
 - Restored the local checkout from `https://github.com/kadinelbak/homelab2.git`.
-- Added Phase 3 `jarvis-core` as a durable FastAPI service while keeping `ai-orchestrator`, Jarvis Chat, Telegram, Google tools, Codex, Whisper, and TTS paths intact.
+- Added Phase 3 `jarvis-core` as a durable FastAPI service while keeping `ai-orchestrator`, Jarvis Chat, Telegram, Google tools, Whisper, and TTS paths intact.
 - Added PostgreSQL-backed records for requests, intents, proposed actions, approvals, execution attempts/results, verification, audit events, outbox events, model invocations, notifications, calendar events, projects, and tasks.
 - Added the first P0 master-plan orchestration foundation: durable runs, jobs, job dependencies, artifacts, worker registry, worker capabilities, and orchestration event tables/APIs. Existing Jarvis request/action/approval APIs remain compatible and authoritative for approvals.
 - Added central risk levels, approval enforcement, idempotent request creation, health/readiness/metrics endpoints, tools registry, Personal Ops projects/tasks/capture, and deterministic daily brief.
@@ -90,13 +90,11 @@
   - Core capture
   - Core daily brief
   - Read-only homelab diagnostics
-  - Approval-gated Codex coding task proposals
-  - Codex task dashboard
   - Projects, tasks, evidence, maintenance
   - Approvals, executions, and audit search
   - Daily brief recommendation actions
 - Read-only homelab diagnostics are live at `/api/v1/homelab/diagnostics`.
-  - Current check set includes Postgres, Redis, Jarvis Core, Google Tools, Codex Worker, Open WebUI, Ollama, Whisper, TTS, Homepage, Pi-hole, Paperless, Nextcloud, media automations, and container-local storage paths.
+  - Current check set includes Postgres, Redis, Jarvis Core, Google Tools, Open WebUI, Ollama, Whisper, TTS, Homepage, Pi-hole, Paperless, Nextcloud, media automations, and container-local storage paths.
   - Ollama is reported as optional/offline when it is not running; it does not make overall diagnostics fail.
   - Media automation reachability is now included for Prowlarr, Bazarr, Sonarr, Radarr, Lidarr, Readarr, and qBittorrent without changing Gluetun bindings. These checks are optional until the media pipeline is ready.
 - Private DNS and ad blocking are live through Pi-hole:
@@ -128,11 +126,6 @@
   - Open WebUI tool route: `/jarvis/core/media-automations`
   - Voice route: ask `Hey Jarvis` for `media automation status`.
   - Homepage has a Media Automation Status widget above the individual service links.
-- Codex coding task proposals are live:
-  - Voice path: `Hey Jarvis` -> Jarvis Chat -> Jarvis Core -> approval required.
-  - Open WebUI path: `jarvis_core_codex_task` -> Jarvis Core -> approval required.
-  - Codex worker reports the Codex CLI is configured.
-  - Execution remains approval-gated because coding tasks can edit mounted workspace files.
 - Voice approval shortcuts are live:
   - `what approvals are pending`
   - `approve <matching title>`
@@ -142,26 +135,16 @@
   - Calendar holds route through the existing approval-gated Calendar workflow.
 - Jarvis Chat Core console is live:
   - Browser path: `http://127.0.0.1:18100/core` through the existing Jarvis Chat tunnel.
-  - It shows pending Core approvals, Codex Core tasks, Codex worker jobs, diagnostics, tasks, evidence, maintenance, daily brief, and recent audit entries.
+  - It shows pending Core approvals, diagnostics, tasks, evidence, maintenance, daily brief, and recent audit entries.
   - It does not require manually calling Core APIs.
   - Dashboard items are clickable and open a shared detail drawer.
   - Approvals can be approved/rejected with browser confirmation.
   - Tasks can be completed/reopened, and maintenance records can be resolved/reopened.
-  - Codex worker jobs open request/stdout/stderr previews and paths.
   - Daily brief entries can become Core tasks or approval-gated calendar holds.
-- Codex artifact browser is live through Jarvis Chat:
-  - Job list: `/api/codex/jobs`
-  - Job detail: `/api/codex/jobs/{job_id}`
-  - Artifact text: `/api/codex/jobs/{job_id}/artifact?name=request.json|summary.json|stdout.txt|stderr.txt`
-  - Artifact responses include the worker job paths plus concise stdout/stderr previews.
-  - Codex worker jobs now record durable `summary.json` files with mode, status, changed files, test-result lines, and concise stdout/stderr previews.
-  - Codex worker supports `inspect-only`, `plan-only`, `patch-only`, `test-only`, and `execute` modes.
-  - Codex worker retention preserves `summary.json` and trims old stdout/stderr logs after `CODEX_WORKER_RETENTION_DAYS`.
 - Voice approval hardening is live:
   - For normal low-risk approvals, `approve <title>` can approve by title match.
-  - For Codex/code-executing, sensitive, or destructive approvals, `approve <title>` only reads back the risk and asks for a second phrase.
+  - For sensitive or destructive approvals, `approve <title>` only reads back the risk and asks for a second phrase.
   - The required second phrase is `confirm approve <title>`.
-  - No Codex coding task has been executed during validation.
 - Voice task editing is live:
   - `complete task <title>`
   - `confirm complete task <title>`
@@ -173,15 +156,14 @@
   - `confirm reopen maintenance <title or service>`
 - Notification routing foundation is live:
   - Core notifications are stored in `jarvis_notifications`.
-  - Important approvals, Codex results/failures, and saved daily briefs create shared notification records and outbox events.
+  - Important approvals, execution results/failures, and saved daily briefs create shared notification records and outbox events.
   - Jarvis Chat Core console shows notifications as clickable dashboard items.
   - Telegram Bridge polls pending `telegram` notifications from Jarvis Core and marks delivery status after send.
   - `Hey Jarvis` voice requests can read pending `voice` notifications and mark them delivered.
   - Homepage reads a redacted Jarvis notification summary through Jarvis Chat at `/api/core/notifications/summary`.
 - Portfolio evidence packet builder is live:
   - `POST /api/v1/evidence/packet`
-  - The packet collects Core tasks, evidence, maintenance, recorded calendar events, Codex Worker git commits, and Google Drive/Docs references into a durable evidence record.
-  - Codex Worker exposes read-only git commit metadata at `/git/commits` and uses a read-only `.git` mount for the main homelab repo.
+  - The packet collects Core tasks, evidence, maintenance, recorded calendar events, and Google Drive/Docs references into a durable evidence record.
   - Google Drive metadata search is implemented at Google Tools `/drive/search`; live smoke now succeeds with `drive.metadata.readonly`.
 - Google Drive de-Google planning is live:
   - Core Drive inventory: `POST /api/v1/drive/inventory`
@@ -235,4 +217,3 @@ Both passed.
 
 - Implement media pipeline HTTP calls for `media.social_image.create`, `media.workflow.status`, `media.workflow.approve_step`, and `media.gallery.list` after the media pipeline is ready.
 - Add approval-gated Drive export/download batches only when ready to temporarily request broader Drive read scope.
-- Add richer Codex artifact summarization after real coding jobs accumulate.

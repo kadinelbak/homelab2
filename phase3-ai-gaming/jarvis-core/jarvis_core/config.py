@@ -12,8 +12,6 @@ class Settings(BaseSettings):
     media_pipeline_url: str = "http://media-creation-api:18110"
     google_tools_url: str = "http://google-tools-worker:18200"
     google_tools_token: str = ""
-    codex_worker_url: str = "http://codex-worker:18300"
-    codex_worker_token: str = ""
     homelab_public_base_url: str = "http://kadin-main-sys.tail00cf0e.ts.net"
     media_automation_internal_base_url: str = "http://gluetun"
     pihole_url: str = "http://100.79.132.39:8053/admin/"
