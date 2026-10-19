@@ -122,7 +122,6 @@ As of $(date), the following services are deployed:
 - **Homepage**: http://\${DOMAIN}:3000
 - **Beszel**: http://\${DOMAIN}:8090
 - **Uptime Kuma**: http://\${DOMAIN}:3001
-- **Watchtower**: Automatic updates
 - **Scrutiny**: http://\${DOMAIN}:8089
 - **Vaultwarden**: https://\${DOMAIN}:4443
 - **ntfy**: http://\${DOMAIN}:8085

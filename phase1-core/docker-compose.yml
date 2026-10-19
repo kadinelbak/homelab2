@@ -177,7 +177,7 @@ services:
       homepage.description: Reverse proxy and TLS management
 
   authentik-server:
-    image: ghcr.io/goauthentik/server:latest
+    image: ghcr.io/goauthentik/server:2025.2.4
     container_name: authentik_server
     mem_limit: 1536m
     restart: unless-stopped
@@ -271,7 +271,7 @@ services:
       homelab.depends_on: authentik-server
 
   authentik-worker:
-    image: ghcr.io/goauthentik/server:latest
+    image: ghcr.io/goauthentik/server:2025.2.4
     container_name: authentik_worker
     mem_limit: 1g
     restart: unless-stopped
@@ -897,28 +897,3 @@ services:
       <<: [*common-labels, *background]
       homelab.service: cadvisor
       homelab.depends_on: none
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: watchtower
-    mem_limit: 256m
-    restart: unless-stopped
-    command:
-      - --label-enable
-      - --cleanup
-      - --schedule
-      - ${WATCHTOWER_CRON}
-      - --notification-url
-      - ${WATCHTOWER_NOTIFICATION_URL}
-    environment:
-      TZ: ${TZ}
-      DOCKER_API_VERSION: "1.44"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - homelab_internal
-    labels:
-      <<: [*background]
-      com.centurylinklabs.watchtower.enable: "false"
-      homelab.service: watchtower
-      homelab.depends_on: ntfy
