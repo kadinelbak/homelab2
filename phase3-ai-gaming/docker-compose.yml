@@ -200,6 +200,9 @@ services:
       VERSION: "1.20.1"
       MODRINTH_MODPACK: prominence-2-fabric
       MODRINTH_LOADER: fabric
+      # Pinned: the image installs the newest pack on every start, and 4.1.5hf
+      # is missing server deps (athena, s_lib, simplytooltips). Bump on purpose.
+      MODRINTH_VERSION: ${MINECRAFT_MODPACK_VERSION:-4.0.3}
       MODRINTH_MODPACK_VERSION_TYPE: release
       MODRINTH_FORCE_SYNCHRONIZE: ${MINECRAFT_FORCE_SYNCHRONIZE:-false}
       MODRINTH_PROJECTS: |
