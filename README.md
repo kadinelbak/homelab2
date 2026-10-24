@@ -382,6 +382,42 @@ On a 16GB host, `homelabctl` reserves host headroom and warns or refuses when a
 requested set exceeds the configured budget. Set `HOMELAB_ADMISSION_MODE=enforce`
 in `.env` to block over-budget starts.
 
+## 10.2 Ripping DVDs into Jellyfin
+
+The server's DVD drive is ripped by a MakeMKV container (`dvd-ripper`). It rips any disc you
+insert automatically, then ejects it. Rips land in `/mnt/nvme/homelab2/shared/media/_rips/`.
+
+**1. Start the ripper** (once after every reboot; safe to run any time):
+
+```bash
+~/homelab2/scripts/dvd-ripper-start.sh
+```
+
+**2. Insert a DVD.** Ripping starts by itself and takes 20–40 minutes. The disc ejects when
+it's done. Watch progress at http://kadin-main-sys:5800 if you like.
+- If you insert the disc *before* the ripper starts, it won't rip it. Eject and reinsert it.
+
+**3. Save the movie into Jellyfin**, using the name `Title (Year)`:
+
+```bash
+~/homelab2/scripts/dvd-save-movie.sh "Bee Movie (2007)"
+```
+
+It shows what it will do and asks first. It keeps the largest file from the newest rip,
+saves it as `movies/Bee Movie (2007)/Bee Movie (2007).mkv`, and deletes the extras.
+Save each movie before you rip the next disc.
+
+**4. See it in Jellyfin.** It appears after the next library scan, or right away from
+Dashboard → Libraries → Scan All Libraries.
+
+If something goes wrong:
+- Disc not ripping: run step 1 again, then eject and reinsert the disc.
+- Rip failed / empty folder: `docker logs --tail 30 dvd-ripper` shows why. Delete the
+  folder in `_rips` and reinsert the disc.
+- "REGION CODE IS MISMATCHED": the drive is set to region 1 (US). Discs from other regions
+  won't rip. Don't change the region, because the drive only allows 4 more changes.
+- Done ripping for a while: `docker stop dvd-ripper`.
+
 ## 11. Important One-Time Initializations
 
 ### Guacamole DB schema
