@@ -140,7 +140,7 @@ services:
       homelab.depends_on: redis
 
   npm:
-    image: jc21/nginx-proxy-manager:2.11.3
+    image: jc21/nginx-proxy-manager:2.15.1
     container_name: npm
     mem_limit: 512m
     healthcheck:
@@ -177,7 +177,7 @@ services:
       homepage.description: Reverse proxy and TLS management
 
   authentik-server:
-    image: ghcr.io/goauthentik/server:2025.2.4
+    image: ghcr.io/goauthentik/server:2025.2.4@sha256:36233579415aa2e2e52a6b0c45736cb871fe71460bfe0cf95d83f67528fb1182
     container_name: authentik_server
     mem_limit: 1536m
     restart: unless-stopped
@@ -271,7 +271,7 @@ services:
       homelab.depends_on: authentik-server
 
   authentik-worker:
-    image: ghcr.io/goauthentik/server:2025.2.4
+    image: ghcr.io/goauthentik/server:2025.2.4@sha256:36233579415aa2e2e52a6b0c45736cb871fe71460bfe0cf95d83f67528fb1182
     container_name: authentik_worker
     mem_limit: 1g
     restart: unless-stopped
@@ -403,7 +403,9 @@ services:
       DOMAIN: https://${DOMAIN}:4443
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@homelab_postgres:5432/vaultwarden
       ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
-      SSO_ENABLED: "true"
+      # Off until VAULTWARDEN_OIDC_CLIENT_ID/SECRET are in .env: 1.35 refuses to
+      # start with SSO on and those blank.
+      SSO_ENABLED: ${VAULTWARDEN_SSO_ENABLED:-false}
       SSO_ONLY: "false"
       SSO_SIGNUPS_MATCH_EMAIL: "true"
       SSO_AUTHORITY: ${AUTHENTIK_URL}/application/o/vaultwarden/
