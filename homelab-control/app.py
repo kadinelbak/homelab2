@@ -2,6 +2,7 @@
 import html
 import json
 import os
+import socket
 import subprocess
 import time
 from http import HTTPStatus
@@ -14,6 +15,8 @@ TOKEN = os.environ.get("HOMELAB_CONTROL_TOKEN", "")
 HOST = os.environ.get("HOMELAB_CONTROL_HOST", "0.0.0.0")
 PORT = int(os.environ.get("HOMELAB_CONTROL_PORT", "5055"))
 TIMEOUT = int(os.environ.get("HOMELAB_CONTROL_TIMEOUT", "420"))
+# Requests proxied by this host already passed the Authentik login.
+AUTH_PROXY = os.environ.get("HOMELAB_CONTROL_AUTH_PROXY", "authentik-server")
 
 
 def load_catalog():
@@ -45,7 +48,19 @@ def selectors(catalog):
     return set(catalog["services"])
 
 
+def from_auth_proxy(handler):
+    if not AUTH_PROXY or not handler.headers.get("X-authentik-username"):
+        return False
+    try:
+        proxy_ips = {info[4][0] for info in socket.getaddrinfo(AUTH_PROXY, None)}
+    except OSError:
+        return False
+    return handler.client_address[0] in proxy_ips
+
+
 def authorized(handler):
+    if from_auth_proxy(handler):
+        return True
     if not TOKEN or TOKEN.startswith("CHANGE_ME"):
         return False
     auth = handler.headers.get("Authorization", "")
@@ -243,8 +258,6 @@ def render():
     <h1>Homelab Control</h1>
     <div class="tokenbar">
       <button onclick="location.href='http://kadin-main-sys.tail00cf0e.ts.net:3000/'">Homepage</button>
-      <input id="token" type="password" placeholder="Control token">
-      <button id="saveToken">Unlock</button>
       <button id="refresh">Refresh</button>
     </div>
   </header>
@@ -254,23 +267,13 @@ def render():
   <pre id="result"></pre>
   <script>
     const result = document.getElementById("result");
-    const token = document.getElementById("token");
-    token.value = localStorage.getItem("homelabControlToken") || "";
-    document.getElementById("saveToken").onclick = () => {{
-      localStorage.setItem("homelabControlToken", token.value);
-      document.cookie = "homelab_control_token=" + encodeURIComponent(token.value) + "; SameSite=Lax";
-    }};
     document.getElementById("refresh").onclick = () => location.reload();
     async function run(action, selector) {{
-      localStorage.setItem("homelabControlToken", token.value);
       result.style.display = "block";
       result.textContent = `${{action}} ${{selector}}...`;
       const response = await fetch("/api/action", {{
         method: "POST",
-        headers: {{
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + token.value
-        }},
+        headers: {{"Content-Type": "application/json"}},
         body: JSON.stringify({{action, selector}})
       }});
       const payload = await response.json();
